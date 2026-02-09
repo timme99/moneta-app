@@ -1,0 +1,8 @@
+
+# public/robots.txt
+
+User-agent: *
+Disallow: /
+
+# Moneta - Private beta project
+# Contact: tiimmme@gmail.com

@@ -1,0 +1,7 @@
+{
+  "name": "Moneta - Ihr KI-Anlageassistent",
+  "description": "Ein moderner Finanzassistent inspiriert von justETF, der Portfolios analysiert und konkrete ETF-Anlagevorschläge unterbreitet.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
