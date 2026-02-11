@@ -57,9 +57,15 @@ const Header: React.FC<HeaderProps> = ({ activeView, onViewChange, userAccount, 
 
           <div className="flex items-center gap-6">
             <div className="flex items-center gap-4 pr-4 border-r border-slate-100">
-              <button className="p-2 text-slate-400 hover:text-blue-600 transition-colors relative">
+              <button
+                onClick={() => onViewChange('settings')}
+                title="Benachrichtigungen verwalten"
+                className="p-2 text-slate-400 hover:text-blue-600 transition-colors relative"
+              >
                 <Bell className="w-5 h-5" />
-                <span className="absolute top-2 right-2 w-2 h-2 bg-rose-500 rounded-full border-2 border-white"></span>
+                {userAccount?.settings?.dailyEmail && (
+                  <span className="absolute top-2 right-2 w-2 h-2 bg-emerald-500 rounded-full border-2 border-white"></span>
+                )}
               </button>
             </div>
 

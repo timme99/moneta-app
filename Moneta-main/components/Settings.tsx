@@ -14,18 +14,18 @@ interface SettingsProps {
 
 const Settings: React.FC<SettingsProps> = ({ account, onLogout, onShowAuth, onAccountUpdate }) => {
   const SettingItem = ({ icon: Icon, label, value, isActive }: any) => (
-    <button className="w-full flex items-center justify-between p-6 hover:bg-slate-50 transition-all group border-b border-slate-100 last:border-0">
+    <div className="w-full flex items-center justify-between p-6 border-b border-slate-100 last:border-0">
       <div className="flex items-center gap-6">
-        <div className={`bg-white border p-3 rounded-2xl transition-all ${isActive ? 'border-blue-300 bg-blue-50' : 'border-slate-200 group-hover:border-blue-300 group-hover:bg-blue-50'}`}>
-          <Icon className={`w-5 h-5 ${isActive ? 'text-blue-600' : 'text-slate-400 group-hover:text-blue-600'}`} />
+        <div className={`bg-white border p-3 rounded-2xl ${isActive ? 'border-blue-300 bg-blue-50' : 'border-slate-200'}`}>
+          <Icon className={`w-5 h-5 ${isActive ? 'text-blue-600' : 'text-slate-400'}`} />
         </div>
         <div className="text-left">
           <h4 className="font-black text-slate-900 text-sm tracking-tight">{label}</h4>
           <p className="text-xs text-slate-500 font-medium">{value}</p>
         </div>
       </div>
-      {isActive ? <CheckCircle2 className="w-5 h-5 text-emerald-500" /> : <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-blue-600 transition-all" />}
-    </button>
+      {isActive && <CheckCircle2 className="w-5 h-5 text-emerald-500" />}
+    </div>
   );
 
   const handleLogout = () => {

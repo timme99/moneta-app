@@ -6,7 +6,6 @@ import { ChatMessage } from '../types';
 
 interface AssistantProps {
   onAnalysisComplete?: (data: any) => void;
-  isPremium?: boolean;
 }
 
 const Assistant: React.FC<AssistantProps> = ({ onAnalysisComplete }) => {

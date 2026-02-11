@@ -6,10 +6,9 @@ import { PortfolioAnalysisReport } from '../types';
 interface MarketNewsTickerProps {
   news: PortfolioAnalysisReport['news'];
   onNewsClick: (news: any) => void;
-  isPremium?: boolean;
 }
 
-const MarketNewsTicker: React.FC<MarketNewsTickerProps> = ({ news, onNewsClick, isPremium }) => {
+const MarketNewsTicker: React.FC<MarketNewsTickerProps> = ({ news, onNewsClick }) => {
   if (!news || news.length === 0) return null;
 
   return (

@@ -1,7 +1,7 @@
 
 import React, { useMemo } from 'react';
 import { MOCK_ETFS } from '../constants';
-import { ArrowUpRight, ArrowDownRight, Info, HelpCircle, Search, Zap, Clock } from 'lucide-react';
+import { ArrowUpRight, ArrowDownRight, Zap, Clock } from 'lucide-react';
 import { AreaChart, Area, ResponsiveContainer } from 'recharts';
 
 const MiniChart = ({ color }: { color: string }) => {
@@ -36,11 +36,7 @@ const MiniChart = ({ color }: { color: string }) => {
   );
 };
 
-interface ETFListProps {
-  onShowAll?: () => void;
-}
-
-const ETFList: React.FC<ETFListProps> = ({ onShowAll }) => {
+const ETFList: React.FC = () => {
   return (
     <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
       <div className="px-6 py-5 border-b border-slate-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-slate-50/30">
@@ -59,14 +55,6 @@ const ETFList: React.FC<ETFListProps> = ({ onShowAll }) => {
             <Clock className="w-3.5 h-3.5" />
             <span className="text-[10px] font-bold uppercase tracking-widest">Update: Gerade eben</span>
           </div>
-          {onShowAll && (
-            <button 
-              onClick={onShowAll}
-              className="px-4 py-2 bg-white text-slate-700 text-xs font-bold rounded-xl border border-slate-200 hover:bg-slate-50 transition-all flex items-center gap-2 shadow-sm"
-            >
-              <Search className="w-3.5 h-3.5" /> Screener öffnen
-            </button>
-          )}
         </div>
       </div>
       

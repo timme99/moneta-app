@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { MOCK_ETFS } from '../constants';
-import { Search, Zap, RefreshCw, Layers, X, Loader2, Scale, ExternalLink, Info } from 'lucide-react';
+import { Zap, X, Loader2, Scale, Info } from 'lucide-react';
 import { compareETFs } from '../services/geminiService';
 import { ETFComparison } from '../types';
 
@@ -68,16 +68,9 @@ const ComparisonModal = ({ comparison, onClose }: { comparison: ETFComparison, o
 );
 
 const ETFSearch: React.FC = () => {
-  const [filter, setFilter] = useState('Alle Aktien');
-  const [isSyncing, setIsSyncing] = useState(false);
   const [selectedETFs, setSelectedETFs] = useState<string[]>([]);
   const [comparison, setComparison] = useState<ETFComparison | null>(null);
   const [isComparing, setIsComparing] = useState(false);
-
-  const handleRefresh = () => {
-    setIsSyncing(true);
-    setTimeout(() => setIsSyncing(false), 1500);
-  };
 
   const toggleSelection = (isin: string) => {
     setSelectedETFs(prev => 

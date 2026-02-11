@@ -14,7 +14,6 @@ import AuthModal from './components/AuthModal';
 import { PortfolioAnalysisReport, PortfolioHealthReport, PortfolioSavingsReport, UserAccount, PortfolioHolding } from './types';
 import { analyzePortfolio } from './services/geminiService';
 import { userService } from './services/userService';
-import { holdingsToPortfolioText } from './services/csvService';
 import { Clock, AlertTriangle, ShieldCheck, Edit3 } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -30,6 +29,7 @@ const App: React.FC = () => {
     isOpen: false,
     mode: 'register'
   });
+  const [selectedNewsItem, setSelectedNewsItem] = useState<any>(null);
   const [legalModal, setLegalModal] = useState<{ isOpen: boolean, type: 'impressum' | 'disclaimer' | 'privacy' }>({
     isOpen: false,
     type: 'disclaimer'
@@ -206,15 +206,40 @@ const App: React.FC = () => {
 
               <MarketNewsTicker
                 news={analysisReport.news}
-                onNewsClick={() => {}}
-                isPremium={true}
+                onNewsClick={(item: any) => setSelectedNewsItem(item)}
               />
+
+              {selectedNewsItem && (
+                <div className="bg-white border border-blue-100 rounded-[32px] p-6 shadow-lg animate-in fade-in slide-in-from-top-2 duration-300">
+                  <div className="flex items-start justify-between mb-4">
+                    <div className="flex items-center gap-3">
+                      <span className="text-2xl">{selectedNewsItem.impact_emoji}</span>
+                      <div>
+                        <h4 className="font-black text-slate-900 text-sm">{selectedNewsItem.title}</h4>
+                        <span className={`text-[9px] font-black uppercase tracking-widest ${selectedNewsItem.importance === 'hoch' ? 'text-rose-600' : 'text-blue-600'}`}>
+                          {selectedNewsItem.importance}e Relevanz &middot; {selectedNewsItem.source}
+                        </span>
+                      </div>
+                    </div>
+                    <button onClick={() => setSelectedNewsItem(null)} className="p-1.5 hover:bg-slate-100 rounded-xl transition-colors text-slate-400 hover:text-slate-600">
+                      <Edit3 className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <p className="text-xs text-slate-600 font-medium leading-relaxed">{selectedNewsItem.summary || selectedNewsItem.title}</p>
+                  {selectedNewsItem.affected_holdings && selectedNewsItem.affected_holdings.length > 0 && (
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {selectedNewsItem.affected_holdings.map((h: string, i: number) => (
+                        <span key={i} className="text-[10px] font-black bg-blue-50 text-blue-700 px-3 py-1 rounded-lg uppercase tracking-widest">{h}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               <DashboardSummary
                 report={analysisReport}
                 healthReport={healthReport}
                 savingsReport={savingsReport}
-                insight={null}
               />
 
               <div className="bg-amber-50 border border-amber-100 p-5 rounded-[32px] flex items-start gap-4 shadow-sm">
@@ -259,7 +284,7 @@ const App: React.FC = () => {
             {activeView === 'assistant' ? (
               <Assistant onAnalysisComplete={(data: any) => processMasterData(data)} />
             ) : activeView === 'discover' ? (
-              <Discover />
+              <Discover onPortfolioCreated={(report) => processMasterData(report)} />
             ) : activeView === 'settings' ? (
               <Settings
                 account={userAccount}

@@ -3,10 +3,17 @@ import React, { useState } from 'react';
 import ETFSearch from './ETFSearch';
 import ETFList from './ETFList';
 import Strategies from './Strategies';
-import { Search, Compass, Target, Zap } from 'lucide-react';
+import PortfolioWizard from './PortfolioWizard';
+import { Search, Compass, Target, Zap, Sparkles } from 'lucide-react';
+import { PortfolioAnalysisReport } from '../types';
 
-const Discover: React.FC = () => {
-  const [activeSubTab, setActiveSubTab] = useState<'search' | 'strategies'>('search');
+interface DiscoverProps {
+  onPortfolioCreated?: (report: PortfolioAnalysisReport) => void;
+}
+
+const Discover: React.FC<DiscoverProps> = ({ onPortfolioCreated }) => {
+  const [activeSubTab, setActiveSubTab] = useState<'search' | 'strategies' | 'wizard'>('search');
+  const [showWizard, setShowWizard] = useState(false);
 
   return (
     <div className="space-y-12 animate-in fade-in duration-700">
@@ -18,9 +25,9 @@ const Discover: React.FC = () => {
           </div>
           <h1 className="text-5xl font-black text-slate-900 tracking-tighter leading-none">Entdecke <span className="text-blue-600">Möglichkeiten</span></h1>
         </div>
-        
+
         <div className="flex bg-slate-100 p-1.5 rounded-[24px] w-fit">
-          <button 
+          <button
             onClick={() => setActiveSubTab('search')}
             className={`flex items-center gap-2 px-6 py-3 rounded-[20px] text-[10px] font-black uppercase tracking-widest transition-all ${
               activeSubTab === 'search' ? 'bg-white text-slate-900 shadow-xl' : 'text-slate-500 hover:text-slate-900'
@@ -28,13 +35,36 @@ const Discover: React.FC = () => {
           >
             <Search className="w-4 h-4" /> Markt-Scanner
           </button>
-          <button 
+          <button
             onClick={() => setActiveSubTab('strategies')}
             className={`flex items-center gap-2 px-6 py-3 rounded-[20px] text-[10px] font-black uppercase tracking-widest transition-all ${
               activeSubTab === 'strategies' ? 'bg-white text-slate-900 shadow-xl' : 'text-slate-500 hover:text-slate-900'
             }`}
           >
             <Target className="w-4 h-4" /> Strategien
+          </button>
+        </div>
+      </div>
+
+      {/* Portfolio-Aufbau CTA */}
+      <div className="bg-gradient-to-r from-blue-600 to-indigo-600 p-8 rounded-[32px] text-white relative overflow-hidden shadow-xl shadow-blue-600/20">
+        <div className="absolute -top-16 -right-16 w-48 h-48 bg-white/10 rounded-full blur-2xl" />
+        <div className="relative z-10 flex flex-col md:flex-row items-center gap-6">
+          <div className="flex-1">
+            <div className="flex items-center gap-2 mb-2">
+              <Sparkles className="w-4 h-4 text-amber-300" />
+              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-200">KI-Assistent</span>
+            </div>
+            <h3 className="text-2xl font-black tracking-tight mb-2">Portfolio aufbauen lassen</h3>
+            <p className="text-blue-100 text-sm font-medium">
+              Beantworten Sie 3 einfache Fragen und erhalten Sie einen personalisierten Anlageplan mit konkreten ETF-Vorschlägen.
+            </p>
+          </div>
+          <button
+            onClick={() => setShowWizard(true)}
+            className="px-8 py-4 bg-white text-blue-600 rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-blue-50 transition-all shadow-lg shrink-0"
+          >
+            Jetzt starten
           </button>
         </div>
       </div>
@@ -50,7 +80,7 @@ const Discover: React.FC = () => {
               </div>
               <ETFList />
             </section>
-            
+
             <section className="pt-8">
               <ETFSearch />
             </section>
@@ -61,6 +91,16 @@ const Discover: React.FC = () => {
           </section>
         )}
       </div>
+
+      {showWizard && (
+        <PortfolioWizard
+          onComplete={(report) => {
+            setShowWizard(false);
+            if (onPortfolioCreated) onPortfolioCreated(report);
+          }}
+          onCancel={() => setShowWizard(false)}
+        />
+      )}
     </div>
   );
 };
