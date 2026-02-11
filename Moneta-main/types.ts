@@ -116,11 +116,24 @@ export interface DashboardSummaryInsight {
   fun_fact?: string;
 }
 
+export interface PortfolioHolding {
+  name: string;
+  isin?: string;
+  ticker?: string;
+  quantity: number;
+  buyPrice?: number;
+  currentPrice?: number;
+  weight?: number;
+  category?: string;
+}
+
 export interface UserAccount {
   id: string;
   email: string;
   name: string;
+  passwordHash: string;
   isLoggedIn: boolean;
+  portfolio: PortfolioHolding[];
   portfolioData?: {
     report: PortfolioAnalysisReport | null;
     health: PortfolioHealthReport | null;
@@ -129,8 +142,12 @@ export interface UserAccount {
   settings: {
     autoNewsletter: boolean;
     weeklyDigest: boolean;
+    dailyEmail: boolean;
+    dailyEmailTime: string;
     cloudSync: boolean;
   };
+  createdAt: string;
+  lastLogin: string;
 }
 
 export interface UserProfile extends UserAccount {

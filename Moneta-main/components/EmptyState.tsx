@@ -1,6 +1,7 @@
 
-import React, { useState } from 'react';
-import { Sparkles, Zap, Layout, Send, Loader2, ShieldAlert, ImageIcon, FileText } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { Sparkles, Zap, Layout, Send, Loader2, ShieldAlert, ImageIcon, FileText, Upload } from 'lucide-react';
+import { parseCSV, holdingsToPortfolioText } from '../services/csvService';
 
 interface EmptyStateProps {
   onAnalyzeText: (text: string) => void;
@@ -10,6 +11,25 @@ interface EmptyStateProps {
 
 const EmptyState: React.FC<EmptyStateProps> = ({ onAnalyzeText, onUploadClick, isLoading }) => {
   const [input, setInput] = useState('');
+  const csvInputRef = useRef<HTMLInputElement>(null);
+
+  const handleCSVUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const content = ev.target?.result as string;
+      const result = parseCSV(content);
+      if (result.holdings.length > 0) {
+        const text = holdingsToPortfolioText(result.holdings);
+        onAnalyzeText(text);
+      } else {
+        alert(result.errors.join('\n') || 'Keine gültigen Positionen in der CSV gefunden.');
+      }
+    };
+    reader.readAsText(file);
+    if (csvInputRef.current) csvInputRef.current.value = '';
+  };
 
   const examples = [
     "Ich habe 20 Mercedes Aktien",
@@ -94,16 +114,23 @@ const EmptyState: React.FC<EmptyStateProps> = ({ onAnalyzeText, onUploadClick, i
           <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Screenshot hochladen</p>
         </button>
 
-        <button 
-          onClick={onUploadClick}
+        <button
+          onClick={() => csvInputRef.current?.click()}
           className="bg-white border border-slate-200 p-8 rounded-[32px] hover:border-blue-600 hover:shadow-xl transition-all group flex flex-col items-center text-center"
         >
           <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-600 mb-4 group-hover:bg-slate-900 group-hover:text-white transition-colors">
-            <FileText className="w-6 h-6" />
+            <Upload className="w-6 h-6" />
           </div>
           <h3 className="font-black text-slate-900 mb-1">CSV Import</h3>
           <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Broker-Daten nutzen</p>
         </button>
+        <input
+          ref={csvInputRef}
+          type="file"
+          accept=".csv,.tsv,.txt"
+          onChange={handleCSVUpload}
+          className="hidden"
+        />
 
         <button 
           onClick={() => onAnalyzeText("Beispiel-Depot: MSCI World, S&P 500, Apple")}

@@ -8,12 +8,14 @@ import Discover from './components/Discover';
 import Settings from './components/Settings';
 import PortfolioDeepDive from './components/PortfolioDeepDive';
 import MarketNewsTicker from './components/MarketNewsTicker';
+import PortfolioInput from './components/PortfolioInput';
 import Legal from './components/Legal';
 import AuthModal from './components/AuthModal';
-import { PortfolioAnalysisReport, PortfolioHealthReport, PortfolioSavingsReport, UserAccount } from './types';
+import { PortfolioAnalysisReport, PortfolioHealthReport, PortfolioSavingsReport, UserAccount, PortfolioHolding } from './types';
 import { analyzePortfolio } from './services/geminiService';
 import { userService } from './services/userService';
-import { Clock, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { holdingsToPortfolioText } from './services/csvService';
+import { Clock, AlertTriangle, ShieldCheck, Edit3 } from 'lucide-react';
 
 const App: React.FC = () => {
   const [activeView, setActiveView] = useState('cockpit');
@@ -23,6 +25,11 @@ const App: React.FC = () => {
   const [savingsReport, setSavingsReport] = useState<PortfolioSavingsReport | null>(null);
   const [isGlobalLoading, setIsGlobalLoading] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<string | null>(null);
+  const [showPortfolioInput, setShowPortfolioInput] = useState(false);
+  const [authModal, setAuthModal] = useState<{ isOpen: boolean; mode: 'login' | 'register' }>({
+    isOpen: false,
+    mode: 'register'
+  });
   const [legalModal, setLegalModal] = useState<{ isOpen: boolean, type: 'impressum' | 'disclaimer' | 'privacy' }>({
     isOpen: false,
     type: 'disclaimer'
@@ -82,15 +89,16 @@ const App: React.FC = () => {
     setAnalysisReport(report);
     setHealthReport(health);
     setSavingsReport(savings);
-    
+
     const now = new Date().toLocaleTimeString();
     setLastUpdate(now);
     localStorage.setItem('moneta_last_update', now);
-    
+
     if (userAccount) {
       userService.savePortfolio(userAccount.id, report, health, savings);
     }
     setActiveView('cockpit');
+    setShowPortfolioInput(false);
   }, [userAccount]);
 
   const handleAnalysis = async (input: { text?: string, fileBase64?: string }) => {
@@ -100,7 +108,6 @@ const App: React.FC = () => {
       userService.useCredit();
       processMasterData(masterData);
     } catch (error: any) {
-      // Anzeige der benutzerfreundlichen deutschen Fehlermeldung
       if (error.message.includes(':')) {
         alert(error.message.split(':')[1]);
       } else {
@@ -111,73 +118,158 @@ const App: React.FC = () => {
     }
   };
 
+  const handleSaveHoldings = async (holdings: PortfolioHolding[]) => {
+    if (userAccount) {
+      await userService.saveHoldings(userAccount.id, holdings);
+      const updated = await userService.fetchUserData();
+      if (updated) setUserAccount(updated);
+    }
+  };
+
+  const handleLogin = (user: UserAccount) => {
+    setUserAccount(user);
+    if (user.portfolioData) {
+      setAnalysisReport(user.portfolioData.report);
+      setHealthReport(user.portfolioData.health);
+      setSavingsReport(user.portfolioData.savings);
+      setLastUpdate(localStorage.getItem('moneta_last_update'));
+    }
+  };
+
+  const handleLogout = () => {
+    userService.logout();
+    setUserAccount(null);
+    setAnalysisReport(null);
+    setHealthReport(null);
+    setSavingsReport(null);
+    setLastUpdate(null);
+    setActiveView('cockpit');
+  };
+
+  const handleShowAuth = (mode: 'login' | 'register') => {
+    setAuthModal({ isOpen: true, mode });
+  };
+
   const openLegal = (type: 'impressum' | 'disclaimer' | 'privacy') => {
     setLegalModal({ isOpen: true, type });
   };
 
+  const cockpitHasData = analysisReport !== null;
+
   return (
     <div className="min-h-screen flex flex-col font-sans text-slate-900 bg-slate-50/50">
-      <Header activeView={activeView} onViewChange={setActiveView} />
-      
+      <Header
+        activeView={activeView}
+        onViewChange={setActiveView}
+        userAccount={userAccount}
+        onShowAuth={handleShowAuth}
+        onLogout={handleLogout}
+      />
+
       <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 w-full">
-        {activeView === 'cockpit' && analysisReport ? (
-          <div className="space-y-6">
-            <div className="flex justify-between items-end mb-4">
-              <div>
-                <div className="flex items-center gap-2 mb-1">
-                  <h1 className="text-4xl font-black text-slate-900 tracking-tighter">Cockpit</h1>
-                  <span className="bg-slate-200 text-slate-600 text-[9px] font-black px-2 py-0.5 rounded-md uppercase tracking-widest">Beta</span>
+        {activeView === 'cockpit' ? (
+          cockpitHasData ? (
+            <div className="space-y-6">
+              <div className="flex justify-between items-end mb-4">
+                <div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <h1 className="text-4xl font-black text-slate-900 tracking-tighter">Cockpit</h1>
+                    <span className="bg-slate-200 text-slate-600 text-[9px] font-black px-2 py-0.5 rounded-md uppercase tracking-widest">Beta</span>
+                  </div>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">KI-gestützte Portfolio-Analyse & Echtzeit-Einblicke</p>
                 </div>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">KI-gestützte Portfolio-Analyse & Echtzeit-Einblicke</p>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setShowPortfolioInput(!showPortfolioInput)}
+                    className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-2xl text-[10px] font-black uppercase tracking-widest text-slate-600 hover:border-blue-600 hover:text-blue-600 transition-all shadow-sm"
+                  >
+                    <Edit3 className="w-3 h-3" />
+                    Portfolio bearbeiten
+                  </button>
+                  {lastUpdate && (
+                    <div className="flex items-center gap-2 text-slate-400 bg-white px-4 py-2 rounded-2xl border border-slate-100 shadow-sm">
+                      <Clock className="w-3 h-3" />
+                      <span className="text-[10px] font-bold uppercase">Stand: {lastUpdate}</span>
+                    </div>
+                  )}
+                </div>
               </div>
-              {lastUpdate && (
-                <div className="flex items-center gap-2 text-slate-400 bg-white px-4 py-2 rounded-2xl border border-slate-100 shadow-sm">
-                  <Clock className="w-3 h-3" />
-                  <span className="text-[10px] font-bold uppercase">Stand: {lastUpdate}</span>
+
+              {showPortfolioInput && (
+                <PortfolioInput
+                  holdings={userAccount?.portfolio || []}
+                  onSave={handleSaveHoldings}
+                  onAnalyze={(text) => handleAnalysis({ text })}
+                  isLoading={isGlobalLoading}
+                />
+              )}
+
+              <MarketNewsTicker
+                news={analysisReport.news}
+                onNewsClick={() => {}}
+                isPremium={true}
+              />
+
+              <DashboardSummary
+                report={analysisReport}
+                healthReport={healthReport}
+                savingsReport={savingsReport}
+                insight={null}
+              />
+
+              <div className="bg-amber-50 border border-amber-100 p-5 rounded-[32px] flex items-start gap-4 shadow-sm">
+                <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="text-xs font-black text-amber-900 uppercase tracking-widest">Wichtiger Risikohinweis</p>
+                  <p className="text-[11px] text-amber-700 font-medium leading-relaxed">
+                    Die dargestellten Analysen sind rein informativ und stellen keine Anlageberatung dar. Investitionen an der Börse bergen Risiken bis zum Totalverlust. Dieses Tool ist ein privates Beta-Projekt.
+                  </p>
+                </div>
+              </div>
+
+              <PortfolioDeepDive
+                report={analysisReport}
+                healthReport={healthReport}
+                savingsReport={savingsReport}
+              />
+            </div>
+          ) : (
+            <div className="space-y-8">
+              <EmptyState
+                onAnalyzeText={(t) => handleAnalysis({ text: t })}
+                onUploadClick={() => setActiveView('assistant')}
+                isLoading={isGlobalLoading}
+              />
+
+              {/* Show portfolio input for logged-in users without analysis */}
+              {userAccount && (
+                <div className="max-w-4xl mx-auto">
+                  <PortfolioInput
+                    holdings={userAccount.portfolio || []}
+                    onSave={handleSaveHoldings}
+                    onAnalyze={(text) => handleAnalysis({ text })}
+                    isLoading={isGlobalLoading}
+                  />
                 </div>
               )}
             </div>
-
-            <MarketNewsTicker 
-              news={analysisReport.news} 
-              onNewsClick={() => {}} 
-              isPremium={true} 
-            />
-
-            <DashboardSummary 
-              report={analysisReport} 
-              healthReport={healthReport} 
-              savingsReport={savingsReport}
-              insight={null}
-            />
-
-            <div className="bg-amber-50 border border-amber-100 p-5 rounded-[32px] flex items-start gap-4 shadow-sm">
-              <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-              <div className="space-y-1">
-                <p className="text-xs font-black text-amber-900 uppercase tracking-widest">Wichtiger Risikohinweis</p>
-                <p className="text-[11px] text-amber-700 font-medium leading-relaxed">
-                  Die dargestellten Analysen sind rein informativ und stellen keine Anlageberatung dar. Investitionen an der Börse bergen Risiken bis zum Totalverlust. Dieses Tool ist ein privates Beta-Projekt.
-                </p>
-              </div>
-            </div>
-
-            <PortfolioDeepDive 
-              report={analysisReport} 
-              healthReport={healthReport} 
-              savingsReport={savingsReport} 
-            />
-          </div>
+          )
         ) : (
           <div className="animate-in fade-in duration-500">
             {activeView === 'assistant' ? (
-               <Assistant onAnalysisComplete={(data: any) => processMasterData(data)} />
+              <Assistant onAnalysisComplete={(data: any) => processMasterData(data)} />
             ) : activeView === 'discover' ? (
-               <Discover />
+              <Discover />
             ) : activeView === 'settings' ? (
-               <Settings account={userAccount} />
+              <Settings
+                account={userAccount}
+                onLogout={handleLogout}
+                onShowAuth={handleShowAuth}
+                onAccountUpdate={setUserAccount}
+              />
             ) : (
-              <EmptyState 
-                onAnalyzeText={(t) => handleAnalysis({ text: t })} 
+              <EmptyState
+                onAnalyzeText={(t) => handleAnalysis({ text: t })}
                 onUploadClick={() => setActiveView('assistant')}
                 isLoading={isGlobalLoading}
               />
@@ -214,7 +306,7 @@ const App: React.FC = () => {
               <div className="space-y-4">
                 <h4 className="text-[10px] font-black text-slate-900 uppercase tracking-[0.2em]">Status</h4>
                 <div className="flex flex-col gap-2">
-                  <span className="text-sm text-slate-500 font-medium">Private Beta v1.0</span>
+                  <span className="text-sm text-slate-500 font-medium">Private Beta v2.0</span>
                   <span className="text-sm text-emerald-500 font-bold">Systeme Online</span>
                 </div>
               </div>
@@ -231,6 +323,13 @@ const App: React.FC = () => {
           </div>
         </div>
       </footer>
+
+      <AuthModal
+        isOpen={authModal.isOpen}
+        onClose={() => setAuthModal({ ...authModal, isOpen: false })}
+        onLogin={handleLogin}
+        initialMode={authModal.mode}
+      />
 
       <Legal isOpen={legalModal.isOpen} onClose={() => setLegalModal({ ...legalModal, isOpen: false })} type={legalModal.type} />
     </div>

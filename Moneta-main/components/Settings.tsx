@@ -1,13 +1,18 @@
 
 import React from 'react';
-import { User, Shield, Wallet, ChevronRight, Mail, LogOut, Target, Scale, Bell, CheckCircle2 } from 'lucide-react';
+import { User, Shield, ChevronRight, Mail, LogOut, Target, Scale, Bell, CheckCircle2 } from 'lucide-react';
 import { UserAccount } from '../types';
+import { userService } from '../services/userService';
+import EmailSettings from './EmailSettings';
 
 interface SettingsProps {
   account: UserAccount | null;
+  onLogout: () => void;
+  onShowAuth: (mode: 'login' | 'register') => void;
+  onAccountUpdate: (account: UserAccount) => void;
 }
 
-const Settings: React.FC<SettingsProps> = ({ account }) => {
+const Settings: React.FC<SettingsProps> = ({ account, onLogout, onShowAuth, onAccountUpdate }) => {
   const SettingItem = ({ icon: Icon, label, value, isActive }: any) => (
     <button className="w-full flex items-center justify-between p-6 hover:bg-slate-50 transition-all group border-b border-slate-100 last:border-0">
       <div className="flex items-center gap-6">
@@ -23,24 +28,28 @@ const Settings: React.FC<SettingsProps> = ({ account }) => {
     </button>
   );
 
-  const sections = [
-    {
-      title: 'Konto & Sicherheit',
-      items: [
-        { icon: User, label: 'Benutzername', value: account?.name || 'Gast-Modus' },
-        { icon: Mail, label: 'E-Mail & Magic-Link', value: account?.email || 'Nicht registriert' },
-        { icon: Shield, label: 'Datenbank-Status', value: account ? 'Cloud Sync Aktiv' : 'Nur Lokal gespeichert', isActive: !!account }
-      ]
-    },
-    {
-      title: 'Benachrichtigungen & Automation',
-      items: [
-        { icon: Bell, label: 'KI-Wochenbericht', value: 'Automatische Depot-Analyse per Mail', isActive: account?.settings.weeklyDigest },
-        { icon: Target, label: 'Preis-Alarme', value: 'Info bei großen Kursänderungen', isActive: true },
-        { icon: Scale, label: 'Rechtliche Updates', value: 'Aktiv' }
-      ]
-    }
-  ];
+  const handleLogout = () => {
+    userService.logout();
+    onLogout();
+  };
+
+  const accountSection = {
+    title: 'Konto & Sicherheit',
+    items: [
+      { icon: User, label: 'Benutzername', value: account?.name || 'Gast-Modus' },
+      { icon: Mail, label: 'E-Mail', value: account?.email || 'Nicht registriert' },
+      { icon: Shield, label: 'Kontostatus', value: account ? `Erstellt: ${new Date(account.createdAt).toLocaleDateString('de-DE')}` : 'Nur Lokal gespeichert', isActive: !!account }
+    ]
+  };
+
+  const notificationSection = {
+    title: 'Benachrichtigungen & Automation',
+    items: [
+      { icon: Bell, label: 'Täglicher Report', value: account?.settings.dailyEmail ? `Aktiv – ${account.settings.dailyEmailTime} Uhr` : 'Deaktiviert', isActive: account?.settings.dailyEmail },
+      { icon: Target, label: 'Preis-Alarme', value: 'Info bei großen Kursänderungen', isActive: true },
+      { icon: Scale, label: 'Rechtliche Updates', value: 'Aktiv' }
+    ]
+  };
 
   return (
     <div className="max-w-2xl mx-auto space-y-10 animate-in fade-in slide-in-from-bottom-6 duration-700 pb-20">
@@ -51,41 +60,69 @@ const Settings: React.FC<SettingsProps> = ({ account }) => {
         <div>
           <h1 className="text-3xl font-black text-slate-900 tracking-tight">{account ? `Hallo, ${account.name}` : 'Einstellungen'}</h1>
           <p className="text-sm font-medium text-slate-500">
-            {account ? 'Ihr Portfolio wird sicher in der Datenbank gespeichert.' : 'Registrieren Sie sich, um Ihre Daten in der Cloud zu speichern.'}
+            {account ? 'Verwalten Sie Ihr Konto und Ihre Benachrichtigungen.' : 'Registrieren Sie sich, um alle Features zu nutzen.'}
           </p>
         </div>
       </div>
 
       <div className="space-y-8">
-        {sections.map((section, idx) => (
-          <div key={idx} className="bg-white rounded-[40px] border border-slate-200 overflow-hidden shadow-sm">
-            <div className="px-8 py-4 bg-slate-50 border-b border-slate-100">
-              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">{section.title}</span>
-            </div>
-            <div>
-              {section.items.map((item, i) => (
-                <SettingItem key={i} {...item} />
-              ))}
-            </div>
+        {/* Account Section */}
+        <div className="bg-white rounded-[40px] border border-slate-200 overflow-hidden shadow-sm">
+          <div className="px-8 py-4 bg-slate-50 border-b border-slate-100">
+            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">{accountSection.title}</span>
           </div>
-        ))}
+          <div>
+            {accountSection.items.map((item, i) => (
+              <SettingItem key={i} {...item} />
+            ))}
+          </div>
+        </div>
 
+        {/* Notification Section */}
+        <div className="bg-white rounded-[40px] border border-slate-200 overflow-hidden shadow-sm">
+          <div className="px-8 py-4 bg-slate-50 border-b border-slate-100">
+            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">{notificationSection.title}</span>
+          </div>
+          <div>
+            {notificationSection.items.map((item, i) => (
+              <SettingItem key={i} {...item} />
+            ))}
+          </div>
+        </div>
+
+        {/* Email Settings (only for logged-in users) */}
+        {account && (
+          <EmailSettings account={account} onUpdate={onAccountUpdate} />
+        )}
+
+        {/* Logout / Register */}
         {account ? (
-          <button 
-            onClick={() => { localStorage.clear(); window.location.reload(); }}
+          <button
+            onClick={handleLogout}
             className="w-full flex items-center justify-center gap-3 p-6 bg-rose-50 text-rose-600 rounded-[32px] font-black uppercase tracking-widest text-[10px] hover:bg-rose-100 transition-all"
           >
             <LogOut className="w-4 h-4" /> Abmelden & Session beenden
           </button>
         ) : (
           <div className="bg-blue-600 p-8 rounded-[40px] text-white shadow-xl shadow-blue-500/20 text-center">
-            <h4 className="font-black text-lg mb-2">Cloud-Features nutzen</h4>
+            <h4 className="font-black text-lg mb-2">Alle Features nutzen</h4>
             <p className="text-xs text-blue-100 mb-6 leading-relaxed">
-              Registrieren Sie sich, um Ihr Portfolio auf allen Geräten zu synchronisieren und wöchentliche KI-Analysen per E-Mail zu erhalten.
+              Registrieren Sie sich, um Ihr Portfolio zu speichern, tägliche E-Mail-Reports zu erhalten und auf allen Geräten zu synchronisieren.
             </p>
-            <button className="px-8 py-4 bg-white text-blue-600 rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-blue-50 transition-all">
-              Jetzt Konto erstellen
-            </button>
+            <div className="flex gap-3 justify-center">
+              <button
+                onClick={() => onShowAuth('register')}
+                className="px-8 py-4 bg-white text-blue-600 rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-blue-50 transition-all"
+              >
+                Konto erstellen
+              </button>
+              <button
+                onClick={() => onShowAuth('login')}
+                className="px-8 py-4 bg-blue-500 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-blue-400 transition-all border border-blue-400"
+              >
+                Anmelden
+              </button>
+            </div>
           </div>
         )}
       </div>
