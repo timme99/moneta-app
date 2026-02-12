@@ -11,8 +11,10 @@ import MarketNewsTicker from './components/MarketNewsTicker';
 import Legal from './components/Legal';
 import AuthModal from './components/AuthModal';
 import { PortfolioAnalysisReport, PortfolioHealthReport, PortfolioSavingsReport, UserAccount } from './types';
-import { analyzePortfolio } from './services/geminiService';
+import { analyzePortfolio, fetchMarketNews } from './services/geminiService';
+import { stockService } from './services/stockService';
 import { userService } from './services/userService';
+import { emailService } from './services/emailService';
 import { Clock, AlertTriangle, ShieldCheck } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -38,23 +40,106 @@ const App: React.FC = () => {
           setHealthReport(user.portfolioData.health);
           setSavingsReport(user.portfolioData.savings);
           setLastUpdate(localStorage.getItem('moneta_last_update'));
+
+          // Auto-send daily report if configured
+          if (emailService.shouldSendToday() && user.portfolioData.report) {
+            const settings = emailService.getSettings();
+            const report = user.portfolioData.report;
+            emailService.sendDailyReport(
+              settings.email,
+              report.holdings,
+              report.score,
+              report.summary
+            ).catch(err => console.error('Auto daily report failed:', err));
+          }
         }
       }
     };
     loadData();
   }, []);
 
-  const processMasterData = useCallback((masterData: any) => {
+  const enrichWithStockPrices = useCallback(async (report: PortfolioAnalysisReport): Promise<PortfolioAnalysisReport> => {
+    try {
+      const holdingsWithTickers = report.holdings.filter(h => h.ticker);
+      if (holdingsWithTickers.length === 0) return report;
+
+      const tickers = holdingsWithTickers.map(h => h.ticker!);
+      const quotes = await stockService.getMultipleQuotes(tickers);
+
+      const enrichedHoldings = report.holdings.map(holding => {
+        if (!holding.ticker) return holding;
+        const quoteIdx = tickers.indexOf(holding.ticker);
+        const quote = quoteIdx >= 0 ? quotes[quoteIdx] : null;
+        if (quote) {
+          return {
+            ...holding,
+            currentPrice: `${quote.price.toFixed(2)}€`,
+            trend: quote.changePercent > 0
+              ? `+${quote.changePercent.toFixed(2)}% Aufwärtstrend`
+              : quote.changePercent < 0
+                ? `${quote.changePercent.toFixed(2)}% Abwärtstrend`
+                : 'Stabil'
+          };
+        }
+        return holding;
+      });
+
+      return { ...report, holdings: enrichedHoldings };
+    } catch (error) {
+      console.error('Stock price enrichment failed:', error);
+      return report;
+    }
+  }, []);
+
+  const refreshNews = useCallback(async (report: PortfolioAnalysisReport): Promise<PortfolioAnalysisReport> => {
+    if (report.news && report.news.length > 0) return report;
+    try {
+      const holdingNames = report.holdings.map(h => h.name);
+      const news = await fetchMarketNews(holdingNames);
+      if (news.length > 0) {
+        return { ...report, news };
+      }
+    } catch (error) {
+      console.error('News fetch failed:', error);
+    }
+    return report;
+  }, []);
+
+  const processMasterData = useCallback(async (masterData: any) => {
     if (!masterData || Object.keys(masterData).length === 0) return;
 
-    const report: PortfolioAnalysisReport = {
+    let report: PortfolioAnalysisReport = {
       ...masterData,
       score: masterData.score || 0,
       summary: masterData.summary || "",
       holdings: masterData.holdings || [],
       news: masterData.news || [],
+      sectors: masterData.sectors || [],
+      regions: masterData.regions || [],
+      performance_history: masterData.performance_history || [],
+      strengths: masterData.strengths || [],
+      considerations: masterData.considerations || [],
+      diversification_score: masterData.diversification_score || 5,
+      risk_level: masterData.risk_level || 'medium',
+      context: masterData.context || '',
+      gaps: masterData.gaps || [],
       nextSteps: masterData.nextSteps || (masterData.next_step ? [{ action: "Check", description: masterData.next_step }] : [])
     };
+
+    // Enrich with live stock prices (non-blocking)
+    enrichWithStockPrices(report).then(enrichedReport => {
+      setAnalysisReport(enrichedReport);
+      if (userAccount) {
+        userService.savePortfolio(userAccount.id, enrichedReport, healthReport, savingsReport);
+      }
+    });
+
+    // Fetch additional news if analysis didn't return enough
+    refreshNews(report).then(reportWithNews => {
+      if (reportWithNews !== report) {
+        setAnalysisReport(prev => prev ? { ...prev, news: reportWithNews.news } : prev);
+      }
+    });
 
     const health: PortfolioHealthReport = {
       health_score: Math.round(masterData.score / 10) || 0,
@@ -62,45 +147,44 @@ const App: React.FC = () => {
       color: (masterData.score || 0) > 70 ? "emerald" : "blue",
       summary: masterData.summary || "",
       factors: {
-        diversification: { score: masterData.health_factors?.div || 0, note: "Streuung" },
-        cost_efficiency: { score: masterData.health_factors?.cost || 0, note: "Gebühren" },
-        risk_balance: { score: masterData.health_factors?.risk || 0, note: "Risiko" },
-        allocation_drift: { score: 8, note: "Balance" }
+        diversification: { score: masterData.health_factors?.div || 0, note: "Streuung über Märkte und Branchen" },
+        cost_efficiency: { score: masterData.health_factors?.cost || 0, note: "Gebührenstruktur des Depots" },
+        risk_balance: { score: masterData.health_factors?.risk || 0, note: "Risiko-Rendite-Verhältnis" },
+        allocation_drift: { score: 8, note: "Strategietreue der Allokation" }
       },
-      top_strength: "Basis-Check durchgeführt",
-      top_consideration: "Kostenstruktur prüfen"
+      top_strength: masterData.strengths?.[0] || "Basis-Check durchgeführt",
+      top_consideration: masterData.considerations?.[0] || "Kostenstruktur prüfen"
     };
 
     const savings: PortfolioSavingsReport = {
       current_annual_costs: "?", optimized_annual_costs: "?",
       potential_savings: `${masterData.savings || 0}€`,
       savings_percentage: "N/A", breakdown: [],
-      explanation: "KI-basierte Schätzung.",
-      considerations: ["Handelskosten beachten"]
+      explanation: "KI-basierte Schätzung der jährlichen Einsparmöglichkeiten.",
+      considerations: ["Handelskosten und Spread beachten", "Steuerliche Auswirkungen prüfen"]
     };
 
     setAnalysisReport(report);
     setHealthReport(health);
     setSavingsReport(savings);
-    
-    const now = new Date().toLocaleTimeString();
+
+    const now = new Date().toLocaleTimeString('de-DE');
     setLastUpdate(now);
     localStorage.setItem('moneta_last_update', now);
-    
+
     if (userAccount) {
       userService.savePortfolio(userAccount.id, report, health, savings);
     }
     setActiveView('cockpit');
-  }, [userAccount]);
+  }, [userAccount, healthReport, savingsReport, enrichWithStockPrices, refreshNews]);
 
   const handleAnalysis = async (input: { text?: string, fileBase64?: string }) => {
     setIsGlobalLoading(true);
     try {
       const masterData = await analyzePortfolio(input);
       userService.useCredit();
-      processMasterData(masterData);
+      await processMasterData(masterData);
     } catch (error: any) {
-      // Anzeige der benutzerfreundlichen deutschen Fehlermeldung
       if (error.message.includes(':')) {
         alert(error.message.split(':')[1]);
       } else {
@@ -111,6 +195,10 @@ const App: React.FC = () => {
     }
   };
 
+  const handleNewsClick = useCallback(async (newsItem: any) => {
+    // Handled in PortfolioDeepDive component
+  }, []);
+
   const openLegal = (type: 'impressum' | 'disclaimer' | 'privacy') => {
     setLegalModal({ isOpen: true, type });
   };
@@ -118,7 +206,7 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen flex flex-col font-sans text-slate-900 bg-slate-50/50">
       <Header activeView={activeView} onViewChange={setActiveView} />
-      
+
       <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 w-full">
         {activeView === 'cockpit' && analysisReport ? (
           <div className="space-y-6">
@@ -138,15 +226,15 @@ const App: React.FC = () => {
               )}
             </div>
 
-            <MarketNewsTicker 
-              news={analysisReport.news} 
-              onNewsClick={() => {}} 
-              isPremium={true} 
+            <MarketNewsTicker
+              news={analysisReport.news}
+              onNewsClick={handleNewsClick}
+              isPremium={true}
             />
 
-            <DashboardSummary 
-              report={analysisReport} 
-              healthReport={healthReport} 
+            <DashboardSummary
+              report={analysisReport}
+              healthReport={healthReport}
               savingsReport={savingsReport}
               insight={null}
             />
@@ -161,10 +249,10 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            <PortfolioDeepDive 
-              report={analysisReport} 
-              healthReport={healthReport} 
-              savingsReport={savingsReport} 
+            <PortfolioDeepDive
+              report={analysisReport}
+              healthReport={healthReport}
+              savingsReport={savingsReport}
             />
           </div>
         ) : (
@@ -174,10 +262,10 @@ const App: React.FC = () => {
             ) : activeView === 'discover' ? (
                <Discover />
             ) : activeView === 'settings' ? (
-               <Settings account={userAccount} />
+               <Settings account={userAccount} onAccountUpdate={setUserAccount} />
             ) : (
-              <EmptyState 
-                onAnalyzeText={(t) => handleAnalysis({ text: t })} 
+              <EmptyState
+                onAnalyzeText={(t) => handleAnalysis({ text: t })}
                 onUploadClick={() => setActiveView('assistant')}
                 isLoading={isGlobalLoading}
               />
