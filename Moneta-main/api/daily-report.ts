@@ -21,7 +21,7 @@ async function generateReportHTML(holdings: any[], score: number, summary: strin
   });
 
   const response = await ai.models.generateContent({
-    model: 'gemini-3-pro-preview',
+    model: 'gemini-2.0-flash',
     contents: [{
       parts: [{
         text: `Erstelle einen professionellen täglichen Portfolio-Bericht als HTML-E-Mail auf Deutsch.

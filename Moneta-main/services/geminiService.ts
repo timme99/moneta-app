@@ -1,48 +1,100 @@
 
+import { GoogleGenAI } from '@google/genai';
+
 const wait = (ms: number) => new Promise(res => setTimeout(res, ms));
 
-/**
- * Zentraler API-Proxy Aufruf
- */
-const callProxy = async (type: string, payload: any, attempt = 0): Promise<any> => {
-  const MAX_RETRIES = 2;
-  const BASE_DELAY = 1000;
+// API Key wird von Vite injiziert (vite.config.ts define)
+const API_KEY = (process.env.GEMINI_API_KEY || process.env.API_KEY || '') as string;
+const MODEL_NAME = 'gemini-2.0-flash';
 
-  const userData = localStorage.getItem('moneta_db_mock');
-  const userId = userData ? JSON.parse(userData).id : null;
+let aiInstance: GoogleGenAI | null = null;
+
+function getAI(): GoogleGenAI {
+  if (!aiInstance) {
+    if (!API_KEY) {
+      throw new Error('CONFIG_ERROR:Gemini API-Key nicht konfiguriert. Bitte GEMINI_API_KEY in der .env.local setzen.');
+    }
+    aiInstance = new GoogleGenAI({ apiKey: API_KEY });
+  }
+  return aiInstance;
+}
+
+/**
+ * Direkter Gemini SDK Aufruf mit Retry-Logik
+ */
+const callGemini = async (contents: any, config: any = {}, attempt = 0): Promise<string> => {
+  const MAX_RETRIES = 2;
+  const BASE_DELAY = 1500;
 
   try {
-    const response = await fetch('/api/gemini', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type, payload, userId })
+    const ai = getAI();
+    const response = await ai.models.generateContent({
+      model: MODEL_NAME,
+      contents,
+      config
     });
 
-    if (response.status === 429) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(`LIMIT_REACHED:Tageslimit für diese Funktion erreicht. Verfügbar in ca. ${errorData.resetIn || 1}h.`);
+    const text = response.text || '';
+    if (!text) {
+      throw new Error('Leere Antwort von der KI.');
     }
-
-    if (!response.ok) {
-      if (response.status >= 500 && attempt < MAX_RETRIES) {
-        await wait(BASE_DELAY * Math.pow(2, attempt));
-        return callProxy(type, payload, attempt + 1);
-      }
-      throw new Error('API_ERROR:Der Server ist derzeit ausgelastet.');
-    }
-
-    return await response.json();
+    return text;
 
   } catch (error: any) {
-    if (error.message.includes('LIMIT_REACHED')) throw error;
+    if (error.message?.includes('CONFIG_ERROR')) throw error;
+
+    console.error(`[Moneta Gemini] Versuch ${attempt + 1} fehlgeschlagen:`, error.message);
 
     if (attempt < MAX_RETRIES) {
       await wait(BASE_DELAY * Math.pow(2, attempt));
-      return callProxy(type, payload, attempt + 1);
+      return callGemini(contents, config, attempt + 1);
     }
-    throw new Error('NETWORK_ERROR:Keine Verbindung zum Server möglich.');
+
+    if (error.message?.includes('API key')) {
+      throw new Error('CONFIG_ERROR:Ungültiger API-Key. Bitte GEMINI_API_KEY prüfen.');
+    }
+    if (error.status === 429 || error.message?.includes('quota') || error.message?.includes('rate')) {
+      throw new Error('LIMIT_REACHED:API-Limit erreicht. Bitte in einigen Minuten erneut versuchen.');
+    }
+    throw new Error('API_ERROR:Die KI-Analyse konnte nicht durchgeführt werden. Bitte versuche es erneut.');
   }
 };
+
+/**
+ * JSON sicher parsen - versucht auch JSON aus Markdown zu extrahieren
+ */
+function safeParseJSON(text: string): any {
+  // Erst direkt versuchen
+  try {
+    return JSON.parse(text);
+  } catch {
+    // Versuche JSON aus ```json ... ``` Markdown zu extrahieren
+    const markdownMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (markdownMatch) {
+      try {
+        return JSON.parse(markdownMatch[1].trim());
+      } catch { /* weiter versuchen */ }
+    }
+
+    // Versuche erstes JSON-Objekt zu extrahieren
+    const objectMatch = text.match(/\{[\s\S]*\}/);
+    if (objectMatch) {
+      try {
+        return JSON.parse(objectMatch[0]);
+      } catch { /* weiter versuchen */ }
+    }
+
+    // Versuche JSON-Array zu extrahieren
+    const arrayMatch = text.match(/\[[\s\S]*\]/);
+    if (arrayMatch) {
+      try {
+        return JSON.parse(arrayMatch[0]);
+      } catch { /* aufgeben */ }
+    }
+
+    throw new Error('PARSE_ERROR:Die KI-Antwort konnte nicht als JSON verarbeitet werden.');
+  }
+}
 
 const PORTFOLIO_ANALYSIS_SCHEMA = `
 Du bist ein professioneller Finanzanalyst. Analysiere das folgende Depot/Portfolio und gib eine detaillierte Analyse als JSON zurück.
@@ -147,31 +199,30 @@ REGELN:
 `;
 
 export const analyzePortfolio = async (input: { text?: string, fileBase64?: string, fileType?: string }) => {
-  const contents: any[] = [{
-    parts: [{ text: PORTFOLIO_ANALYSIS_SCHEMA + "\n\nHier ist das zu analysierende Depot:\n" + (input.text || "Bitte analysiere ein allgemeines Beispiel-Depot.") }]
-  }];
+  const userPrompt = PORTFOLIO_ANALYSIS_SCHEMA + "\n\nHier ist das zu analysierende Depot:\n" + (input.text || "Bitte analysiere ein allgemeines Beispiel-Depot.");
+
+  let contents: any;
   if (input.fileBase64) {
     const data = input.fileBase64.includes(',') ? input.fileBase64.split(',')[1] : input.fileBase64;
-    contents[0].parts.push({ inlineData: { mimeType: input.fileType || 'image/jpeg', data } });
+    contents = [
+      {
+        role: 'user',
+        parts: [
+          { text: userPrompt },
+          { inlineData: { mimeType: input.fileType || 'image/jpeg', data } }
+        ]
+      }
+    ];
+  } else {
+    contents = userPrompt;
   }
 
-  const result = await callProxy('analysis', {
-    contents,
-    config: { responseMimeType: "application/json", temperature: 0.2 }
+  const responseText = await callGemini(contents, {
+    responseMimeType: "application/json",
+    temperature: 0.2
   });
 
-  let parsed;
-  try {
-    parsed = JSON.parse(result.text);
-  } catch {
-    // Try to extract JSON from the response if wrapped in markdown
-    const jsonMatch = result.text.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      parsed = JSON.parse(jsonMatch[0]);
-    } else {
-      throw new Error('PARSE_ERROR:Die KI-Antwort konnte nicht verarbeitet werden. Bitte versuche es erneut.');
-    }
-  }
+  const parsed = safeParseJSON(responseText);
 
   // Ensure required fields have defaults
   return {
@@ -208,26 +259,25 @@ export const analyzePortfolio = async (input: { text?: string, fileBase64?: stri
 
 export const getFinancialAdvice = async (message: string, history: any[]) => {
   const mappedHistory = history.map(h => ({
-    ...h,
-    role: h.role === 'assistant' ? 'model' : h.role
+    role: h.role === 'assistant' ? 'model' : 'user',
+    parts: [{ text: h.parts?.[0]?.text || h.content || '' }]
   }));
 
   const systemPrompt = "Du bist Moneta, ein freundlicher und kompetenter KI-Finanzberater. Antworte auf Deutsch. " +
     "Gib hilfreiche, verständliche Finanzberatung. Weise bei konkreten Anlageempfehlungen immer darauf hin, " +
     "dass dies keine professionelle Anlageberatung ist. Halte Antworten kurz und prägnant (max 3-4 Absätze).";
 
-  const result = await callProxy('chat', {
-    contents: [
-      ...mappedHistory.slice(-4),
-      { role: 'user', parts: [{ text: systemPrompt + "\n\nNutzer-Frage: " + message }] }
-    ],
-    config: { maxOutputTokens: 800, temperature: 0.7 }
-  });
-  return result.text;
+  const contents = [
+    ...mappedHistory.slice(-4),
+    { role: 'user', parts: [{ text: systemPrompt + "\n\nNutzer-Frage: " + message }] }
+  ];
+
+  return await callGemini(contents, { maxOutputTokens: 800, temperature: 0.7 });
 };
 
-const NEWS_IMPACT_SCHEMA = `
-Analysiere den Impact dieser Nachricht auf das Portfolio. Antworte NUR mit validem JSON:
+export const analyzeNewsImpact = async (news: any, holdings: any[]) => {
+  const holdingNames = holdings.map(h => h.name).join(', ');
+  const prompt = `Analysiere den Impact dieser Nachricht auf das Portfolio. Antworte NUR mit validem JSON:
 {
   "relevance": "high",
   "impact_summary": "Zusammenfassung des Impacts auf Deutsch",
@@ -242,26 +292,16 @@ Analysiere den Impact dieser Nachricht auf das Portfolio. Antworte NUR mit valid
   "educational_note": "Lehrreicher Hinweis für den Anleger"
 }
 "relevance" muss "high", "medium" oder "low" sein.
-`;
 
-export const analyzeNewsImpact = async (news: any, holdings: any[]) => {
-  const holdingNames = holdings.map(h => h.name).join(', ');
-  const result = await callProxy('news', {
-    contents: [{ parts: [{
-      text: NEWS_IMPACT_SCHEMA +
-        `\n\nNachricht: "${news.title}" - ${news.snippet}\n` +
-        `Portfolio-Holdings: ${holdingNames}`
-    }] }],
-    config: { responseMimeType: "application/json", temperature: 0.2 }
+Nachricht: "${news.title}" - ${news.snippet}
+Portfolio-Holdings: ${holdingNames}`;
+
+  const responseText = await callGemini(prompt, {
+    responseMimeType: "application/json",
+    temperature: 0.2
   });
 
-  let parsed;
-  try {
-    parsed = JSON.parse(result.text);
-  } catch {
-    const jsonMatch = result.text.match(/\{[\s\S]*\}/);
-    parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : {};
-  }
+  const parsed = safeParseJSON(responseText);
 
   return {
     relevance: parsed.relevance || 'medium',
@@ -292,23 +332,15 @@ Antworte NUR mit validem JSON im folgenden Format:
   "comparison_summary": "Zusammenfassung auf Deutsch"
 }`;
 
-  const result = await callProxy('analysis', {
-    contents: [{ parts: [{ text: prompt }] }],
-    config: { responseMimeType: "application/json", temperature: 0.2 }
+  const responseText = await callGemini(prompt, {
+    responseMimeType: "application/json",
+    temperature: 0.2
   });
-
-  let parsed;
-  try {
-    parsed = JSON.parse(result.text);
-  } catch {
-    const jsonMatch = result.text.match(/\{[\s\S]*\}/);
-    parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : { etfs: [], comparison_summary: 'Vergleich fehlgeschlagen.' };
-  }
-  return parsed;
+  return safeParseJSON(responseText);
 };
 
 export const explainStrategy = async (name: string) => {
-  const prompt = `Erkläre die Anlagestrategie "${name}" detailliert. Antworte NUR mit validem JSON:
+  const prompt = `Erkläre die Anlagestrategie "${name}" detailliert auf Deutsch. Antworte NUR mit validem JSON:
 {
   "strategy_name": "${name}",
   "description": "Beschreibung",
@@ -319,19 +351,11 @@ export const explainStrategy = async (name: string) => {
   "alternatives": ["Alternative 1"]
 }`;
 
-  const result = await callProxy('chat', {
-    contents: [{ parts: [{ text: prompt }] }],
-    config: { responseMimeType: "application/json", temperature: 0.3 }
+  const responseText = await callGemini(prompt, {
+    responseMimeType: "application/json",
+    temperature: 0.3
   });
-
-  let parsed;
-  try {
-    parsed = JSON.parse(result.text);
-  } catch {
-    const jsonMatch = result.text.match(/\{[\s\S]*\}/);
-    parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : { strategy_name: name, description: 'Erklärung nicht verfügbar.' };
-  }
-  return parsed;
+  return safeParseJSON(responseText);
 };
 
 export const generatePortfolioSuggestion = async (data: any) => {
@@ -343,19 +367,11 @@ export const generatePortfolioSuggestion = async (data: any) => {
     `Anlagehorizont: ${data.timeHorizon || '10'} Jahre\n` +
     `Erstelle ein konkretes ETF/Aktien-Portfolio mit realen Wertpapieren.`;
 
-  const result = await callProxy('analysis', {
-    contents: [{ parts: [{ text: prompt }] }],
-    config: { responseMimeType: "application/json", temperature: 0.3 }
+  const responseText = await callGemini(prompt, {
+    responseMimeType: "application/json",
+    temperature: 0.3
   });
-
-  let parsed;
-  try {
-    parsed = JSON.parse(result.text);
-  } catch {
-    const jsonMatch = result.text.match(/\{[\s\S]*\}/);
-    parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : {};
-  }
-  return parsed;
+  return safeParseJSON(responseText);
 };
 
 export const fetchMarketNews = async (holdings: string[]): Promise<any[]> => {
@@ -375,18 +391,11 @@ Antworte NUR mit validem JSON-Array:
 Verwende realistische, aktuelle Marktnachrichten basierend auf deinem Wissen.`;
 
   try {
-    const result = await callProxy('news', {
-      contents: [{ parts: [{ text: prompt }] }],
-      config: { responseMimeType: "application/json", temperature: 0.4 }
+    const responseText = await callGemini(prompt, {
+      responseMimeType: "application/json",
+      temperature: 0.4
     });
-
-    let parsed;
-    try {
-      parsed = JSON.parse(result.text);
-    } catch {
-      const jsonMatch = result.text.match(/\[[\s\S]*\]/);
-      parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
-    }
+    const parsed = safeParseJSON(responseText);
     return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
@@ -413,9 +422,5 @@ Der Bericht soll enthalten:
 Formatiere als sauberes HTML mit inline-Styles. Verwende eine professionelle, aber verständliche Sprache.
 Antworte NUR mit dem HTML-String (kein JSON, kein Markdown).`;
 
-  const result = await callProxy('chat', {
-    contents: [{ parts: [{ text: prompt }] }],
-    config: { maxOutputTokens: 1500, temperature: 0.5 }
-  });
-  return result.text;
+  return await callGemini(prompt, { maxOutputTokens: 1500, temperature: 0.5 });
 };
