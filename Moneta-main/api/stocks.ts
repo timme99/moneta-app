@@ -1,24 +1,12 @@
-// api/stocks.ts - Alpha Vantage Integration for ETF & Stock Data
-
+// api/stocks.ts - Yahoo Finance Integration via RapidAPI
 export const config = {
-  runtime: 'edge',
+  runtime: 'edge', // Optimiert für Vercel Edge Runtime
 };
 
-interface QuoteData {
-  symbol: string;
-  price: number;
-  change: number;
-  changePercent: number;
-  volume: number;
-  marketCap?: number;
-  name?: string;
-}
-
 export default async function handler(request: Request) {
-  // CORS headers
   const headers = {
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
     'Content-Type': 'application/json',
   };
@@ -28,74 +16,52 @@ export default async function handler(request: Request) {
   }
 
   try {
-    const url = new URL(request.url);
-    const symbol = url.searchParams.get('symbol');
-    const isin = url.searchParams.get('isin');
+    const { searchParams } = new URL(request.url);
+    const symbol = searchParams.get('symbol') || 'AAPL';
+    const mode = searchParams.get('mode') || 'quote'; // 'quote' für Preise, 'chat' für Diskussionen
 
-    if (!symbol && !isin) {
-      return new Response(
-        JSON.stringify({ error: 'Symbol or ISIN required' }),
-        { headers, status: 400 }
-      );
-    }
+    // Nutze deinen neuen Key-Namen aus Vercel
+    const apiKey = process.env.RAPIDAPI_KEY; 
+    const apiHost = 'yh-finance.p.rapidapi.com';
 
-    const apiKey = process.env.ALPHA_VANTAGE_API_KEY;
-    
     if (!apiKey) {
-      return new Response(
-        JSON.stringify({ error: 'API key not configured' }),
-        { headers, status: 500 }
-      );
+      return new Response(JSON.stringify({ error: 'API Key nicht konfiguriert' }), { headers, status: 500 });
     }
 
-    // If ISIN provided, convert to symbol (simplified - you may need a mapping service)
-    const searchSymbol = symbol || isin;
+    // Wähle die URL basierend auf deinem cURL-Beispiel oder Preisdaten
+    const url = mode === 'chat' 
+      ? `https://${apiHost}/conversations/list?symbol=${symbol}&region=US`
+      : `https://${apiHost}/stock/v2/get-summary?symbol=${symbol}&region=US`;
 
-    // Get quote data from Alpha Vantage
-    const avUrl = `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${searchSymbol}&apikey=${apiKey}`;
-    
-    const response = await fetch(avUrl);
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'x-rapidapi-host': apiHost,
+        'x-rapidapi-key': apiKey,
+      },
+    });
+
     const data = await response.json();
 
-    if (data['Error Message'] || data['Note']) {
-      return new Response(
-        JSON.stringify({ 
-          error: 'API limit reached or invalid symbol',
-          message: data['Note'] || data['Error Message']
-        }),
-        { headers, status: 429 }
-      );
+    // Formatierung für deine App "Moneta"
+    if (mode === 'chat') {
+      // Extrahiere nur die relevanten Kommentare aus deinem cURL-Beispiel
+      const comments = data.conversations?.map((c: any) => c.content) || [];
+      return new Response(JSON.stringify({ symbol, comments }), { headers, status: 200 });
+    } else {
+      // Extrahiere Preisdaten aus der Summary-API
+      const priceData = {
+        symbol: symbol,
+        price: data.price?.regularMarketPrice?.raw || 0,
+        change: data.price?.regularMarketChange?.raw || 0,
+        changePercent: data.price?.regularMarketChangePercent?.fmt || "0%",
+        name: data.price?.shortName || symbol,
+        currency: data.price?.currency || 'USD'
+      };
+      return new Response(JSON.stringify(priceData), { headers, status: 200 });
     }
-
-    const quote = data['Global Quote'];
-    
-    if (!quote || !quote['05. price']) {
-      return new Response(
-        JSON.stringify({ error: 'No data found for symbol' }),
-        { headers, status: 404 }
-      );
-    }
-
-    // Parse and format the response
-    const quoteData: QuoteData = {
-      symbol: quote['01. symbol'],
-      price: parseFloat(quote['05. price']),
-      change: parseFloat(quote['09. change']),
-      changePercent: parseFloat(quote['10. change percent'].replace('%', '')),
-      volume: parseInt(quote['06. volume']),
-      name: searchSymbol,
-    };
-
-    return new Response(
-      JSON.stringify(quoteData),
-      { headers, status: 200 }
-    );
 
   } catch (error) {
-    console.error('Stock API error:', error);
-    return new Response(
-      JSON.stringify({ error: 'Internal server error' }),
-      { headers, status: 500 }
-    );
+    return new Response(JSON.stringify({ error: 'Interner Serverfehler' }), { headers, status: 500 });
   }
 }
