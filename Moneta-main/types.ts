@@ -32,17 +32,24 @@ export interface PerformanceDataPoint {
   benchmark: number;
 }
 
+export interface HoldingEntry {
+  name: string;
+  weight: number;
+  isin?: string;
+  ticker?: string;
+  decision: 'Kaufen' | 'Halten' | 'Verkaufen';
+  reason: string;
+  currentPrice?: string;
+  trend?: string;
+  ter?: number;
+  assetClass?: string;
+  dailyChange?: number;
+  totalReturn?: number;
+  value?: number;
+}
+
 export interface PortfolioAnalysisReport {
-  holdings: { 
-    name: string; 
-    weight: number; 
-    isin?: string; 
-    ticker?: string; 
-    decision: 'Kaufen' | 'Halten' | 'Verkaufen'; 
-    reason: string; 
-    currentPrice?: string; 
-    trend?: string 
-  }[];
+  holdings: HoldingEntry[];
   sectors: { name: string; value: number }[];
   regions: { name: string; value: number }[];
   performance_history: PerformanceDataPoint[];
@@ -54,11 +61,11 @@ export interface PortfolioAnalysisReport {
   context: string;
   score: number;
   gaps: string[];
-  news: { 
-    title: string; 
-    source: string; 
-    snippet: string; 
-    url?: string; 
+  news: {
+    title: string;
+    source: string;
+    snippet: string;
+    url?: string;
     ticker?: string;
     importance: 'hoch' | 'mittel' | 'niedrig';
     impact_emoji: string;
@@ -66,6 +73,22 @@ export interface PortfolioAnalysisReport {
   nextSteps: { action: string; description: string }[];
   textResponse?: string;
   lastMarketUpdate?: string;
+  totalValue?: number;
+  totalDailyChange?: number;
+  totalDailyChangePercent?: number;
+  weightedTER?: number;
+  riskMetrics?: RiskMetrics;
+}
+
+export interface RiskMetrics {
+  volatility: number;
+  sharpeRatio: number;
+  maxDrawdown: number;
+  valueAtRisk: number;
+  beta: number;
+  trackingError: number;
+  sortinoRatio: number;
+  informationRatio: number;
 }
 
 export interface PortfolioHealthReport {

@@ -13,6 +13,7 @@ import AuthModal from './components/AuthModal';
 import { PortfolioAnalysisReport, PortfolioHealthReport, PortfolioSavingsReport, UserAccount } from './types';
 import { analyzePortfolio } from './services/geminiService';
 import { userService } from './services/userService';
+import { DEMO_REPORT, DEMO_HEALTH, DEMO_SAVINGS } from './demoData';
 import { Clock, AlertTriangle, ShieldCheck } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -38,8 +39,14 @@ const App: React.FC = () => {
           setHealthReport(user.portfolioData.health);
           setSavingsReport(user.portfolioData.savings);
           setLastUpdate(localStorage.getItem('moneta_last_update'));
+          return;
         }
       }
+      // Load demo data if no saved portfolio exists
+      setAnalysisReport(DEMO_REPORT);
+      setHealthReport(DEMO_HEALTH);
+      setSavingsReport(DEMO_SAVINGS);
+      setLastUpdate(new Date().toLocaleTimeString('de-DE'));
     };
     loadData();
   }, []);
@@ -82,11 +89,11 @@ const App: React.FC = () => {
     setAnalysisReport(report);
     setHealthReport(health);
     setSavingsReport(savings);
-    
-    const now = new Date().toLocaleTimeString();
+
+    const now = new Date().toLocaleTimeString('de-DE');
     setLastUpdate(now);
     localStorage.setItem('moneta_last_update', now);
-    
+
     if (userAccount) {
       userService.savePortfolio(userAccount.id, report, health, savings);
     }
@@ -100,7 +107,6 @@ const App: React.FC = () => {
       userService.useCredit();
       processMasterData(masterData);
     } catch (error: any) {
-      // Anzeige der benutzerfreundlichen deutschen Fehlermeldung
       if (error.message.includes(':')) {
         alert(error.message.split(':')[1]);
       } else {
@@ -118,14 +124,14 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen flex flex-col font-sans text-slate-900 bg-slate-50/50">
       <Header activeView={activeView} onViewChange={setActiveView} />
-      
-      <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 w-full">
+
+      <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
         {activeView === 'cockpit' && analysisReport ? (
           <div className="space-y-6">
-            <div className="flex justify-between items-end mb-4">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end mb-2 gap-4">
               <div>
                 <div className="flex items-center gap-2 mb-1">
-                  <h1 className="text-4xl font-black text-slate-900 tracking-tighter">Cockpit</h1>
+                  <h1 className="text-3xl sm:text-4xl font-black text-slate-900 tracking-tighter">Portfolio Cockpit</h1>
                   <span className="bg-slate-200 text-slate-600 text-[9px] font-black px-2 py-0.5 rounded-md uppercase tracking-widest">Beta</span>
                 </div>
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">KI-gestützte Portfolio-Analyse & Echtzeit-Einblicke</p>
@@ -138,17 +144,23 @@ const App: React.FC = () => {
               )}
             </div>
 
-            <MarketNewsTicker 
-              news={analysisReport.news} 
-              onNewsClick={() => {}} 
-              isPremium={true} 
-            />
-
-            <DashboardSummary 
-              report={analysisReport} 
-              healthReport={healthReport} 
+            <DashboardSummary
+              report={analysisReport}
+              healthReport={healthReport}
               savingsReport={savingsReport}
               insight={null}
+            />
+
+            <MarketNewsTicker
+              news={analysisReport.news}
+              onNewsClick={() => {}}
+              isPremium={true}
+            />
+
+            <PortfolioDeepDive
+              report={analysisReport}
+              healthReport={healthReport}
+              savingsReport={savingsReport}
             />
 
             <div className="bg-amber-50 border border-amber-100 p-5 rounded-[32px] flex items-start gap-4 shadow-sm">
@@ -160,12 +172,6 @@ const App: React.FC = () => {
                 </p>
               </div>
             </div>
-
-            <PortfolioDeepDive 
-              report={analysisReport} 
-              healthReport={healthReport} 
-              savingsReport={savingsReport} 
-            />
           </div>
         ) : (
           <div className="animate-in fade-in duration-500">
@@ -176,8 +182,8 @@ const App: React.FC = () => {
             ) : activeView === 'settings' ? (
                <Settings account={userAccount} />
             ) : (
-              <EmptyState 
-                onAnalyzeText={(t) => handleAnalysis({ text: t })} 
+              <EmptyState
+                onAnalyzeText={(t) => handleAnalysis({ text: t })}
                 onUploadClick={() => setActiveView('assistant')}
                 isLoading={isGlobalLoading}
               />
