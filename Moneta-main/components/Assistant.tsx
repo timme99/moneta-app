@@ -48,7 +48,7 @@ const Assistant: React.FC<AssistantProps> = ({ onAnalysisComplete }) => {
     if (!input.trim() || isLoading) return;
     setLimitWarning(null);
 
-    const isAnalysis = input.toLowerCase().match(/(depot|portfolio|isin|aktien)/);
+    const isAnalysis = input.toLowerCase().match(/(depot|portfolio|isin|aktien|etf|fond|anlage|habe|besitz|mein|msci|s&p|dax|nasdaq|apple|tesla|amazon|google|microsoft|mercedes|bmw|allianz|siemens|sap)/i);
     const userMsg: ChatMessage = { role: 'user', content: input, timestamp: new Date() };
     setMessages(prev => [...prev, userMsg]);
     setInput('');
@@ -56,15 +56,23 @@ const Assistant: React.FC<AssistantProps> = ({ onAnalysisComplete }) => {
 
     try {
       if (isAnalysis) {
-        const masterData = await analyzePortfolio({ text: input });
         setMessages(prev => [...prev, {
           role: 'assistant',
-          content: masterData.summary || "Analyse abgeschlossen.",
+          content: '🔍 Analysiere dein Portfolio... Einen Moment bitte.',
           timestamp: new Date()
         }]);
+        const masterData = await analyzePortfolio({ text: input });
+        setMessages(prev => {
+          const updated = [...prev];
+          updated[updated.length - 1] = {
+            role: 'assistant',
+            content: `✅ Analyse abgeschlossen!\n\n${masterData.summary || "Dein Portfolio wurde analysiert."}\n\n📊 Score: ${masterData.score || '–'}/100\n💰 Geschätzter Wert: ${masterData.totalValue ? new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(masterData.totalValue) : '–'}\n\n→ Wechsle zum Cockpit für die vollständige Übersicht.`,
+            timestamp: new Date()
+          };
+          return updated;
+        });
         if (onAnalysisComplete) onAnalysisComplete(masterData);
       } else {
-        // Fix: Map role 'assistant' to 'model' for Gemini API compatibility
         const history = messages.map(m => ({
           role: m.role === 'assistant' ? 'model' : 'user',
           parts: [{ text: m.content }]
@@ -73,9 +81,15 @@ const Assistant: React.FC<AssistantProps> = ({ onAnalysisComplete }) => {
         setMessages(prev => [...prev, { role: 'assistant', content: response, timestamp: new Date() }]);
       }
     } catch (error: any) {
-      const msg = error.message.includes(':') ? error.message.split(':')[1] : "Fehler.";
-      setLimitWarning(msg);
-      setMessages(prev => [...prev, { role: 'assistant', content: msg, timestamp: new Date() }]);
+      const errorMsg = error.message || '';
+      let displayMsg = "Ein Fehler ist aufgetreten. Bitte versuche es erneut.";
+      if (errorMsg.includes('NO_KEY')) {
+        displayMsg = "Kein API-Key konfiguriert. Bitte GEMINI_API_KEY in der .env Datei setzen, um Analysen durchzuführen.";
+      } else if (errorMsg.includes(':')) {
+        displayMsg = errorMsg.split(':').slice(1).join(':');
+      }
+      setLimitWarning(displayMsg);
+      setMessages(prev => [...prev, { role: 'assistant', content: displayMsg, timestamp: new Date() }]);
     } finally {
       setIsLoading(false);
     }
