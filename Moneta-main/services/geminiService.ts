@@ -44,9 +44,27 @@ const callProxy = async (type: string, payload: any, attempt = 0): Promise<any> 
   }
 };
 
+const PORTFOLIO_SYSTEM_PROMPT = `Analysiere das Depot und antworte NUR mit einem gültigen JSON-Objekt (kein anderer Text).
+
+WICHTIG – Für jede Position (holding): gültiges Börsensymbol (ticker) setzen. Namen in Ticker umwandeln, z. B.: Apple → AAPL, Microsoft → MSFT, Mercedes/Daimler → DAI, MSCI World → EUNL, S&P 500 ETF → SXR8.
+
+Das JSON MUSS folgende Felder enthalten:
+- holdings: Array mit Objekten { name, ticker, weight (Zahl 0–100), decision ("Kaufen"|"Halten"|"Verkaufen"), reason }
+- sectors: Array mit { name (z. B. "Technologie", "Finanzen"), value (Zahl) } – Aufteilung nach Branchen
+- regions: Array mit { name (z. B. "USA", "Europa"), value (Zahl) } – Aufteilung nach Regionen
+- news: Array mit 3–5 relevanten Marktmeldungen zu den Depotwerten, je { title, source (z. B. "Reuters"), snippet (Kurzzitat), importance ("hoch"|"mittel"|"niedrig"), impact_emoji (z. B. "📉" oder "📈") }
+- summary: Kurze Textzusammenfassung der Analyse
+- score: Zahl 0–100 (Gesamtbewertung)
+- strengths: Array von Strings (Stärken)
+- considerations: Array von Strings (Verbesserungsideen)
+- nextSteps: Array von { action: string, description: string }
+- diversification_score: Zahl, risk_level: "low"|"medium"|"high", context: string, gaps: Array von Strings
+- ma_attractiveness_score: Zahl von 1 bis 10 – M&A-Attraktivitäts-Score des Depots. Berechne ihn aus: (1) KGV/P-E-Verhältnis der Positionen (niedriges KGV kann attraktiver sein), (2) Sektor-Mix (z. B. konsolidierungsreife Branchen), (3) aktuelle News (Übernahmegerüchte, Branchentrends). 1 = kaum attraktiv, 10 = sehr attraktiv für M&A.
+- ma_attractiveness_note: Kurzer Satz (optional), der die Bewertung in einem Satz erklärt.`;
+
 export const analyzePortfolio = async (input: { text?: string, fileBase64?: string, fileType?: string }) => {
   const contents: any[] = [{ 
-    parts: [{ text: "Analysiere dieses Depot. JSON Output erforderlich." }] 
+    parts: [{ text: PORTFOLIO_SYSTEM_PROMPT + "\n\nAnalysiere dieses Depot. Antworte nur mit gültigem JSON." }] 
   }];
   contents[0].parts.push({ text: input.text || "" });
   if (input.fileBase64) {
@@ -100,8 +118,17 @@ export const explainStrategy = async (name: string) => {
 
 export const generatePortfolioSuggestion = async (data: any) => {
   const result = await callProxy('analysis', {
-    contents: [{ parts: [{ text: `Erstelle einen personalisierten Portfolio-Vorschlag basierend auf diesen Präferenzen: ${JSON.stringify(data)}. Gib die Antwort als JSON im Format der Schnittstelle PortfolioAnalysisReport zurück.` }] }],
+    contents: [{ parts: [{ text: `${PORTFOLIO_SYSTEM_PROMPT}\n\nErstelle einen personalisierten Portfolio-Vorschlag basierend auf: ${JSON.stringify(data)}. Gib die Antwort als JSON im Format PortfolioAnalysisReport zurück. Jedes holding mit name und ticker (z. B. AAPL, EUNL, VWRL).` }] }],
     config: { responseMimeType: "application/json" }
   });
   return JSON.parse(result.text);
+};
+
+/** Namen (z. B. "Apple", "Mercedes") in Börsenticker umwandeln (AAPL, DAI). Nutzt Gemini. */
+export const resolveStockNamesToTickers = async (names: string[]): Promise<{ name: string; ticker: string }[]> => {
+  const input = names.map((n) => n.trim()).filter(Boolean);
+  if (input.length === 0) return [];
+  const result = await callProxy('resolve_ticker', { names: input });
+  const tickers = result.tickers || (result.text ? JSON.parse(result.text).tickers : []);
+  return Array.isArray(tickers) ? tickers : [];
 };

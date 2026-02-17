@@ -1,6 +1,5 @@
-
 import React from 'react';
-import { TrendingUp, Wallet, Percent, ShieldCheck, Info, CheckCircle2 } from 'lucide-react';
+import { TrendingUp, Wallet, Percent, ShieldCheck, Info, CheckCircle2, Building2 } from 'lucide-react';
 import { PortfolioAnalysisReport, PortfolioHealthReport, DashboardSummaryInsight, PortfolioSavingsReport } from '../types';
 
 const SummaryCard = ({ title, value, subtext, icon: Icon, color, explanation }: any) => (
@@ -24,6 +23,13 @@ const SummaryCard = ({ title, value, subtext, icon: Icon, color, explanation }: 
   </div>
 );
 
+function getMABadge(score: number): { label: string; bg: string; text: string; border: string } {
+  if (score <= 3) return { label: 'Gering', bg: 'bg-rose-50', text: 'text-rose-700', border: 'border-rose-200' };
+  if (score <= 5) return { label: 'Moderat', bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' };
+  if (score <= 7) return { label: 'Attraktiv', bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200' };
+  return { label: 'Sehr attraktiv', bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200' };
+}
+
 interface Props {
   report: PortfolioAnalysisReport | null;
   healthReport: PortfolioHealthReport | null;
@@ -34,9 +40,26 @@ interface Props {
 const DashboardSummary: React.FC<Props> = ({ report, healthReport, savingsReport }) => {
   const score = healthReport ? `${healthReport.health_score}/10` : (report ? `${report.score}/10` : "...");
   const savings = savingsReport?.potential_savings || "0€";
+  const maScore = report?.ma_attractiveness_score;
+  const maBadge = maScore != null ? getMABadge(maScore) : null;
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+    <div className="space-y-4">
+      {maBadge != null && (
+        <div className="flex flex-wrap items-center gap-3">
+          <span
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-2xl border font-black text-sm ${maBadge.bg} ${maBadge.text} ${maBadge.border}`}
+            title={report?.ma_attractiveness_note}
+          >
+            <Building2 className="w-4 h-4" />
+            M&A-Attraktivität: {maScore}/10 · {maBadge.label}
+          </span>
+          {report?.ma_attractiveness_note && (
+            <span className="text-[11px] text-slate-500 font-medium max-w-md">{report.ma_attractiveness_note}</span>
+          )}
+        </div>
+      )}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
       <SummaryCard 
         title="Sicherheit" 
         value={score} 
@@ -69,6 +92,7 @@ const DashboardSummary: React.FC<Props> = ({ report, healthReport, savingsReport
         color="purple" 
         explanation="Ihr Depot wurde anhand von über 15 Metriken validiert."
       />
+      </div>
     </div>
   );
 };

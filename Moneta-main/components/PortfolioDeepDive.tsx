@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { PortfolioAnalysisReport, NewsImpactReport, PortfolioHealthReport, PortfolioSavingsReport } from '../types';
 import { 
   PieChart, 
@@ -24,9 +24,13 @@ import {
   Coins,
   Sparkles,
   Info,
-  AlertTriangle
+  AlertTriangle,
+  Info as InfoIcon
 } from 'lucide-react';
 import { analyzeNewsImpact } from '../services/geminiService';
+import { stockService } from '../services/stockService';
+import { Alert, AlertTitle, AlertDescription } from './ui/alert';
+import { Skeleton } from './ui/skeleton';
 
 const COLORS = ['#2563eb', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'];
 
@@ -52,22 +56,50 @@ const SimpleHealthCard = ({ title, score, note, icon: Icon, explanation }: any) 
   </div>
 );
 
+type NewsItem = PortfolioAnalysisReport['news'] extends (infer T)[] ? T : never;
+
 interface PortfolioDeepDiveProps {
   report: PortfolioAnalysisReport | null;
   healthReport: PortfolioHealthReport | null;
   savingsReport: PortfolioSavingsReport | null;
+  selectedNewsFromTicker?: NewsItem | null;
+  onClearSelectedNews?: () => void;
 }
 
-const PortfolioDeepDive: React.FC<PortfolioDeepDiveProps> = ({ report, healthReport, savingsReport }) => {
+const CACHED_PRICE_LABEL = '08:00 Uhr';
+
+const PortfolioDeepDive: React.FC<PortfolioDeepDiveProps> = ({ report, healthReport, savingsReport, selectedNewsFromTicker, onClearSelectedNews }) => {
   const [analyzingNews, setAnalyzingNews] = useState<string | null>(null);
   const [newsImpact, setNewsImpact] = useState<NewsImpactReport | null>(null);
+  const [priceLoading, setPriceLoading] = useState(true);
+  const [priceFetchFailed, setPriceFetchFailed] = useState(false);
 
-  if (!report) return null;
+  useEffect(() => {
+    const ticker = report?.holdings?.find((h) => h.ticker)?.['ticker'];
+    if (!ticker) {
+      setPriceLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setPriceLoading(true);
+    setPriceFetchFailed(false);
+    stockService.getQuote(ticker).then((quote) => {
+      if (cancelled) return;
+      setPriceLoading(false);
+      if (quote == null) setPriceFetchFailed(true);
+    }).catch(() => {
+      if (!cancelled) {
+        setPriceLoading(false);
+        setPriceFetchFailed(true);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [report?.holdings]);
 
   const handleNewsClick = async (news: any) => {
     setAnalyzingNews(news.title);
     try {
-      const impact = await analyzeNewsImpact(news, report.holdings);
+      const impact = await analyzeNewsImpact(news, report!.holdings);
       setNewsImpact(impact);
     } catch (e) {
       console.error("Fehler bei der Analyse der News", e);
@@ -75,6 +107,17 @@ const PortfolioDeepDive: React.FC<PortfolioDeepDiveProps> = ({ report, healthRep
       setAnalyzingNews(null);
     }
   };
+
+  useEffect(() => {
+    if (!report || !selectedNewsFromTicker) return;
+    document.getElementById('depot-news')?.scrollIntoView({ behavior: 'smooth' });
+    (async () => {
+      await handleNewsClick(selectedNewsFromTicker);
+      onClearSelectedNews?.();
+    })();
+  }, [selectedNewsFromTicker]);
+
+  if (!report) return null;
 
   const factors = healthReport?.factors;
 
@@ -88,11 +131,37 @@ const PortfolioDeepDive: React.FC<PortfolioDeepDiveProps> = ({ report, healthRep
             <BarChart3 className="w-5 h-5 text-blue-600" />
             <h3 className="text-lg md:text-xl font-black text-slate-900 tracking-tight">Depot-Überblick</h3>
           </div>
-          <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm self-stretch sm:self-auto justify-center">
-            <Zap className="w-4 h-4 text-amber-500" />
-            <span className="text-[10px] font-black uppercase tracking-widest text-slate-600">Börsen-Live-Daten</span>
+          <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm self-stretch sm:self-auto justify-center min-w-[180px] min-h-[40px]">
+            {priceLoading ? (
+              <Skeleton className="h-4 w-32" />
+            ) : (
+              <>
+                <Zap className="w-4 h-4 text-amber-500" />
+                <span className="text-[10px] font-black uppercase tracking-widest text-slate-600">Börsen-Live-Daten</span>
+              </>
+            )}
           </div>
         </div>
+
+        {(priceFetchFailed || priceLoading) && (
+          <div className="px-6 md:px-8 pb-4">
+            {priceLoading && (
+              <div className="flex gap-3 items-center rounded-xl border border-slate-100 bg-slate-50/50 p-4">
+                <Skeleton className="h-4 w-24 rounded" />
+                <Skeleton className="h-4 flex-1 max-w-[200px] rounded" />
+              </div>
+            )}
+            {priceFetchFailed && (
+              <Alert className="border-slate-200 bg-slate-50 text-slate-700 mt-3">
+                <InfoIcon className="h-4 w-4 text-slate-500" />
+                <AlertTitle className="text-slate-800 text-xs font-semibold">Echtzeit-Daten vorübergehend nicht verfügbar</AlertTitle>
+                <AlertDescription>
+                  Echtzeit-Daten aktuell ausgelastet, nutze gecachte Werte von {CACHED_PRICE_LABEL}.
+                </AlertDescription>
+              </Alert>
+            )}
+          </div>
+        )}
 
         {/* Mobile-Ansicht (Karten) */}
         <div className="block md:hidden divide-y divide-slate-100">
@@ -202,7 +271,7 @@ const PortfolioDeepDive: React.FC<PortfolioDeepDiveProps> = ({ report, healthRep
       </div>
 
       {/* 2. NEWS */}
-      <div className="bg-white rounded-[32px] md:rounded-[40px] border border-slate-200 p-6 md:p-8 shadow-sm">
+      <div id="depot-news" className="bg-white rounded-[32px] md:rounded-[40px] border border-slate-200 p-6 md:p-8 shadow-sm">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-8 gap-4">
           <div className="flex items-center gap-3">
             <Newspaper className="w-5 h-5 text-blue-600" />

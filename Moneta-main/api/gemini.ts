@@ -1,14 +1,20 @@
-
 import { GoogleGenAI } from "@google/genai";
 
-// Speicher für Rate-Limits (In-Memory)
+// Speicher für Rate-Limits (In-Memory, pro Nutzer/IP)
 const limitStore = new Map<string, any>();
 
-const LIMITS: Record<string, number> = {
-  'analysis': 10,
-  'chat': 30,
-  'news': 15
-};
+/** Limits pro Typ und Tag – über Umgebungsvariablen anpassbar (Kostenschutz). */
+function getLimits(): Record<string, number> {
+  return {
+    analysis: Math.max(0, parseInt(process.env.GEMINI_LIMIT_ANALYSIS ?? '10', 10)),
+    chat: Math.max(0, parseInt(process.env.GEMINI_LIMIT_CHAT ?? '30', 10)),
+    news: Math.max(0, parseInt(process.env.GEMINI_LIMIT_NEWS ?? '15', 10)),
+    resolve_ticker: Math.max(0, parseInt(process.env.GEMINI_LIMIT_RESOLVE_TICKER ?? '30', 10)),
+  };
+}
+
+/** Optional: Gesamt-Anfragen pro Tag pro Nutzer (0 = deaktiviert). */
+const DAILY_CAP = Math.max(0, parseInt(process.env.GEMINI_DAILY_CAP ?? '0', 10));
 
 const WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -21,38 +27,72 @@ export default async function handler(req: any, res: any) {
   const identifier = userId || ip;
   const now = Date.now();
 
+  const LIMITS = getLimits();
   let userStats = limitStore.get(identifier);
   if (!userStats || (now - userStats.lastReset > WINDOW_MS)) {
-    userStats = { analysis: 0, chat: 0, news: 0, lastReset: now };
+    userStats = { analysis: 0, chat: 0, news: 0, resolve_ticker: 0, total: 0, lastReset: now };
   }
 
   const currentType = type as keyof typeof LIMITS;
-  if (!LIMITS[currentType]) return res.status(400).json({ error: 'Ungültiger Request-Typ' });
+  if (!(currentType in LIMITS)) return res.status(400).json({ error: 'Ungültiger Request-Typ' });
 
-  if (userStats[currentType] >= LIMITS[currentType]) {
-    return res.status(429).json({ 
+  const limitForType = LIMITS[currentType];
+  if (limitForType > 0 && userStats[currentType] >= limitForType) {
+    return res.status(429).json({
       error: `Tageslimit für ${type} erreicht.`,
-      resetIn: Math.ceil((userStats.lastReset + WINDOW_MS - now) / 3600000)
+      resetIn: Math.ceil((userStats.lastReset + WINDOW_MS - now) / 3600000),
+    });
+  }
+
+  if (DAILY_CAP > 0 && userStats.total >= DAILY_CAP) {
+    return res.status(429).json({
+      error: 'Tageslimit für alle KI-Anfragen erreicht.',
+      resetIn: Math.ceil((userStats.lastReset + WINDOW_MS - now) / 3600000),
     });
   }
 
   userStats[currentType]++;
+  userStats.total = (userStats.total || 0) + 1;
   limitStore.set(identifier, userStats);
 
-  const usagePercent = (userStats[currentType] / LIMITS[currentType]) * 100;
-  const showWarning = usagePercent >= 80;
+  const usagePercent = limitForType > 0 ? (userStats[currentType] / limitForType) * 100 : 0;
+  const showWarning = limitForType > 0 && usagePercent >= 80;
 
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
   
   try {
     const modelName = 'gemini-3-pro-preview';
+    let contents = payload.contents;
+    let config = payload.config;
+
+    if (type === 'resolve_ticker') {
+      const names = Array.isArray(payload.names) ? payload.names : [String(payload.names || '').trim()].filter(Boolean);
+      const prompt = `Wandle jede Bezeichnung in das offizielle Börsenticker-Symbol um. Antworte NUR mit diesem JSON (kein anderer Text): {"tickers":[{"name":"Original","ticker":"SYMBOL"}]}
+Bezeichnungen: ${names.join('; ')}
+Beispiele: Apple→AAPL, Microsoft→MSFT, Mercedes/Daimler→DAI, Amazon→AMZN, MSCI World→EUNL, Vanguard All-World→VWRL.`;
+      contents = [{ parts: [{ text: prompt }] }];
+      config = { responseMimeType: 'application/json', temperature: 0.1 };
+    }
+
     const response = await ai.models.generateContent({
       model: modelName,
-      contents: payload.contents,
-      config: payload.config
+      contents,
+      config
     });
 
-    const responseText = response.text || "";
+    let responseText = response.text || "";
+
+    if (type === 'resolve_ticker') {
+      const parsed = JSON.parse(responseText);
+      return res.status(200).json({
+        text: responseText,
+        tickers: parsed.tickers || [],
+        meta: {
+          usage: usagePercent,
+          warning: showWarning ? `Achtung: Du hast ${userStats[currentType]}/${limitForType} deiner täglichen ${type}-Anfragen genutzt.` : null
+        }
+      });
+    }
 
     // Sicherer Audit-Log ohne sensitive Inhalte
     console.log(`[MONETA AUDIT] ID: ${identifier.slice(0, 8)}... | Type: ${type} | Usage: ${usagePercent.toFixed(0)}%`);
@@ -61,7 +101,7 @@ export default async function handler(req: any, res: any) {
       text: responseText,
       meta: {
         usage: usagePercent,
-        warning: showWarning ? `Achtung: Du hast ${userStats[currentType]}/${LIMITS[currentType]} deiner täglichen ${type}-Anfragen genutzt.` : null
+        warning: showWarning ? `Achtung: Du hast ${userStats[currentType]}/${limitForType} deiner täglichen ${type}-Anfragen genutzt.` : null
       }
     });
   } catch (error: any) {

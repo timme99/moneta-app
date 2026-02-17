@@ -15,12 +15,15 @@ import { analyzePortfolio } from './services/geminiService';
 import { userService } from './services/userService';
 import { Clock, AlertTriangle, ShieldCheck } from 'lucide-react';
 
+type NewsItem = PortfolioAnalysisReport['news'] extends (infer T)[] ? T : never;
+
 const App: React.FC = () => {
   const [activeView, setActiveView] = useState('cockpit');
   const [userAccount, setUserAccount] = useState<UserAccount | null>(null);
   const [analysisReport, setAnalysisReport] = useState<PortfolioAnalysisReport | null>(null);
   const [healthReport, setHealthReport] = useState<PortfolioHealthReport | null>(null);
   const [savingsReport, setSavingsReport] = useState<PortfolioSavingsReport | null>(null);
+  const [selectedNewsFromTicker, setSelectedNewsFromTicker] = useState<NewsItem | null>(null);
   const [isGlobalLoading, setIsGlobalLoading] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<string | null>(null);
   const [legalModal, setLegalModal] = useState<{ isOpen: boolean, type: 'impressum' | 'disclaimer' | 'privacy' }>({
@@ -53,7 +56,9 @@ const App: React.FC = () => {
       summary: masterData.summary || "",
       holdings: masterData.holdings || [],
       news: masterData.news || [],
-      nextSteps: masterData.nextSteps || (masterData.next_step ? [{ action: "Check", description: masterData.next_step }] : [])
+      nextSteps: masterData.nextSteps || (masterData.next_step ? [{ action: "Check", description: masterData.next_step }] : []),
+      ma_attractiveness_score: masterData.ma_attractiveness_score != null ? Math.min(10, Math.max(1, Number(masterData.ma_attractiveness_score))) : undefined,
+      ma_attractiveness_note: masterData.ma_attractiveness_note,
     };
 
     const health: PortfolioHealthReport = {
@@ -140,7 +145,7 @@ const App: React.FC = () => {
 
             <MarketNewsTicker 
               news={analysisReport.news} 
-              onNewsClick={() => {}} 
+              onNewsClick={(item) => setSelectedNewsFromTicker(item)} 
               isPremium={true} 
             />
 
@@ -164,7 +169,9 @@ const App: React.FC = () => {
             <PortfolioDeepDive 
               report={analysisReport} 
               healthReport={healthReport} 
-              savingsReport={savingsReport} 
+              savingsReport={savingsReport}
+              selectedNewsFromTicker={selectedNewsFromTicker}
+              onClearSelectedNews={() => setSelectedNewsFromTicker(null)}
             />
           </div>
         ) : (
