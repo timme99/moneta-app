@@ -22,7 +22,7 @@ export default async function handler(request: Request) {
 
     // Nutze deinen neuen Key-Namen aus Vercel
     const apiKey = process.env.RAPIDAPI_KEY; 
-    const apiHost = 'yh-finance.p.rapidapi.com';
+    const apiHost = 'https://alpha-vantage.p.rapidapi.com/query?function=TIME_SERIES_DAILY&symbol=MSFT&outputsize=compact&datatype=json';
 
     if (!apiKey) {
       return new Response(JSON.stringify({ error: 'API Key nicht konfiguriert' }), { headers, status: 500 });
