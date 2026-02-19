@@ -27,6 +27,7 @@ const App: React.FC = () => {
   const [selectedNewsFromTicker, setSelectedNewsFromTicker] = useState<NewsItem | null>(null);
   const [isGlobalLoading, setIsGlobalLoading] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<string | null>(null);
+  const [showAuthModal, setShowAuthModal] = useState(false);
   const [legalModal, setLegalModal] = useState<{ isOpen: boolean, type: 'impressum' | 'disclaimer' | 'privacy' }>({
     isOpen: false,
     type: 'disclaimer'
@@ -131,7 +132,12 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen flex flex-col font-sans text-slate-900 bg-slate-50/50">
-      <Header activeView={activeView} onViewChange={setActiveView} />
+      <Header
+        activeView={activeView}
+        onViewChange={setActiveView}
+        userAccount={userAccount}
+        onLoginClick={() => setShowAuthModal(true)}
+      />
       
       <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 w-full">
         {activeView === 'cockpit' && analysisReport ? (
@@ -263,6 +269,15 @@ const App: React.FC = () => {
       </footer>
 
       <Legal isOpen={legalModal.isOpen} onClose={() => setLegalModal({ ...legalModal, isOpen: false })} type={legalModal.type} />
+
+      <AuthModal
+        isOpen={showAuthModal}
+        onClose={() => setShowAuthModal(false)}
+        onLogin={(user) => {
+          setUserAccount(user);
+          setShowAuthModal(false);
+        }}
+      />
     </div>
   );
 };
