@@ -51,6 +51,7 @@ export interface Database {
           industry: string | null;
           description_static: string | null;
           pe_ratio_static: number | null;
+          competitors: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -61,6 +62,7 @@ export interface Database {
           industry?: string | null;
           description_static?: string | null;
           pe_ratio_static?: number | null;
+          competitors?: string | null;
         };
         Update: {
           company_name?: string;
@@ -68,6 +70,7 @@ export interface Database {
           industry?: string | null;
           description_static?: string | null;
           pe_ratio_static?: number | null;
+          competitors?: string | null;
           updated_at?: string;
         };
       };
@@ -77,8 +80,9 @@ export interface Database {
           id: string;
           user_id: string;
           ticker_id: number;
-          shares: number;
-          buy_price: number;
+          watchlist: boolean;
+          shares: number | null;
+          buy_price: number | null;
           created_at: string;
           updated_at: string;
         };
@@ -86,12 +90,14 @@ export interface Database {
           id?: string;
           user_id: string;
           ticker_id: number;
-          shares: number;
-          buy_price: number;
+          watchlist?: boolean;
+          shares?: number | null;
+          buy_price?: number | null;
         };
         Update: {
-          shares?: number;
-          buy_price?: number;
+          watchlist?: boolean;
+          shares?: number | null;
+          buy_price?: number | null;
           updated_at?: string;
         };
       };

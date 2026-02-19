@@ -48,6 +48,11 @@ const PORTFOLIO_SYSTEM_PROMPT = `Analysiere das Depot und antworte NUR mit einem
 
 WICHTIG – Für jede Position (holding): gültiges Börsensymbol (ticker) setzen. Namen in Ticker umwandeln, z. B.: Apple → AAPL, Microsoft → MSFT, Mercedes/Daimler → DAI, MSCI World → EUNL, S&P 500 ETF → SXR8.
 
+Falls Sektor, Beschreibung oder Wettbewerber für eine Position im Depot-Text angegeben sind, beziehe diese Daten EXPLIZIT in die M&A-Bewertung ein:
+- Niedriges KGV in einem konsolidierungsreifen Sektor = hoher M&A-Score
+- Bekannte Wettbewerber als potenzielle Käufer oder Übernahmeziele einschätzen
+- Branchenbeschreibungen nutzen, um strategischen Fit bei einer Übernahme zu bewerten
+
 Das JSON MUSS folgende Felder enthalten:
 - holdings: Array mit Objekten { name, ticker, weight (Zahl 0–100), decision ("Kaufen"|"Halten"|"Verkaufen"), reason }
 - sectors: Array mit { name (z. B. "Technologie", "Finanzen"), value (Zahl) } – Aufteilung nach Branchen
@@ -59,8 +64,8 @@ Das JSON MUSS folgende Felder enthalten:
 - considerations: Array von Strings (Verbesserungsideen)
 - nextSteps: Array von { action: string, description: string }
 - diversification_score: Zahl, risk_level: "low"|"medium"|"high", context: string, gaps: Array von Strings
-- ma_attractiveness_score: Zahl von 1 bis 10 – M&A-Attraktivitäts-Score des Depots. Berechne ihn aus: (1) KGV/P-E-Verhältnis der Positionen (niedriges KGV kann attraktiver sein), (2) Sektor-Mix (z. B. konsolidierungsreife Branchen), (3) aktuelle News (Übernahmegerüchte, Branchentrends). 1 = kaum attraktiv, 10 = sehr attraktiv für M&A.
-- ma_attractiveness_note: Kurzer Satz (optional), der die Bewertung in einem Satz erklärt.`;
+- ma_attractiveness_score: Zahl von 1 bis 10 – M&A-Attraktivitäts-Score des Depots. Berechne ihn aus: (1) KGV/P-E-Verhältnis der Positionen (niedriges KGV = attraktiver für Übernahme), (2) Sektor-Konsolidierungstrend (z. B. Automotive, Pharma = aktuell konsolidierungsreich), (3) Wettbewerbsdynamik aus den Depot-Metadaten (bekannte Wettbewerber als potenzielle Käufer), (4) aktuelle News (Übernahmegerüchte, Branchentrends). 1 = kaum attraktiv, 10 = sehr attraktiv für M&A.
+- ma_attractiveness_note: 1–2 Sätze, die den Score erklären und konkrete Wettbewerber oder Sektordynamiken nennen.`;
 
 export const analyzePortfolio = async (input: { text?: string, fileBase64?: string, fileType?: string }) => {
   const contents: any[] = [{ 

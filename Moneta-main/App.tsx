@@ -10,6 +10,7 @@ import PortfolioDeepDive from './components/PortfolioDeepDive';
 import MarketNewsTicker from './components/MarketNewsTicker';
 import Legal from './components/Legal';
 import AuthModal from './components/AuthModal';
+import PortfolioInput from './components/PortfolioInput';
 import { PortfolioAnalysisReport, PortfolioHealthReport, PortfolioSavingsReport, UserAccount } from './types';
 import { analyzePortfolio } from './services/geminiService';
 import { userService } from './services/userService';
@@ -116,6 +117,14 @@ const App: React.FC = () => {
     }
   };
 
+  /**
+   * Wird von PortfolioInput aufgerufen: erhält bereits formatierten Text
+   * mit allen Holdings inkl. Sektor, Beschreibung und Wettbewerber-Kontext.
+   */
+  const handlePortfolioAnalysis = (portfolioText: string) => {
+    handleAnalysis({ text: portfolioText });
+  };
+
   const openLegal = (type: 'impressum' | 'disclaimer' | 'privacy') => {
     setLegalModal({ isOpen: true, type });
   };
@@ -182,10 +191,24 @@ const App: React.FC = () => {
                <Discover />
             ) : activeView === 'settings' ? (
                <Settings account={userAccount} />
+            ) : activeView === 'portfolio' ? (
+              <div className="space-y-6">
+                <div>
+                  <h1 className="text-4xl font-black text-slate-900 tracking-tighter">Depot verwalten</h1>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">
+                    Aktien & ETFs hinzufügen · Watchlist pflegen · KI-Analyse starten
+                  </p>
+                </div>
+                <PortfolioInput
+                  onAnalyze={handlePortfolioAnalysis}
+                  isLoading={isGlobalLoading}
+                />
+              </div>
             ) : (
-              <EmptyState 
-                onAnalyzeText={(t) => handleAnalysis({ text: t })} 
+              <EmptyState
+                onAnalyzeText={(t) => handleAnalysis({ text: t })}
                 onUploadClick={() => setActiveView('assistant')}
+                onManagePortfolio={() => setActiveView('portfolio')}
                 isLoading={isGlobalLoading}
               />
             )}

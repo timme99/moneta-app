@@ -1,14 +1,15 @@
 
 import React, { useState } from 'react';
-import { Sparkles, Zap, Layout, Send, Loader2, ShieldAlert, ImageIcon, FileText } from 'lucide-react';
+import { Sparkles, Zap, Layout, Send, Loader2, ShieldAlert, ImageIcon, FileText, Database } from 'lucide-react';
 
 interface EmptyStateProps {
   onAnalyzeText: (text: string) => void;
   onUploadClick: () => void;
+  onManagePortfolio?: () => void;
   isLoading?: boolean;
 }
 
-const EmptyState: React.FC<EmptyStateProps> = ({ onAnalyzeText, onUploadClick, isLoading }) => {
+const EmptyState: React.FC<EmptyStateProps> = ({ onAnalyzeText, onUploadClick, onManagePortfolio, isLoading }) => {
   const [input, setInput] = useState('');
 
   const examples = [
@@ -105,7 +106,7 @@ const EmptyState: React.FC<EmptyStateProps> = ({ onAnalyzeText, onUploadClick, i
           <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Broker-Daten nutzen</p>
         </button>
 
-        <button 
+        <button
           onClick={() => onAnalyzeText("Beispiel-Depot: MSCI World, S&P 500, Apple")}
           className="bg-white border border-slate-200 p-8 rounded-[32px] hover:border-blue-600 hover:shadow-xl transition-all group flex flex-col items-center text-center"
         >
@@ -115,6 +116,21 @@ const EmptyState: React.FC<EmptyStateProps> = ({ onAnalyzeText, onUploadClick, i
           <h3 className="font-black text-slate-900 mb-1">Demo-Daten</h3>
           <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Vorschau testen</p>
         </button>
+
+        {onManagePortfolio && (
+          <button
+            onClick={onManagePortfolio}
+            className="bg-white border border-slate-200 p-8 rounded-[32px] hover:border-emerald-500 hover:shadow-xl transition-all group flex flex-col items-center text-center md:col-span-3"
+          >
+            <div className="w-12 h-12 bg-emerald-50 rounded-2xl flex items-center justify-center text-emerald-600 mb-4 group-hover:bg-emerald-600 group-hover:text-white transition-colors">
+              <Database className="w-6 h-6" />
+            </div>
+            <h3 className="font-black text-slate-900 mb-1">Depot verwalten</h3>
+            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
+              Aktien & ETFs mit Autocomplete · Watchlist · KI-Analyse
+            </p>
+          </button>
+        )}
       </div>
 
       <div className="max-w-xl mx-auto bg-rose-50 border border-rose-100 p-6 rounded-[32px] flex items-start gap-4 shadow-sm">
