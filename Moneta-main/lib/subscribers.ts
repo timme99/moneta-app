@@ -1,7 +1,10 @@
 /**
  * Abonnenten für Newsletter / KI-Wochenbericht.
- * Schritt 2: Hier die DB-Anbindung einbauen (z. B. Prisma, Drizzle, Supabase).
+ * Liest Newsletter-Präferenzen direkt aus der Supabase profiles-Tabelle.
  */
+
+import { createClient } from '@supabase/supabase-js';
+import type { Database } from './supabase-types';
 
 export interface NewsletterSubscriber {
   email: string;
@@ -12,22 +15,55 @@ export interface NewsletterSubscriber {
   autoNewsletter?: boolean;
 }
 
-/**
- * Holt alle Abonnenten, die den Newsletter bzw. Wochenbericht erhalten sollen.
- * Aktuell: Platzhalter (leeres Array). Später: DB-Abfrage, z. B.:
- *   SELECT email, name, settings->weeklyDigest FROM users WHERE settings->weeklyDigest = true
- */
-export async function getSubscribersForDigest(): Promise<NewsletterSubscriber[]> {
-  // TODO: Datenbank einbinden, z. B.:
-  // const db = await getDb();
-  // return db.user.findMany({ where: { settings: { path: ['weeklyDigest'], equals: true } }, select: { email: true, name: true } });
-  return [];
+function getAdminClient() {
+  const url = process.env.MONETA_SUPABASE_URL;
+  const key = process.env.MONETA_SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) throw new Error('Supabase-Umgebungsvariablen fehlen (URL / SERVICE_ROLE_KEY)');
+  return createClient<Database>(url, key);
 }
 
 /**
- * Holt alle Abonnenten für allgemeine Newsletter (z. B. Markt-Updates).
+ * Holt alle User, die den wöchentlichen KI-Wochenbericht aktiviert haben.
+ */
+export async function getSubscribersForDigest(): Promise<NewsletterSubscriber[]> {
+  const supabase = getAdminClient();
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('email, full_name')
+    .eq('newsletter_weekly_digest', true)
+    .not('email', 'is', null);
+
+  if (error) {
+    console.error('[subscribers] getSubscribersForDigest:', error.message);
+    return [];
+  }
+
+  return (data ?? []).map((row) => ({
+    email: row.email!,
+    name: row.full_name ?? undefined,
+    weeklyDigest: true,
+  }));
+}
+
+/**
+ * Holt alle User, die allgemeine Markt-Updates abonniert haben.
  */
 export async function getSubscribersForNewsletter(): Promise<NewsletterSubscriber[]> {
-  // TODO: wie getSubscribersForDigest, Filter auf autoNewsletter
-  return [];
+  const supabase = getAdminClient();
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('email, full_name')
+    .eq('newsletter_auto_updates', true)
+    .not('email', 'is', null);
+
+  if (error) {
+    console.error('[subscribers] getSubscribersForNewsletter:', error.message);
+    return [];
+  }
+
+  return (data ?? []).map((row) => ({
+    email: row.email!,
+    name: row.full_name ?? undefined,
+    autoNewsletter: true,
+  }));
 }

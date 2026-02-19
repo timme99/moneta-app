@@ -17,6 +17,8 @@ export interface Database {
           email: string | null;
           full_name: string | null;
           avatar_url: string | null;
+          newsletter_weekly_digest: boolean;
+          newsletter_auto_updates: boolean;
           created_at: string;
           updated_at: string;
         };
@@ -25,6 +27,8 @@ export interface Database {
           email?: string | null;
           full_name?: string | null;
           avatar_url?: string | null;
+          newsletter_weekly_digest?: boolean;
+          newsletter_auto_updates?: boolean;
           created_at?: string;
           updated_at?: string;
         };
@@ -32,6 +36,8 @@ export interface Database {
           email?: string | null;
           full_name?: string | null;
           avatar_url?: string | null;
+          newsletter_weekly_digest?: boolean;
+          newsletter_auto_updates?: boolean;
           updated_at?: string;
         };
       };

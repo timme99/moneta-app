@@ -54,6 +54,14 @@ CREATE POLICY "profiles_update_own"
   ON public.profiles FOR UPDATE
   USING (auth.uid() = id);
 
+-- ============================================================
+-- 1b. NEWSLETTER-PRÄFERENZEN – Erweiterung der profiles-Tabelle
+-- ============================================================
+-- Spalten für Newsletter-Einstellungen (werden nach initialem CREATE TABLE ergänzt)
+ALTER TABLE public.profiles
+  ADD COLUMN IF NOT EXISTS newsletter_weekly_digest  BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS newsletter_auto_updates   BOOLEAN NOT NULL DEFAULT false;
+
 
 -- ============================================================
 -- 2. TICKER MAPPING – Globale Stammdaten (alle User teilen diese)
