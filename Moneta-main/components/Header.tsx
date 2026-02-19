@@ -1,13 +1,16 @@
 
 import React, { useState } from 'react';
-import { TrendingUp, Bell, User, BarChart3, Search, MessageSquare, Settings as SettingsIcon } from 'lucide-react';
+import { TrendingUp, Bell, User, BarChart3, Search, MessageSquare, Settings as SettingsIcon, LogIn, Database } from 'lucide-react';
+import type { UserAccount } from '../types';
 
 interface HeaderProps {
   activeView: string;
   onViewChange: (view: string) => void;
+  userAccount?: UserAccount | null;
+  onLoginClick?: () => void;
 }
 
-const Header: React.FC<HeaderProps> = ({ activeView, onViewChange }) => {
+const Header: React.FC<HeaderProps> = ({ activeView, onViewChange, userAccount, onLoginClick }) => {
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
 
   const navItems = [
@@ -21,7 +24,7 @@ const Header: React.FC<HeaderProps> = ({ activeView, onViewChange }) => {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-20">
           <div className="flex items-center gap-12">
-            <button 
+            <button
               onClick={() => onViewChange('cockpit')}
               className="flex-shrink-0 flex items-center gap-2 group"
             >
@@ -32,15 +35,15 @@ const Header: React.FC<HeaderProps> = ({ activeView, onViewChange }) => {
                 Mon<span className="text-blue-600">eta</span>
               </span>
             </button>
-            
+
             <nav className="hidden md:flex items-center gap-2">
               {navItems.map((item) => (
                 <button
                   key={item.id}
                   onClick={() => onViewChange(item.id)}
                   className={`flex items-center gap-3 px-6 py-2.5 text-[11px] font-black uppercase tracking-widest rounded-[20px] transition-all ${
-                    activeView === item.id 
-                      ? 'bg-blue-600 text-white shadow-xl shadow-blue-500/20' 
+                    activeView === item.id
+                      ? 'bg-blue-600 text-white shadow-xl shadow-blue-500/20'
                       : 'text-slate-400 hover:text-slate-900 hover:bg-slate-50'
                   }`}
                 >
@@ -58,19 +61,21 @@ const Header: React.FC<HeaderProps> = ({ activeView, onViewChange }) => {
                 <span className="absolute top-2 right-2 w-2 h-2 bg-rose-500 rounded-full border-2 border-white"></span>
               </button>
             </div>
-            
+
             <div className="relative">
-              <button 
+              <button
                 onClick={() => setShowSettingsMenu(!showSettingsMenu)}
                 className={`flex items-center gap-3 pl-2 transition-all p-1.5 rounded-[22px] ${showSettingsMenu ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
               >
                 <div className="hidden sm:flex flex-col items-end">
-                  <span className="text-[10px] font-black uppercase tracking-tighter text-slate-900 leading-none">Mein Account</span>
-                  <span className="text-[9px] font-bold uppercase tracking-widest mt-1 text-emerald-500">
-                    Sicher & Lokal
+                  <span className="text-[10px] font-black uppercase tracking-tighter text-slate-900 leading-none">
+                    {userAccount?.name ?? 'Mein Account'}
+                  </span>
+                  <span className={`text-[9px] font-bold uppercase tracking-widest mt-1 ${userAccount?.isLoggedIn ? 'text-emerald-500' : 'text-slate-400'}`}>
+                    {userAccount?.isLoggedIn ? 'Eingeloggt' : 'Nicht angemeldet'}
                   </span>
                 </div>
-                <div className="w-11 h-11 bg-slate-900 rounded-[18px] flex items-center justify-center text-white shadow-lg group-hover:scale-105 transition-all">
+                <div className={`w-11 h-11 rounded-[18px] flex items-center justify-center text-white shadow-lg transition-all ${userAccount?.isLoggedIn ? 'bg-blue-600' : 'bg-slate-900'}`}>
                   <User className="w-5 h-5" />
                 </div>
               </button>
@@ -78,8 +83,22 @@ const Header: React.FC<HeaderProps> = ({ activeView, onViewChange }) => {
               {showSettingsMenu && (
                 <>
                   <div className="fixed inset-0 z-10" onClick={() => setShowSettingsMenu(false)}></div>
-                  <div className="absolute right-0 mt-3 w-56 bg-white rounded-[28px] shadow-2xl border border-slate-100 py-3 z-20 animate-in fade-in zoom-in-95 duration-200 origin-top-right">
-                    <button 
+                  <div className="absolute right-0 mt-3 w-60 bg-white rounded-[28px] shadow-2xl border border-slate-100 py-3 z-20 animate-in fade-in zoom-in-95 duration-200 origin-top-right">
+                    {!userAccount?.isLoggedIn && onLoginClick && (
+                      <button
+                        onClick={() => { onLoginClick(); setShowSettingsMenu(false); }}
+                        className="w-full px-6 py-3 flex items-center gap-3 text-sm font-bold text-blue-600 hover:bg-blue-50 transition-all"
+                      >
+                        <LogIn className="w-4 h-4" /> Anmelden / Registrieren
+                      </button>
+                    )}
+                    <button
+                      onClick={() => { onViewChange('portfolio'); setShowSettingsMenu(false); }}
+                      className="w-full px-6 py-3 flex items-center gap-3 text-sm font-bold text-slate-700 hover:bg-slate-50 hover:text-blue-600 transition-all"
+                    >
+                      <Database className="w-4 h-4" /> Depot verwalten
+                    </button>
+                    <button
                       onClick={() => { onViewChange('settings'); setShowSettingsMenu(false); }}
                       className="w-full px-6 py-3 flex items-center gap-3 text-sm font-bold text-slate-700 hover:bg-slate-50 hover:text-blue-600 transition-all"
                     >

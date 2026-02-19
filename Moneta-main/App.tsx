@@ -10,6 +10,7 @@ import PortfolioDeepDive from './components/PortfolioDeepDive';
 import MarketNewsTicker from './components/MarketNewsTicker';
 import Legal from './components/Legal';
 import AuthModal from './components/AuthModal';
+import PortfolioInput from './components/PortfolioInput';
 import { PortfolioAnalysisReport, PortfolioHealthReport, PortfolioSavingsReport, UserAccount } from './types';
 import { analyzePortfolio } from './services/geminiService';
 import { userService } from './services/userService';
@@ -26,6 +27,7 @@ const App: React.FC = () => {
   const [selectedNewsFromTicker, setSelectedNewsFromTicker] = useState<NewsItem | null>(null);
   const [isGlobalLoading, setIsGlobalLoading] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<string | null>(null);
+  const [showAuthModal, setShowAuthModal] = useState(false);
   const [legalModal, setLegalModal] = useState<{ isOpen: boolean, type: 'impressum' | 'disclaimer' | 'privacy' }>({
     isOpen: false,
     type: 'disclaimer'
@@ -116,13 +118,26 @@ const App: React.FC = () => {
     }
   };
 
+  /**
+   * Wird von PortfolioInput aufgerufen: erhält bereits formatierten Text
+   * mit allen Holdings inkl. Sektor, Beschreibung und Wettbewerber-Kontext.
+   */
+  const handlePortfolioAnalysis = (portfolioText: string) => {
+    handleAnalysis({ text: portfolioText });
+  };
+
   const openLegal = (type: 'impressum' | 'disclaimer' | 'privacy') => {
     setLegalModal({ isOpen: true, type });
   };
 
   return (
     <div className="min-h-screen flex flex-col font-sans text-slate-900 bg-slate-50/50">
-      <Header activeView={activeView} onViewChange={setActiveView} />
+      <Header
+        activeView={activeView}
+        onViewChange={setActiveView}
+        userAccount={userAccount}
+        onLoginClick={() => setShowAuthModal(true)}
+      />
       
       <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 w-full">
         {activeView === 'cockpit' && analysisReport ? (
@@ -182,10 +197,24 @@ const App: React.FC = () => {
                <Discover />
             ) : activeView === 'settings' ? (
                <Settings account={userAccount} />
+            ) : activeView === 'portfolio' ? (
+              <div className="space-y-6">
+                <div>
+                  <h1 className="text-4xl font-black text-slate-900 tracking-tighter">Depot verwalten</h1>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">
+                    Aktien & ETFs hinzufügen · Watchlist pflegen · KI-Analyse starten
+                  </p>
+                </div>
+                <PortfolioInput
+                  onAnalyze={handlePortfolioAnalysis}
+                  isLoading={isGlobalLoading}
+                />
+              </div>
             ) : (
-              <EmptyState 
-                onAnalyzeText={(t) => handleAnalysis({ text: t })} 
+              <EmptyState
+                onAnalyzeText={(t) => handleAnalysis({ text: t })}
                 onUploadClick={() => setActiveView('assistant')}
+                onManagePortfolio={() => setActiveView('portfolio')}
                 isLoading={isGlobalLoading}
               />
             )}
@@ -240,6 +269,15 @@ const App: React.FC = () => {
       </footer>
 
       <Legal isOpen={legalModal.isOpen} onClose={() => setLegalModal({ ...legalModal, isOpen: false })} type={legalModal.type} />
+
+      <AuthModal
+        isOpen={showAuthModal}
+        onClose={() => setShowAuthModal(false)}
+        onLogin={(user) => {
+          setUserAccount(user);
+          setShowAuthModal(false);
+        }}
+      />
     </div>
   );
 };

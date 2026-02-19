@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { X, Mail, User, Lock, ArrowRight, Loader2, ShieldCheck } from 'lucide-react';
+import { X, Mail, User, ArrowRight, Loader2, ShieldCheck } from 'lucide-react';
 import { userService } from '../services/userService';
 import { UserAccount } from '../types';
 
