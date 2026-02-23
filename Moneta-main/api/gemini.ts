@@ -94,7 +94,7 @@ export default async function handler(req: any, res: any) {
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY ?? '' });
 
   try {
-    const modelName = 'gemini-3-pro-preview';
+    const modelName = process.env.GEMINI_MODEL ?? 'gemini-2.0-flash';
     let contents = payload.contents;
     let config = payload.config;
 

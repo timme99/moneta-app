@@ -34,8 +34,9 @@ const callProxy = async (type: string, payload: any, attempt = 0): Promise<any> 
     return await response.json();
 
   } catch (error: any) {
-    if (error.message.includes('LIMIT_REACHED')) throw error;
-    
+    if (error.message.startsWith('LIMIT_REACHED:')) throw error;
+    if (error.message.startsWith('API_ERROR:')) throw error;
+
     if (attempt < MAX_RETRIES) {
       await wait(BASE_DELAY * Math.pow(2, attempt));
       return callProxy(type, payload, attempt + 1);
