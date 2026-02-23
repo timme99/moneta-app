@@ -1,134 +1,30 @@
 /**
  * lib/supabase-types.ts
  *
- * TypeScript-Typen für das Moneta-App Supabase-Schema.
- * Passen zum Schema in supabase/schema.sql.
+ * Re-exportiert alle Typen aus lib/database.types.ts – bestehende Imports
+ * (`import type { Database } from './supabase-types'`) bleiben ohne Änderung gültig.
  *
- * Tipp: Für vollständige Auto-Generated Types nutze:
- *   npx supabase gen types typescript --project-id <dein-project-id> > lib/supabase-types.ts
+ * Neue Importe bitte direkt aus './database.types' laden.
  */
 
-export interface Database {
-  public: {
-    Tables: {
-      profiles: {
-        Row: {
-          id: string;
-          email: string | null;
-          full_name: string | null;
-          avatar_url: string | null;
-          newsletter_weekly_digest: boolean;
-          newsletter_auto_updates: boolean;
-          created_at: string;
-          updated_at: string;
-        };
-        Insert: {
-          id: string;
-          email?: string | null;
-          full_name?: string | null;
-          avatar_url?: string | null;
-          newsletter_weekly_digest?: boolean;
-          newsletter_auto_updates?: boolean;
-          created_at?: string;
-          updated_at?: string;
-        };
-        Update: {
-          email?: string | null;
-          full_name?: string | null;
-          avatar_url?: string | null;
-          newsletter_weekly_digest?: boolean;
-          newsletter_auto_updates?: boolean;
-          updated_at?: string;
-        };
-      };
+export type {
+  Database,
+  Tables,
+  InsertTables,
+  UpdateTables,
+} from './database.types';
 
-      ticker_mapping: {
-        Row: {
-          id: number;
-          symbol: string;
-          company_name: string;
-          sector: string | null;
-          industry: string | null;
-          description_static: string | null;
-          pe_ratio_static: number | null;
-          competitors: string | null;
-          created_at: string;
-          updated_at: string;
-        };
-        Insert: {
-          symbol: string;
-          company_name: string;
-          sector?: string | null;
-          industry?: string | null;
-          description_static?: string | null;
-          pe_ratio_static?: number | null;
-          competitors?: string | null;
-        };
-        Update: {
-          company_name?: string;
-          sector?: string | null;
-          industry?: string | null;
-          description_static?: string | null;
-          pe_ratio_static?: number | null;
-          competitors?: string | null;
-          updated_at?: string;
-        };
-      };
+import type { Database } from './database.types';
 
-      holdings: {
-        Row: {
-          id: string;
-          user_id: string;
-          ticker_id: number;
-          watchlist: boolean;
-          shares: number | null;
-          buy_price: number | null;
-          created_at: string;
-          updated_at: string;
-        };
-        Insert: {
-          id?: string;
-          user_id: string;
-          ticker_id: number;
-          watchlist?: boolean;
-          shares?: number | null;
-          buy_price?: number | null;
-        };
-        Update: {
-          watchlist?: boolean;
-          shares?: number | null;
-          buy_price?: number | null;
-          updated_at?: string;
-        };
-      };
-
-      price_cache: {
-        Row: {
-          id: number;
-          ticker_id: number;
-          price: number | null;
-          last_updated: string;
-        };
-        Insert: {
-          ticker_id: number;
-          price?: number | null;
-          last_updated?: string;
-        };
-        Update: {
-          price?: number | null;
-          last_updated?: string;
-        };
-      };
-    };
-  };
-}
-
-// ── Hilfstypen ────────────────────────────────────────────────────────────────
+// ── Tabellen-Zeilentypen ──────────────────────────────────────────────────────
 
 export type Profile      = Database['public']['Tables']['profiles']['Row'];
 export type TickerEntry  = Database['public']['Tables']['ticker_mapping']['Row'];
 export type Holding      = Database['public']['Tables']['holdings']['Row'];
 export type PriceCache   = Database['public']['Tables']['price_cache']['Row'];
+export type Subscriber   = Database['public']['Tables']['subscribers']['Row'];
+
+// ── API-Ergebnistypen ─────────────────────────────────────────────────────────
 
 /** Vollständige Kursantwort, die getFinancialData zurückgibt */
 export interface FinancialDataResult {

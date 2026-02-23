@@ -1,5 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import { getSupabaseAdmin } from '../lib/supabaseClient';
+import type { InsertTables } from '../lib/supabase-types';
 
 // Speicher für Rate-Limits (In-Memory, pro Nutzer/IP)
 const limitStore = new Map<string, any>();
@@ -33,7 +34,7 @@ async function upsertTickerMapping(tickers: Array<{
 }>) {
   try {
     const supabase = getSupabaseAdmin();
-    const rows = tickers.map((t) => ({
+    const rows: InsertTables<'ticker_mapping'>[] = tickers.map((t) => ({
       symbol:             t.ticker,
       company_name:       t.company_name,
       sector:             t.sector ?? null,
@@ -43,7 +44,7 @@ async function upsertTickerMapping(tickers: Array<{
     }));
     const { error } = await supabase
       .from('ticker_mapping')
-      .upsert(rows, { onConflict: 'symbol', ignoreDuplicates: false });
+      .upsert(rows, { onConflict: 'symbol' });
     if (error) console.error('[gemini] ticker_mapping upsert:', error.message);
   } catch (e: any) {
     // Nicht-kritisch: Analyse läuft trotzdem weiter

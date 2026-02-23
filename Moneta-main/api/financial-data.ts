@@ -18,7 +18,7 @@
 export const config = { runtime: 'edge' };
 
 import { createClientWithToken, getSupabaseAdmin } from '../lib/supabaseClient';
-import type { FinancialDataResult } from '../lib/supabase-types';
+import type { TickerEntry, FinancialDataResult } from '../lib/supabase-types';
 
 // ── Konstanten ────────────────────────────────────────────────────────────────
 
@@ -90,10 +90,10 @@ export default async function handler(request: Request): Promise<Response> {
       .eq('ticker_id', tickerEntry.id)
       .maybeSingle();
 
-    if (cached?.price !== null && cached?.last_updated) {
+    if (cached && cached.price !== null && cached.last_updated) {
       const ageMs = Date.now() - new Date(cached.last_updated).getTime();
       if (ageMs < CACHE_TTL_MINUTES * 60 * 1000) {
-        const result: FinancialDataResult = buildResult(tickerEntry, cached.price!, cached.last_updated, true);
+        const result: FinancialDataResult = buildResult(tickerEntry, cached.price, cached.last_updated, true);
         return json(result);
       }
     }
@@ -137,7 +137,7 @@ export default async function handler(request: Request): Promise<Response> {
  *
  * Nicht gefunden → Gemini auflösen → Eintrag global speichern → zurückgeben.
  */
-async function resolveTickerEntry(input: string) {
+async function resolveTickerEntry(input: string): Promise<TickerEntry> {
   const admin      = getSupabaseAdmin();
   const upperInput = input.toUpperCase();
 
@@ -316,7 +316,7 @@ async function fetchFromAlphaVantage(symbol: string): Promise<AlphaQuote> {
 // ── Result-Builder ────────────────────────────────────────────────────────────
 
 function buildResult(
-  ticker     : { symbol: string; company_name: string; sector: string | null; industry: string | null; description_static: string | null; pe_ratio_static: number | null },
+  ticker     : TickerEntry,
   price      : number,
   lastUpdated: string,
   fromCache  : boolean,
