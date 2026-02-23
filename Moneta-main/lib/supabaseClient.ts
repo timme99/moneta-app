@@ -17,6 +17,12 @@ import type { Database } from './supabase-types';
 
 // ── Umgebungsvariablen ────────────────────────────────────────────────────────
 
+/** Liest einen Env-Var – wirft NICHT auf Modulebene (verhindert Vercel-500 beim Import). */
+function getEnv(key: string): string {
+  return process.env[key] ?? '';
+}
+
+/** Wirft erst zur Laufzeit, wenn der Wert wirklich fehlt (sicher in API-Handlern). */
 function requireEnv(key: string): string {
   const value = process.env[key];
   if (!value) {
@@ -28,10 +34,14 @@ function requireEnv(key: string): string {
   return value;
 }
 
-const SUPABASE_URL  = requireEnv('MONETA_SUPABASE_URL');
-const ANON_KEY      = requireEnv('MONETA_SUPABASE_ANON_KEY');
+// Lazy: liest Werte beim ersten Modulimport, wirft aber NICHT —
+// der createClient-Aufruf mit leeren Strings würde crashen, daher Fallback-URL.
+const SUPABASE_URL  = getEnv('MONETA_SUPABASE_URL')  || 'https://placeholder.supabase.co';
+const ANON_KEY      = getEnv('MONETA_SUPABASE_ANON_KEY') || 'placeholder-anon-key';
 
 // ── Public Client (Anon-Key, RLS aktiv) ──────────────────────────────────────
+// Wird mit Placeholder initialisiert wenn Env-Vars fehlen – Requests scheitern
+// dann zur Laufzeit mit klaren Fehlermeldungen statt beim Modulimport.
 
 export const supabase: SupabaseClient<Database> = createClient<Database>(
   SUPABASE_URL,

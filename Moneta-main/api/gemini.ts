@@ -54,8 +54,10 @@ async function upsertTickerMapping(tickers: Array<{
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') return res.status(405).send('Method not allowed');
 
-  const { type, payload, userId } = req.body;
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'anonymous';
+  const { type, payload, userId } = req.body ?? {};
+
+  // req.socket kann in manchen Vercel-Umgebungen null sein → optional chaining
+  const ip = req.headers?.['x-forwarded-for'] || req.socket?.remoteAddress || 'anonymous';
 
   const identifier = userId || ip;
   const now = Date.now();
@@ -157,8 +159,15 @@ Beispiele: Apple→AAPL (Technology/Consumer Electronics), Microsoft→MSFT, Mer
       }
     });
   } catch (error: any) {
-    // Verhindert das Loggen des kompletten Fehler-Objekts (welches den Request-Payload enthalten könnte)
-    console.error(`[MONETA API ERROR] Type: ${type} | Message: ${error.message}`);
+    // Vollständiges Logging für Vercel-Logs (kein sensitiver Payload)
+    console.error('[MONETA API ERROR]', {
+      type,
+      message:  error?.message   ?? 'unknown',
+      code:     error?.code      ?? '',
+      status:   error?.status    ?? '',
+      errorType: error?.constructor?.name ?? '',
+      stack:    error?.stack?.split('\n').slice(0, 3).join(' | ') ?? '',
+    });
     return res.status(500).json({ error: 'KI-Schnittstelle überlastet oder Fehler bei der Verarbeitung.' });
   }
 }
