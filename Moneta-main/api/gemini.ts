@@ -54,8 +54,10 @@ async function upsertTickerMapping(tickers: Array<{
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') return res.status(405).send('Method not allowed');
 
-  const { type, payload, userId } = req.body;
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'anonymous';
+  const { type, payload, userId } = req.body ?? {};
+
+  // req.socket kann in manchen Vercel-Umgebungen null sein → optional chaining
+  const ip = req.headers?.['x-forwarded-for'] || req.socket?.remoteAddress || 'anonymous';
 
   const identifier = userId || ip;
   const now = Date.now();
@@ -103,11 +105,24 @@ export default async function handler(req: any, res: any) {
 
   try {
     const modelName = process.env.GEMINI_MODEL ?? 'gemini-2.0-flash';
-    let contents = payload.contents;
-    let config = payload.config;
+    let config = payload?.config;
+
+    // Normalisierung: Gemini API erfordert role:"user"|"model" in jedem Content-Objekt.
+    // Fehlendes role führt zu HTTP-400 und einem 500 beim Proxy.
+    const normalizeContents = (raw: any[]): any[] =>
+      raw.map((c: any) => ({
+        role: c.role === 'model' ? 'model' : 'user',
+        parts: Array.isArray(c.parts) ? c.parts : [{ text: String(c.parts ?? '') }],
+      }));
+
+    let contents = Array.isArray(payload?.contents)
+      ? normalizeContents(payload.contents)
+      : [];
 
     if (type === 'resolve_ticker') {
-      const names = Array.isArray(payload.names) ? payload.names : [String(payload.names || '').trim()].filter(Boolean);
+      const names = Array.isArray(payload?.names)
+        ? payload.names
+        : [String(payload?.names || '').trim()].filter(Boolean);
       // Erweiterter Prompt: Ticker + Metadaten für ticker_mapping-Upsert
       const prompt = `Wandle jede Bezeichnung in das offizielle Börsenticker-Symbol um und ergänze Metadaten.
 Antworte NUR mit diesem JSON (kein anderer Text):
@@ -115,8 +130,13 @@ Antworte NUR mit diesem JSON (kein anderer Text):
 
 Bezeichnungen: ${names.join('; ')}
 Beispiele: Apple→AAPL (Technology/Consumer Electronics), Microsoft→MSFT, Mercedes/Daimler→MBG.DE, MSCI World→EUNL, Vanguard All-World→VWRL.`;
-      contents = [{ parts: [{ text: prompt }] }];
+      contents = [{ role: 'user', parts: [{ text: prompt }] }];
       config = { responseMimeType: 'application/json', temperature: 0.1 };
+    }
+
+    // Fallback: leerer contents-Array → sinnlose Anfrage vermeiden
+    if (contents.length === 0) {
+      return res.status(400).json({ error: 'Kein Inhalt für die KI-Anfrage übergeben.' });
     }
 
     const response = await ai.models.generateContent({
@@ -157,8 +177,38 @@ Beispiele: Apple→AAPL (Technology/Consumer Electronics), Microsoft→MSFT, Mer
       }
     });
   } catch (error: any) {
-    // Verhindert das Loggen des kompletten Fehler-Objekts (welches den Request-Payload enthalten könnte)
-    console.error(`[MONETA API ERROR] Type: ${type} | Message: ${error.message}`);
+    const msg: string = error?.message ?? '';
+    const httpStatus: number = error?.status ?? error?.httpStatus ?? 0;
+
+    // Vollständiges Logging für Vercel-Logs
+    console.error('[MONETA API ERROR]', {
+      type,
+      message:   msg,
+      httpStatus,
+      code:      error?.code ?? '',
+      errorType: error?.constructor?.name ?? '',
+      stack:     error?.stack?.split('\n').slice(0, 3).join(' | ') ?? '',
+    });
+
+    // Auth-Fehler: API-Key ungültig oder API nicht aktiviert
+    const isAuthError =
+      httpStatus === 400 ||
+      httpStatus === 401 ||
+      httpStatus === 403 ||
+      msg.toLowerCase().includes('api key') ||
+      msg.toLowerCase().includes('api_key') ||
+      msg.toLowerCase().includes('permission') ||
+      msg.toLowerCase().includes('not valid') ||
+      msg.toLowerCase().includes('not enabled') ||
+      msg.toLowerCase().includes('not found') ||
+      msg.toLowerCase().includes('disabled');
+
+    if (isAuthError) {
+      return res.status(401).json({
+        error: `Gemini API-Fehler: ${msg}. Bitte GEMINI_API_KEY prüfen und sicherstellen, dass die "Generative Language API" in der Google Cloud Console aktiviert ist.`,
+      });
+    }
+
     return res.status(500).json({ error: 'KI-Schnittstelle überlastet oder Fehler bei der Verarbeitung.' });
   }
 }
