@@ -53,7 +53,11 @@ async function upsertTickerMapping(tickers: Array<{
 }
 
 export default async function handler(req: any, res: any) {
+  console.log("Check Key:", process.env.GEMINI_API_KEY ? "Vorhanden" : "FEHLT");
+
   if (req.method !== 'POST') return res.status(405).send('Method not allowed');
+
+  try {
 
   const { type, payload, userId } = req.body ?? {};
 
@@ -210,6 +214,20 @@ Beispiele: Apple→AAPL (Technology/Consumer Electronics), Microsoft→MSFT, Mer
       });
     }
 
-    return res.status(500).json({ error: 'KI-Schnittstelle überlastet oder Fehler bei der Verarbeitung.' });
+    return res.status(500).json({
+      error: 'KI-Schnittstelle überlastet oder Fehler bei der Verarbeitung.',
+      message: error?.message,
+      stack: error?.stack,
+      location: "Gemini API Call",
+    });
+  }
+
+  } catch (error: any) {
+    console.error('[MONETA OUTER ERROR]', error);
+    return res.status(500).json({
+      message: error?.message,
+      stack: error?.stack,
+      location: "API Route",
+    });
   }
 }
