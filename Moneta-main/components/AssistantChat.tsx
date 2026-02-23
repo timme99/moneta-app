@@ -108,10 +108,16 @@ const AssistantChat: React.FC<AssistantChatProps> = ({ onAnalysisComplete, isPre
       parts: m.fileData ? [{ text: m.content }, { inlineData: { mimeType: m.fileData.type, data: m.fileData.base64.split(',')[1] } }] : [{ text: m.content }]
     }));
 
-    // Fix: Removed extra isPremium argument from getFinancialAdvice call.
-    const response = await getFinancialAdvice(input, history);
-    setMessages(prev => [...prev, { role: 'assistant', content: response, timestamp: new Date() }]);
-    setIsLoading(false);
+    try {
+      // Fix: Removed extra isPremium argument from getFinancialAdvice call.
+      const response = await getFinancialAdvice(input, history);
+      setMessages(prev => [...prev, { role: 'assistant', content: response, timestamp: new Date() }]);
+    } catch (error: any) {
+      const msg = error.message?.includes(':') ? error.message.split(':')[1] : 'Fehler bei der Anfrage.';
+      setMessages(prev => [...prev, { role: 'assistant', content: msg, timestamp: new Date() }]);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (

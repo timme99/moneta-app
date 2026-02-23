@@ -4,6 +4,7 @@
  * - Sucht live in der Supabase ticker_mapping-Tabelle (Anon-Key, RLS)
  * - Optionale Felder: Stückzahl + Kaufpreis → echte Position
  * - Felder leer → Watchlist-Eintrag (watchlist = true, shares/buy_price = null)
+ * - Auto-Berechnung: Stückzahl ↔ Gesamtwert via aktuellem Kurs (/api/stocks)
  * - Speichert Positionen in der holdings-Tabelle des eingeloggten Users
  * - "KI-Analyse starten" formatiert alle Positionen als reichhaltigen Text
  *   (inkl. Sektor, Beschreibung, Wettbewerber) und übergibt ihn an onAnalyze
@@ -12,6 +13,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Search, Plus, Trash2, Loader2, TrendingUp, BarChart3, BookMarked, Info,
+  TrendingDown, RefreshCw,
 } from 'lucide-react';
 import { getSupabaseBrowser } from '../lib/supabaseBrowser';
 import type { TickerEntry } from '../lib/supabase-types';
@@ -45,6 +47,11 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading })
   // Kaufdaten (optional)
   const [shares, setShares]           = useState('');
   const [buyPrice, setBuyPrice]       = useState('');
+  const [totalValue, setTotalValue]   = useState('');  // ≈ Gesamtwert (berechnet oder eingegeben)
+
+  // Aktueller Kurs (live via /api/stocks)
+  const [currentPrice, setCurrentPrice]     = useState<number | null>(null);
+  const [isPriceFetching, setIsPriceFetching] = useState(false);
 
   // Depot-Liste
   const [holdings, setHoldings]           = useState<HoldingRow[]>([]);
@@ -93,6 +100,22 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading })
     setIsLoadingH(false);
   };
 
+  // ── Aktuellen Kurs fetchen wenn Ticker ausgewählt ─────────────────────────
+  useEffect(() => {
+    if (!selected) {
+      setCurrentPrice(null);
+      return;
+    }
+    setIsPriceFetching(true);
+    setCurrentPrice(null);
+
+    fetch(`/api/stocks?symbol=${encodeURIComponent(selected.symbol)}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((d) => setCurrentPrice(typeof d.price === 'number' && d.price > 0 ? d.price : null))
+      .catch(() => setCurrentPrice(null))
+      .finally(() => setIsPriceFetching(false));
+  }, [selected]);
+
   // ── Autocomplete ──────────────────────────────────────────────────────────
   const searchTickers = useCallback(
     (q: string) => {
@@ -119,6 +142,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading })
     const v = e.target.value;
     setQuery(v);
     setSelected(null);
+    setTotalValue('');
     searchTickers(v);
   };
 
@@ -127,6 +151,10 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading })
     setQuery(`${t.company_name} (${t.symbol})`);
     setSuggestions([]);
     setShowDrop(false);
+    // Kauffelder beim neuen Auswahl zurücksetzen
+    setShares('');
+    setBuyPrice('');
+    setTotalValue('');
   };
 
   // Dropdown schließen bei Klick außerhalb
@@ -139,6 +167,30 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading })
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
+
+  // ── Bidirektionale Kalkulation ────────────────────────────────────────────
+
+  /** Stückzahl geändert → Gesamtwert berechnen */
+  const handleSharesChange = (val: string) => {
+    setShares(val);
+    const n = parseFloat(val.replace(',', '.'));
+    if (!isNaN(n) && n > 0 && currentPrice) {
+      setTotalValue((n * currentPrice).toFixed(2));
+    } else if (!val.trim()) {
+      setTotalValue('');
+    }
+  };
+
+  /** Gesamtwert geändert → Stückzahl schätzen */
+  const handleTotalValueChange = (val: string) => {
+    setTotalValue(val);
+    const n = parseFloat(val.replace(',', '.'));
+    if (!isNaN(n) && n > 0 && currentPrice && currentPrice > 0) {
+      setShares((n / currentPrice).toFixed(4).replace(/\.?0+$/, ''));
+    } else if (!val.trim()) {
+      setShares('');
+    }
+  };
 
   // ── Hinzufügen ────────────────────────────────────────────────────────────
   const handleAdd = async () => {
@@ -165,6 +217,8 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading })
       setSelected(null);
       setShares('');
       setBuyPrice('');
+      setTotalValue('');
+      setCurrentPrice(null);
       await loadHoldings();
     } else {
       console.error('[PortfolioInput] upsert error:', error.message);
@@ -217,6 +271,9 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading })
     onAnalyze(text);
   };
 
+  // Hilfswert: ist die Eingabe nur Watchlist?
+  const isWatchlistAdd = !shares.trim() || !buyPrice.trim();
+
   // ── Render ────────────────────────────────────────────────────────────────
   if (authError) {
     return (
@@ -231,8 +288,6 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading })
       </div>
     );
   }
-
-  const isWatchlistAdd = !shares.trim() || !buyPrice.trim();
 
   return (
     <div className="max-w-3xl mx-auto space-y-5">
@@ -277,51 +332,107 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading })
           )}
         </div>
 
-        {/* Kaufdaten-Formular */}
+        {/* ── Kaufdaten-Formular ─────────────────────────────────────────── */}
         {selected && (
-          <div className="mt-3 bg-blue-50 border border-blue-100 rounded-[20px] p-4 space-y-3 animate-in fade-in duration-200">
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-black text-blue-700 uppercase tracking-widest">
-                {selected.company_name}
-              </span>
-              <span className="text-[9px] text-blue-400 font-mono">({selected.symbol})</span>
+          <div className="mt-3 bg-blue-50 border border-blue-100 rounded-[20px] p-4 space-y-4 animate-in fade-in duration-200">
+
+            {/* Titel + aktueller Kurs */}
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-black text-blue-700 uppercase tracking-widest">
+                  {selected.company_name}
+                </span>
+                <span className="text-[9px] text-blue-400 font-mono">({selected.symbol})</span>
+              </div>
+
+              {/* Kurs-Badge */}
+              <div className="flex items-center gap-1.5">
+                {isPriceFetching ? (
+                  <span className="flex items-center gap-1 text-[9px] font-bold text-slate-400">
+                    <RefreshCw className="w-3 h-3 animate-spin" /> Kurs wird geladen…
+                  </span>
+                ) : currentPrice ? (
+                  <span className="flex items-center gap-1 text-[9px] font-black text-emerald-700 bg-emerald-50 border border-emerald-100 px-2.5 py-1 rounded-full">
+                    <TrendingUp className="w-3 h-3" />
+                    Aktuell: {currentPrice.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1 text-[9px] font-bold text-slate-400 bg-slate-100 px-2.5 py-1 rounded-full">
+                    <TrendingDown className="w-3 h-3" /> Kein Live-Kurs
+                  </span>
+                )}
+              </div>
             </div>
 
-            <div className="flex gap-3">
-              <div className="flex-1 space-y-1">
+            {/* Zeile 1: Stückzahl + Kaufpreis */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
                 <label className="text-[9px] font-black text-blue-600 uppercase tracking-widest">
-                  Stückzahl
+                  Stückzahl <span className="font-medium normal-case text-blue-400">(optional)</span>
                 </label>
                 <input
                   type="number"
                   value={shares}
-                  onChange={(e) => setShares(e.target.value)}
+                  onChange={(e) => handleSharesChange(e.target.value)}
                   placeholder="z. B. 10"
-                  className="w-full px-4 py-3 bg-white border border-slate-200 rounded-[14px] text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-600"
+                  className="w-full px-4 py-3 bg-white border border-slate-200 rounded-[14px] text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-600 transition-all"
                   min="0"
                   step="any"
                 />
               </div>
-              <div className="flex-1 space-y-1">
+              <div className="space-y-1">
                 <label className="text-[9px] font-black text-blue-600 uppercase tracking-widest">
-                  Kaufpreis (€)
+                  Kaufpreis/Stk, EUR <span className="font-medium normal-case text-blue-400">(optional)</span>
                 </label>
                 <input
                   type="number"
                   value={buyPrice}
                   onChange={(e) => setBuyPrice(e.target.value)}
-                  placeholder="z. B. 145,00"
-                  className="w-full px-4 py-3 bg-white border border-slate-200 rounded-[14px] text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-600"
+                  placeholder="z. B. 130,00"
+                  className="w-full px-4 py-3 bg-white border border-slate-200 rounded-[14px] text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-600 transition-all"
                   min="0"
                   step="any"
                 />
               </div>
             </div>
 
+            {/* Zeile 2: Gesamtwert (bidirektional mit Stückzahl) */}
+            <div className="space-y-1">
+              <label className="text-[9px] font-black text-blue-600 uppercase tracking-widest flex items-center gap-1.5">
+                ≈ Gesamtwert, EUR
+                <span className="font-medium normal-case text-blue-400">(optional)</span>
+                {currentPrice && (
+                  <span className="font-medium normal-case text-blue-300">
+                    — Eingabe berechnet Stückzahl automatisch
+                  </span>
+                )}
+              </label>
+              <input
+                type="number"
+                value={totalValue}
+                onChange={(e) => handleTotalValueChange(e.target.value)}
+                placeholder={
+                  currentPrice
+                    ? `z. B. ${(10 * currentPrice).toFixed(0)} (= 10 Stk. × Kurs)`
+                    : 'Kurs nicht verfügbar – Stückzahl direkt eingeben'
+                }
+                disabled={!currentPrice && !totalValue}
+                className="w-full px-4 py-3 bg-white border border-slate-200 rounded-[14px] text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-600 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                min="0"
+                step="any"
+              />
+              {!currentPrice && (
+                <p className="text-[9px] text-blue-400 font-medium">
+                  Live-Kurs nicht verfügbar – Gesamtwert kann nicht automatisch berechnet werden.
+                </p>
+              )}
+            </div>
+
+            {/* Watchlist-Hinweis */}
             <p className="text-[9px] text-blue-500 font-medium flex items-center gap-1">
-              <BookMarked className="w-3 h-3" />
+              <BookMarked className="w-3 h-3 shrink-0" />
               {isWatchlistAdd
-                ? 'Felder leer → wird als Watchlist-Eintrag gespeichert'
+                ? 'Felder leer → wird als Watchlist-Eintrag gespeichert (kein Bestand)'
                 : 'Stückzahl & Kaufpreis → vollständige Portfolio-Position'}
             </p>
 
@@ -333,7 +444,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading })
               {isSaving
                 ? <Loader2 className="w-4 h-4 animate-spin" />
                 : <Plus className="w-4 h-4" />}
-              {isWatchlistAdd ? 'Watchlist speichern' : 'Position hinzufügen'}
+              {isWatchlistAdd ? 'Als Watchlist speichern' : 'Position ins Depot speichern'}
             </button>
           </div>
         )}
@@ -383,11 +494,16 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading })
                     <span className="text-[10px] text-slate-400 font-mono">{h.ticker.symbol}</span>
                     {!h.watchlist && h.shares != null && (
                       <span className="text-[10px] text-slate-500 font-medium">
-                        {h.shares} Stk. · {h.buy_price?.toFixed(2)} €
+                        {h.shares} Stk. · {h.buy_price?.toFixed(2)} €/Stk.
+                      </span>
+                    )}
+                    {!h.watchlist && h.shares != null && h.buy_price != null && (
+                      <span className="text-[10px] text-blue-500 font-bold">
+                        = {(h.shares * h.buy_price).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} € Einstand
                       </span>
                     )}
                     {h.ticker.sector && (
-                      <span className="text-[9px] text-blue-500 font-bold">{h.ticker.sector}</span>
+                      <span className="text-[9px] text-slate-400 font-medium">{h.ticker.sector}</span>
                     )}
                   </div>
                 </div>
