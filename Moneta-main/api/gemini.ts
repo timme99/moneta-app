@@ -105,11 +105,20 @@ export default async function handler(req: any, res: any) {
       error: 'KI-Dienst nicht verfügbar – API-Key fehlt. Bitte GEMINI_API_KEY in den Umgebungsvariablen setzen.',
     });
   }
+  console.log("[MONETA] Phase 1: Key vorhanden ✓");
 
-  const ai = new GoogleGenAI({ apiKey: geminiKey });
+  let ai: GoogleGenAI;
+  try {
+    ai = new GoogleGenAI({ apiKey: geminiKey });
+    console.log("[MONETA] Phase 2: GoogleGenAI initialisiert ✓");
+  } catch (error: any) {
+    console.error('[MONETA INIT ERROR]', error);
+    return res.status(500).json({ error: error.message, phase: "initialization" });
+  }
 
   try {
-    const modelName = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
+    const modelName = 'gemini-1.5-flash'; // Hardcoded – kein env-Variablen-Fehler möglich
+    console.log("[MONETA] Phase 3: Modell:", modelName, "| Typ:", type);
     let config = payload?.config;
 
     // Normalisierung: Gemini API erfordert role:"user"|"model" in jedem Content-Objekt.
@@ -143,6 +152,7 @@ Beispiele: Apple→AAPL (Technology/Consumer Electronics), Microsoft→MSFT, Mer
     if (contents.length === 0) {
       return res.status(400).json({ error: 'Kein Inhalt für die KI-Anfrage übergeben.' });
     }
+    console.log("[MONETA] Phase 4: Contents bereit | Anzahl:", contents.length, "| Erster Role:", contents[0]?.role);
 
     const response = await ai.models.generateContent({
       model: modelName,
@@ -151,6 +161,7 @@ Beispiele: Apple→AAPL (Technology/Consumer Electronics), Microsoft→MSFT, Mer
     });
 
     let responseText = response.text || "";
+    console.log("[MONETA] Phase 5: Antwort erhalten ✓ | Text-Länge:", responseText.length);
 
     if (type === 'resolve_ticker') {
       const parsed = JSON.parse(responseText);
