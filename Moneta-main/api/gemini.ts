@@ -44,7 +44,7 @@ async function upsertTickerMapping(tickers: Array<{
     }));
     const { error } = await supabase
       .from('ticker_mapping')
-      .upsert(rows, { onConflict: 'symbol' });
+      .upsert(rows as any, { onConflict: 'symbol' });
     if (error) console.error('[gemini] ticker_mapping upsert:', error.message);
   } catch (e: any) {
     // Nicht-kritisch: Analyse läuft trotzdem weiter

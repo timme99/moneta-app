@@ -32,7 +32,7 @@ export async function getSubscribersForDigest(): Promise<NewsletterSubscriber[]>
     return [];
   }
 
-  return (data ?? []).map((row) => ({
+  return (data ?? []).map((row: any) => ({
     email: row.email!,
     name: row.full_name ?? undefined,
     weeklyDigest: true,
@@ -55,7 +55,7 @@ export async function getSubscribersForNewsletter(): Promise<NewsletterSubscribe
     return [];
   }
 
-  return (data ?? []).map((row) => ({
+  return (data ?? []).map((row: any) => ({
     email: row.email!,
     name: row.full_name ?? undefined,
     autoNewsletter: true,

@@ -90,10 +90,11 @@ export default async function handler(request: Request): Promise<Response> {
       .eq('ticker_id', tickerEntry.id)
       .maybeSingle();
 
-    if (cached && cached.price !== null && cached.last_updated) {
-      const ageMs = Date.now() - new Date(cached.last_updated).getTime();
+    const cachedAny = cached as any;
+    if (cachedAny && cachedAny.price !== null && cachedAny.last_updated) {
+      const ageMs = Date.now() - new Date(cachedAny.last_updated).getTime();
       if (ageMs < CACHE_TTL_MINUTES * 60 * 1000) {
-        const result: FinancialDataResult = buildResult(tickerEntry, cached.price, cached.last_updated, true);
+        const result: FinancialDataResult = buildResult(tickerEntry, cachedAny.price, cachedAny.last_updated, true);
         return json(result);
       }
     }
@@ -108,7 +109,7 @@ export default async function handler(request: Request): Promise<Response> {
     await admin
       .from('price_cache')
       .upsert(
-        { ticker_id: tickerEntry.id, price: quote.price, last_updated: nowIso },
+        { ticker_id: tickerEntry.id, price: quote.price, last_updated: nowIso } as any,
         { onConflict: 'ticker_id' }
       );
 
@@ -171,7 +172,7 @@ async function resolveTickerEntry(input: string): Promise<TickerEntry> {
       company_name: resolved.company_name,
       sector      : resolved.sector ?? null,
       industry    : resolved.industry ?? null,
-    })
+    } as any)
     .select('*')
     .single();
 
