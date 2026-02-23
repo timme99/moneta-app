@@ -34,7 +34,7 @@ export default async function handler(req: any, res: any) {
     try {
       const ai = new GoogleGenAI({ apiKey: geminiKey });
       const response = await ai.models.generateContent({
-        model: process.env.GEMINI_MODEL ?? 'gemini-2.0-flash',
+        model: process.env.GEMINI_MODEL ?? 'gemini-2.5-flash',
         contents: [{ role: 'user', parts: [{ text: 'Antworte nur: OK' }] }],
       });
       const text = response.text ?? '';

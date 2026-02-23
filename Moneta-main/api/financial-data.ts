@@ -24,7 +24,7 @@ import type { FinancialDataResult } from '../lib/supabase-types';
 
 const CACHE_TTL_MINUTES = 60;
 const RAPIDAPI_HOST     = 'alpha-vantage.p.rapidapi.com';
-const GEMINI_MODEL      = 'gemini-2.0-flash-exp';
+const GEMINI_MODEL      = 'gemini-2.5-flash';
 
 // ── CORS-Header ───────────────────────────────────────────────────────────────
 
