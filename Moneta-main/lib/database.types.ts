@@ -6,10 +6,22 @@
  *
  * Tipp: Typen automatisch aus dem Supabase-Projekt generieren:
  *   npx supabase gen types typescript --project-id <dein-project-id> > lib/database.types.ts
+ *
+ * WICHTIG: @supabase/postgrest-js ≥ 1.19 (PostgREST v12) erfordert, dass
+ * Database['public'] die Felder Views / Functions / Enums / CompositeTypes
+ * enthält. Fehlen sie, löst TypeScript ALLE Tabellen als `never` auf.
  */
 
 export interface Database {
   public: {
+    // ── Pflichtfelder für PostgREST v12 Typ-Inferenz ─────────────────────────
+    // Leere Objekte sind ausreichend; ohne sie werden alle Tabellen als `never`
+    // aufgelöst und man erhält "Property X does not exist on type 'never'".
+    Views:          { [_ in never]: never };
+    Functions:      { [_ in never]: never };
+    Enums:          { [_ in never]: never };
+    CompositeTypes: { [_ in never]: never };
+
     Tables: {
 
       // ── profiles ──────────────────────────────────────────────────────────
