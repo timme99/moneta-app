@@ -91,7 +91,15 @@ export default async function handler(req: any, res: any) {
   const usagePercent = limitForType > 0 ? (userStats[currentType] / limitForType) * 100 : 0;
   const showWarning = limitForType > 0 && usagePercent >= 80;
 
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY ?? '' });
+  const geminiKey = process.env.GEMINI_API_KEY;
+  if (!geminiKey) {
+    console.error('[MONETA API] GEMINI_API_KEY ist nicht gesetzt.');
+    return res.status(503).json({
+      error: 'KI-Dienst nicht verfügbar – API-Key fehlt. Bitte GEMINI_API_KEY in den Umgebungsvariablen setzen.',
+    });
+  }
+
+  const ai = new GoogleGenAI({ apiKey: geminiKey });
 
   try {
     const modelName = process.env.GEMINI_MODEL ?? 'gemini-2.0-flash';

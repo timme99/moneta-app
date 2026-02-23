@@ -1,0 +1,97 @@
+/*
+ * Moneta App – Globale Styles
+ *
+ * Tailwind CSS wird via CDN geladen (cdn.tailwindcss.com).
+ * Diese Datei ergänzt Utilities, die im CDN-Bundle fehlen –
+ * insbesondere die Animationsklassen aus tailwindcss-animate.
+ */
+
+/* ── tailwindcss-animate Ersatz ───────────────────────────────────────────── */
+/* Die CDN-Version von Tailwind CSS enthält tailwindcss-animate nicht.        */
+/* .animate-in + .fade-in werden in PortfolioInput und anderen Komponenten    */
+/* verwendet – hier definiert, damit kein FOUC entsteht.                      */
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideInFromTop {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Basisklasse: setzt den Animationsrahmen */
+.animate-in {
+  animation-fill-mode: both;
+  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Animationsvarianten */
+.animate-in.fade-in {
+  animation-name: fadeIn;
+}
+
+.animate-in.slide-in-from-top-2 {
+  animation-name: slideInFromTop;
+}
+
+.animate-in.zoom-in-95 {
+  animation-name: scaleIn;
+}
+
+/* Dauer-Overrides (ergänzen Tailwinds transition-duration für animation-duration) */
+.animate-in.duration-150 { animation-duration: 150ms; }
+.animate-in.duration-200 { animation-duration: 200ms; }
+.animate-in.duration-300 { animation-duration: 300ms; }
+
+/* ── Basis-Reset (ergänzend zu Tailwind Preflight) ────────────────────────── */
+
+/* Smooth Scrolling */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Verhindert horizontales Overflow auf Mobilgeräten */
+body {
+  overflow-x: hidden;
+}
+
+/* Input[type=number]: Spinner ausblenden (Firefox + Chrome/Safari) */
+input[type='number']::-webkit-inner-spin-button,
+input[type='number']::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type='number'] {
+  -moz-appearance: textfield;
+}
+
+/* Focus-Ring: konsistenter Stil über alle Browser */
+:focus-visible {
+  outline: 2px solid #2563eb; /* blue-600 */
+  outline-offset: 2px;
+}
