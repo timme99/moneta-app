@@ -104,7 +104,7 @@ export default async function handler(req: any, res: any) {
   const ai = new GoogleGenAI({ apiKey: geminiKey });
 
   try {
-    const modelName = process.env.GEMINI_MODEL ?? 'gemini-2.0-flash';
+    const modelName = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
     let config = payload?.config;
 
     // Normalisierung: Gemini API erfordert role:"user"|"model" in jedem Content-Objekt.
