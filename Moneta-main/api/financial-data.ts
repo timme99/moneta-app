@@ -8,7 +8,7 @@
  *  2. Mapping-Phase – Suche Ticker in ticker_mapping (by symbol ODER company_name)
  *                     → Nicht gefunden? Gemini auflösen + global speichern
  *  3. Cache-Phase   – price_cache prüfen: Eintrag < 60 Min → direkt zurückgeben
- *  4. API-Phase     – Alpha Vantage (RapidAPI) aufrufen
+ *  4. API-Phase     – Alpha Vantage (direkt, GLOBAL_QUOTE) aufrufen
  *  5. Update        – Neuen Kurs sofort in price_cache speichern
  *
  * GET /api/financial-data?q=Mercedes
@@ -23,7 +23,7 @@ import type { TickerEntry, FinancialDataResult } from '../lib/supabase-types';
 // ── Konstanten ────────────────────────────────────────────────────────────────
 
 const CACHE_TTL_MINUTES = 60;
-const RAPIDAPI_HOST     = 'yh-finance.p.rapidapi.com';
+const AV_BASE_URL       = 'https://www.alphavantage.co/query';
 const GEMINI_MODEL      = 'gemini-2.5-flash';
 
 // ── CORS-Header ───────────────────────────────────────────────────────────────
@@ -99,9 +99,9 @@ export default async function handler(request: Request): Promise<Response> {
       }
     }
 
-    // ── 4. API-PHASE (YH Finance) ─────────────────────────────────────────────
+    // ── 4. API-PHASE (Alpha Vantage) ──────────────────────────────────────────
 
-    const quote = await fetchFromYHFinance(tickerEntry.symbol);
+    const quote = await fetchFromAlphaVantage(tickerEntry.symbol);
 
     // ── 5. CACHE UPDATE ───────────────────────────────────────────────────────
 
@@ -264,9 +264,9 @@ Regeln:
   };
 }
 
-// ── YH Finance (Yahoo Finance via RapidAPI) ───────────────────────────────────
+// ── Alpha Vantage (direkt) ────────────────────────────────────────────────────
 
-interface YHQuote {
+interface AVQuote {
   price        : number;
   change       : number;
   changePercent: number;
@@ -274,39 +274,50 @@ interface YHQuote {
   currency     : string;
 }
 
-async function fetchFromYHFinance(symbol: string): Promise<YHQuote> {
-  const apiKey = process.env.RAPIDAPI_KEY;
-  if (!apiKey) throw new Error('RAPIDAPI_KEY nicht konfiguriert.');
+/** Leitet die Währung aus dem Symbol-Suffix ab (Alpha Vantage gibt keine Währung zurück). */
+function currencyFromSymbol(symbol: string): string {
+  const upper = symbol.toUpperCase();
+  if (upper.endsWith('.DE') || upper.endsWith('.DEX') || upper.endsWith('.FRK')) return 'EUR';
+  if (upper.endsWith('.LON'))                                                     return 'GBP';
+  if (upper.endsWith('.TYO') || upper.endsWith('.TSE'))                           return 'JPY';
+  return 'USD';
+}
 
-  const url = new URL(`https://${RAPIDAPI_HOST}/market/v2/get-quotes`);
-  url.searchParams.set('region', 'US');
-  url.searchParams.set('symbols', symbol);
+async function fetchFromAlphaVantage(symbol: string): Promise<AVQuote> {
+  const apiKey = process.env.ALPHA_VANTAGE_API_KEY;
+  if (!apiKey) throw new Error('ALPHA_VANTAGE_API_KEY nicht konfiguriert.');
 
-  const response = await fetch(url.toString(), {
-    method : 'GET',
-    headers: {
-      'x-rapidapi-host': RAPIDAPI_HOST,
-      'x-rapidapi-key' : apiKey,
-    },
-  });
+  const url = new URL(AV_BASE_URL);
+  url.searchParams.set('function', 'GLOBAL_QUOTE');
+  url.searchParams.set('symbol',   symbol);
+  url.searchParams.set('apikey',   apiKey);
+
+  const response = await fetch(url.toString(), { method: 'GET' });
 
   if (!response.ok) {
-    throw new Error(`YH Finance Fehler ${response.status}: ${await response.text()}`);
+    throw new Error(`Alpha Vantage Fehler ${response.status}: ${await response.text()}`);
   }
 
-  const data  = await response.json();
-  const quote = data?.quoteResponse?.result?.[0] as Record<string, unknown> | undefined;
+  const data = await response.json();
 
-  if (!quote) {
+  // Alpha Vantage signalisiert Rate-Limits im Body (HTTP bleibt 200)
+  if (data['Note'] || data['Information']) {
+    throw new Error(`Alpha Vantage Limit: ${data['Note'] ?? data['Information']}`);
+  }
+
+  const q = data['Global Quote'] as Record<string, string> | undefined;
+  if (!q || Object.keys(q).length === 0) {
     throw new Error(`Keine Kursdaten für Symbol "${symbol}" gefunden.`);
   }
 
+  const rawPct = (q['10. change percent'] || '0%').replace('%', '').replace(',', '.');
+
   return {
-    price        : (quote['regularMarketPrice']         as number) ?? 0,
-    change       : (quote['regularMarketChange']        as number) ?? 0,
-    changePercent: (quote['regularMarketChangePercent'] as number) ?? 0,
-    volume       : (quote['regularMarketVolume']        as number) ?? 0,
-    currency     : (quote['currency'] as string) || 'USD',
+    price        : parseFloat(q['05. price']  || '0') || 0,
+    change       : parseFloat(q['09. change'] || '0') || 0,
+    changePercent: parseFloat(rawPct)                  || 0,
+    volume       : parseInt(q['06. volume']   || '0', 10) || 0,
+    currency     : currencyFromSymbol(symbol),
   };
 }
 
@@ -326,7 +337,7 @@ function buildResult(
     description : ticker.description_static,
     pe_ratio    : ticker.pe_ratio_static,
     price,
-    currency    : 'USD',
+    currency    : currencyFromSymbol(ticker.symbol),
     change      : 0,
     changePercent: 0,
     volume      : 0,

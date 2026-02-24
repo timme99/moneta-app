@@ -18,7 +18,7 @@ export default async function handler(req: any, res: any) {
     'MONETA_SUPABASE_URL',
     'MONETA_SUPABASE_ANON_KEY',
     'MONETA_SUPABASE_SERVICE_ROLE_KEY',
-    'RAPIDAPI_KEY',
+    'ALPHA_VANTAGE_API_KEY',
   ];
 
   for (const v of requiredVars) {

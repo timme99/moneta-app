@@ -1,9 +1,9 @@
-// api/stocks.ts - Alpha Vantage via RapidAPI mit Rate-Limit & 24h-Cache
+// api/stocks.ts - Alpha Vantage (direkt) mit Rate-Limit & 24h-Cache
 export const config = {
   runtime: 'edge',
 };
 
-const RAPIDAPI_HOST = 'alpha-vantage.p.rapidapi.com';
+const AV_BASE_URL = 'https://www.alphavantage.co/query';
 
 /** Alpha Vantage erwartet Ticker (z. B. AAPL, EUNL), keine ISINs. ISIN → Ticker für App-ETFs. */
 const ISIN_TO_TICKER: Record<string, string> = {
@@ -26,9 +26,12 @@ function toAlphaVantageSymbol(symbolOrIsin: string): { symbol: string; isIsin: b
   }
   return { symbol: raw || 'AAPL', isIsin: false };
 }
-const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 1x pro Tag pro Symbol
-const LIMIT_PER_MINUTE = 25;
-const LIMIT_PER_DAY = 500;
+
+// Free-Plan: 5 Anfragen/Minute, 25 Anfragen/Tag
+// Premium-Plan: deutlich höher – Konstanten hier anpassen
+const CACHE_TTL_MS    = 24 * 60 * 60 * 1000; // 24h
+const LIMIT_PER_MINUTE = 5;
+const LIMIT_PER_DAY    = 25;
 
 // In-Memory: pro Edge-Instance (bei mehreren Instanzen je Instanz eigenes Limit)
 type CachedQuote = { data: Record<string, unknown>; fetchedAt: number };
@@ -93,9 +96,9 @@ export default async function handler(request: Request) {
     const { symbol: alphaSymbol } = toAlphaVantageSymbol(rawInput);
     const mode = searchParams.get('mode') || 'quote';
 
-    const apiKey = process.env.RAPIDAPI_KEY;
+    const apiKey = process.env.ALPHA_VANTAGE_API_KEY;
     if (!apiKey) {
-      return new Response(JSON.stringify({ error: 'API Key nicht konfiguriert' }), { headers, status: 500 });
+      return new Response(JSON.stringify({ error: 'ALPHA_VANTAGE_API_KEY nicht konfiguriert' }), { headers, status: 500 });
     }
 
     // Nur für Kurse: 24h-Cache und Rate-Limits (Cache-Key = Alpha-Vantage-Ticker)
@@ -142,21 +145,20 @@ export default async function handler(request: Request) {
       }
     }
 
-    // Echter API-Aufruf (Alpha Vantage erwartet Ticker, z. B. AAPL oder EUNL)
-    const url = new URL(`https://${RAPIDAPI_HOST}/query`);
-    url.searchParams.set('function', mode === 'chat' ? 'NEWS_SENTIMENT' : 'GLOBAL_QUOTE');
+    // Echter API-Aufruf (Alpha Vantage direkt)
+    const url = new URL(AV_BASE_URL);
+    url.searchParams.set('apikey', apiKey);
     url.searchParams.set('symbol', alphaSymbol);
+
     if (mode === 'chat') {
+      url.searchParams.set('function', 'NEWS_SENTIMENT');
+      url.searchParams.set('tickers', alphaSymbol);
       url.searchParams.set('limit', '10');
+    } else {
+      url.searchParams.set('function', 'GLOBAL_QUOTE');
     }
 
-    const response = await fetch(url.toString(), {
-      method: 'GET',
-      headers: {
-        'x-rapidapi-host': RAPIDAPI_HOST,
-        'x-rapidapi-key': apiKey,
-      },
-    });
+    const response = await fetch(url.toString(), { method: 'GET' });
 
     const data = await response.json();
 
@@ -164,6 +166,15 @@ export default async function handler(request: Request) {
       return new Response(
         JSON.stringify({ error: data.message || 'Alpha Vantage Anfrage fehlgeschlagen' }),
         { headers, status: response.status }
+      );
+    }
+
+    // Alpha Vantage gibt HTTP 200 auch bei Fehlern zurück – Information im Body prüfen
+    if (data['Note'] || data['Information']) {
+      const msg = data['Note'] || data['Information'];
+      return new Response(
+        JSON.stringify({ error: msg, limitReached: true }),
+        { headers, status: 429 }
       );
     }
 
