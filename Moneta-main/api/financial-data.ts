@@ -23,7 +23,7 @@ import type { TickerEntry, FinancialDataResult } from '../lib/supabase-types';
 // ── Konstanten ────────────────────────────────────────────────────────────────
 
 const CACHE_TTL_MINUTES = 60;
-const RAPIDAPI_HOST     = 'alpha-vantage.p.rapidapi.com';
+const RAPIDAPI_HOST     = 'yh-finance.p.rapidapi.com';
 const GEMINI_MODEL      = 'gemini-2.5-flash';
 
 // ── CORS-Header ───────────────────────────────────────────────────────────────
@@ -99,9 +99,9 @@ export default async function handler(request: Request): Promise<Response> {
       }
     }
 
-    // ── 4. API-PHASE (Alpha Vantage Fallback) ─────────────────────────────────
+    // ── 4. API-PHASE (YH Finance) ─────────────────────────────────────────────
 
-    const quote = await fetchFromAlphaVantage(tickerEntry.symbol);
+    const quote = await fetchFromYHFinance(tickerEntry.symbol);
 
     // ── 5. CACHE UPDATE ───────────────────────────────────────────────────────
 
@@ -264,9 +264,9 @@ Regeln:
   };
 }
 
-// ── Alpha Vantage ─────────────────────────────────────────────────────────────
+// ── YH Finance (Yahoo Finance via RapidAPI) ───────────────────────────────────
 
-interface AlphaQuote {
+interface YHQuote {
   price        : number;
   change       : number;
   changePercent: number;
@@ -274,13 +274,13 @@ interface AlphaQuote {
   currency     : string;
 }
 
-async function fetchFromAlphaVantage(symbol: string): Promise<AlphaQuote> {
+async function fetchFromYHFinance(symbol: string): Promise<YHQuote> {
   const apiKey = process.env.RAPIDAPI_KEY;
   if (!apiKey) throw new Error('RAPIDAPI_KEY nicht konfiguriert.');
 
-  const url = new URL(`https://${RAPIDAPI_HOST}/query`);
-  url.searchParams.set('function', 'GLOBAL_QUOTE');
-  url.searchParams.set('symbol', symbol);
+  const url = new URL(`https://${RAPIDAPI_HOST}/market/v2/get-quotes`);
+  url.searchParams.set('region', 'US');
+  url.searchParams.set('symbols', symbol);
 
   const response = await fetch(url.toString(), {
     method : 'GET',
@@ -291,26 +291,22 @@ async function fetchFromAlphaVantage(symbol: string): Promise<AlphaQuote> {
   });
 
   if (!response.ok) {
-    throw new Error(`Alpha Vantage Fehler ${response.status}: ${await response.text()}`);
+    throw new Error(`YH Finance Fehler ${response.status}: ${await response.text()}`);
   }
 
   const data  = await response.json();
-  const quote = data['Global Quote'] as Record<string, string> | undefined;
+  const quote = data?.quoteResponse?.result?.[0] as Record<string, unknown> | undefined;
 
-  if (!quote || Object.keys(quote).length === 0) {
+  if (!quote) {
     throw new Error(`Keine Kursdaten für Symbol "${symbol}" gefunden.`);
   }
 
-  const rawChangePercent = (quote['10. change percent'] ?? '0%')
-    .replace('%', '')
-    .replace(',', '.');
-
   return {
-    price        : parseFloat(quote['05. price']  ?? '0') || 0,
-    change       : parseFloat(quote['09. change'] ?? '0') || 0,
-    changePercent: parseFloat(rawChangePercent)           || 0,
-    volume       : parseInt(quote['06. volume']   ?? '0', 10) || 0,
-    currency     : 'USD',   // Alpha Vantage liefert standardmäßig USD
+    price        : (quote['regularMarketPrice']         as number) ?? 0,
+    change       : (quote['regularMarketChange']        as number) ?? 0,
+    changePercent: (quote['regularMarketChangePercent'] as number) ?? 0,
+    volume       : (quote['regularMarketVolume']        as number) ?? 0,
+    currency     : (quote['currency'] as string) || 'USD',
   };
 }
 
