@@ -7,9 +7,11 @@
  * Tipp: Typen automatisch aus dem Supabase-Projekt generieren:
  *   npx supabase gen types typescript --project-id <dein-project-id> > lib/database.types.ts
  *
- * WICHTIG: @supabase/postgrest-js ≥ 1.19 (PostgREST v12) erfordert, dass
- * Database['public'] die Felder Views / Functions / Enums / CompositeTypes
- * enthält. Fehlen sie, löst TypeScript ALLE Tabellen als `never` auf.
+ * WICHTIG: @supabase/postgrest-js ≥ 2.x (GenericTable) erfordert:
+ *  - Database['public'] mit Views / Functions / Enums / CompositeTypes
+ *  - Jede Tabelle mit `Relationships: []` – fehlt dieses Feld, löst TypeScript
+ *    alle Insert/Update-Typen als `never` auf (kein Fehler beim Lesen, aber
+ *    upsert/insert/update schlägt bei der Typ-Prüfung fehl).
  */
 
 export interface Database {
@@ -54,6 +56,7 @@ export interface Database {
           newsletter_auto_updates?: boolean;
           updated_at?: string;
         };
+        Relationships: [];
       };
 
       // ── ticker_mapping ────────────────────────────────────────────────────
@@ -90,6 +93,7 @@ export interface Database {
           competitors?: string | null;
           updated_at?: string;
         };
+        Relationships: [];
       };
 
       // ── holdings ──────────────────────────────────────────────────────────
@@ -120,6 +124,7 @@ export interface Database {
           buy_price?: number | null;
           updated_at?: string;
         };
+        Relationships: [];
       };
 
       // ── price_cache ───────────────────────────────────────────────────────
@@ -139,6 +144,7 @@ export interface Database {
           price?: number | null;
           last_updated?: string;
         };
+        Relationships: [];
       };
 
       // ── subscribers ───────────────────────────────────────────────────────
@@ -171,6 +177,7 @@ export interface Database {
           confirmed?: boolean;
           updated_at?: string;
         };
+        Relationships: [];
       };
     };
   };
