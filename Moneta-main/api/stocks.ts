@@ -9,7 +9,7 @@ const AV_BASE_URL = 'https://www.alphavantage.co/query';
 const ISIN_TO_TICKER: Record<string, string> = {
   'IE00B4L5Y983': 'EUNL',   // iShares Core MSCI World
   'IE00B3RBWM25': 'VWRL',   // Vanguard FTSE All-World
-  'IE00B5BMR087': 'SXR8',   // iShares Core S&P 500
+  'IE00B5BMR087': 'IVV',    // iShares Core S&P 500 (US-Listing, AV-kompatibel; UCITS-Pendant: SXR8/CSPX)
   'IE00BTJRMP35': 'XMME',   // Xtrackers MSCI Emerging Markets
   'IE00BG47KH54': 'VAGP',   // Vanguard Global Aggregate Bond
 };
