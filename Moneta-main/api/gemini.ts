@@ -1,6 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
-import { getSupabaseAdmin } from '../lib/supabaseClient';
-import type { InsertTables } from '../lib/supabase-types';
+import { getSupabaseAdmin } from '../lib/supabaseClient.js';
+import type { InsertTables } from '../lib/supabase-types.js';
 
 // Speicher für Rate-Limits (In-Memory, pro Nutzer/IP)
 const limitStore = new Map<string, any>();

@@ -1,6 +1,6 @@
-import { sendEmail, getResendClient } from '../../lib/email';
-import { getSubscribersForDigest } from '../../lib/subscribers';
-import { sendDigestToSubscribers, buildDigestHtml } from '../../lib/email';
+import { sendEmail, getResendClient } from '../../lib/email.js';
+import { getSubscribersForDigest } from '../../lib/subscribers.js';
+import { sendDigestToSubscribers, buildDigestHtml } from '../../lib/email.js';
 
 /**
  * POST /api/newsletter/send

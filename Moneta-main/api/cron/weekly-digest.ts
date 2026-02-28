@@ -1,5 +1,5 @@
-import { getSubscribersForDigest } from '../../lib/subscribers';
-import { sendDigestToSubscribers } from '../../lib/email';
+import { getSubscribersForDigest } from '../../lib/subscribers.js';
+import { sendDigestToSubscribers } from '../../lib/email.js';
 
 /**
  * GET /api/cron/weekly-digest

@@ -15,8 +15,8 @@
  * Header: Authorization: Bearer <supabase-access-token>
  */
 
-import { createClientWithToken, getSupabaseAdmin } from '../lib/supabaseClient';
-import type { TickerEntry, FinancialDataResult } from '../lib/supabase-types';
+import { createClientWithToken, getSupabaseAdmin } from '../lib/supabaseClient.js';
+import type { TickerEntry, FinancialDataResult } from '../lib/supabase-types.js';
 
 // ── Konstanten ────────────────────────────────────────────────────────────────
 

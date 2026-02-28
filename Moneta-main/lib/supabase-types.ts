@@ -12,9 +12,9 @@ export type {
   Tables,
   InsertTables,
   UpdateTables,
-} from './database.types';
+} from './database.types.js';
 
-import type { Database } from './database.types';
+import type { Database } from './database.types.js';
 
 // ── Tabellen-Zeilentypen ──────────────────────────────────────────────────────
 
