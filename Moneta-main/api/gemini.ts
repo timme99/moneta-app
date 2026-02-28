@@ -52,6 +52,59 @@ async function upsertTickerMapping(tickers: Array<{
   }
 }
 
+// ── News-Cache (DB, 6-Stunden-TTL) ───────────────────────────────────────────
+
+const NEWS_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+
+/** Sortierte Ticker zu einem eindeutigen Cache-Key zusammenführen. */
+function makeNewsCacheKey(tickers: string[]): string {
+  return [...tickers].sort().map((t) => t.toUpperCase()).join(',');
+}
+
+/** Liefert gecachten News-Text oder null bei Cache-Miss / veraltetem Eintrag. */
+async function getNewsFromCache(cacheKey: string): Promise<string | null> {
+  try {
+    const admin = getSupabaseAdmin();
+    const { data } = await admin
+      .from('news_cache')
+      .select('sentiment, summary, cached_at')
+      .eq('ticker', cacheKey)
+      .maybeSingle() as any;
+
+    if (!data?.cached_at) return null;
+    if (Date.now() - new Date(data.cached_at).getTime() > NEWS_CACHE_TTL_MS) return null;
+
+    return JSON.stringify({ sentiment: data.sentiment, summary: data.summary, fromCache: true });
+  } catch {
+    return null; // Tabelle existiert noch nicht → graceful fallback
+  }
+}
+
+/** Speichert Gemini-News-Ergebnis in der news_cache-Tabelle (fire & forget). */
+async function saveNewsToCache(cacheKey: string, responseText: string): Promise<void> {
+  try {
+    let sentiment: string | null = null;
+    let summary: string | null = null;
+    try {
+      const parsed = JSON.parse(responseText);
+      sentiment = parsed.sentiment ?? parsed.overall_sentiment ?? null;
+      summary   = parsed.summary   ?? parsed.text              ?? null;
+      if (!summary) summary = responseText.slice(0, 2000);
+    } catch {
+      summary = responseText.slice(0, 2000);
+    }
+    const admin = getSupabaseAdmin();
+    await admin
+      .from('news_cache')
+      .upsert(
+        { ticker: cacheKey, sentiment, summary, cached_at: new Date().toISOString() } as any,
+        { onConflict: 'ticker' }
+      );
+  } catch {
+    // Nicht-kritisch: fehlgeschlagenes Caching bricht die Antwort nicht ab
+  }
+}
+
 export default async function handler(req: any, res: any) {
   console.log("Check Key:", process.env.GEMINI_API_KEY ? "Vorhanden" : "FEHLT");
 
@@ -148,6 +201,22 @@ Beispiele: Apple→AAPL (Technology/Consumer Electronics), Microsoft→MSFT, Mer
       config = { responseMimeType: 'application/json', temperature: 0.1 };
     }
 
+    // News-Cache: DB-Treffer zurückgeben (6h TTL) wenn Tickers explizit übergeben
+    if (type === 'news') {
+      const tickersForCache = Array.isArray(payload?.tickers) ? (payload.tickers as string[]) : [];
+      if (tickersForCache.length > 0) {
+        const cacheKey = makeNewsCacheKey(tickersForCache);
+        const cached = await getNewsFromCache(cacheKey);
+        if (cached) {
+          console.log('[MONETA] News aus Cache ✓ Key:', cacheKey);
+          return res.status(200).json({
+            text: cached,
+            meta: { usage: 0, warning: null, fromCache: true },
+          });
+        }
+      }
+    }
+
     // Fallback: leerer contents-Array → sinnlose Anfrage vermeiden
     if (contents.length === 0) {
       return res.status(400).json({ error: 'Kein Inhalt für die KI-Anfrage übergeben.' });
@@ -162,6 +231,14 @@ Beispiele: Apple→AAPL (Technology/Consumer Electronics), Microsoft→MSFT, Mer
 
     let responseText = response.text || "";
     console.log("[MONETA] Phase 5: Antwort erhalten ✓ | Text-Länge:", responseText.length);
+
+    // News-Ergebnis asynchron in DB cachen (fire & forget)
+    if (type === 'news') {
+      const tickersForCache = Array.isArray(payload?.tickers) ? (payload.tickers as string[]) : [];
+      if (tickersForCache.length > 0) {
+        saveNewsToCache(makeNewsCacheKey(tickersForCache), responseText).catch(() => {});
+      }
+    }
 
     if (type === 'resolve_ticker') {
       const parsed = JSON.parse(responseText);
