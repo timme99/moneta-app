@@ -110,6 +110,13 @@ export default async function handler(req: any, res: any) {
 
   if (req.method !== 'POST') return res.status(405).send('Method not allowed');
 
+  // ── Auth-Check: CRON_SECRET oder regulärer User-Request ──────────────────
+  const authHeader    = req.headers['authorization'] as string | undefined;
+  const cronSecret    = process.env.CRON_SECRET;
+  const isCronRequest = !!(cronSecret && cronSecret.length >= 16 && authHeader === `Bearer ${cronSecret}`);
+  console.log("[MONETA] Auth-Typ:", isCronRequest ? "CRON (bypass)" : "USER (regulär)");
+  // Kein harter Reject – die Route bleibt für alle offen; CRON überspringt Rate-Limits.
+
   try {
 
   const { type, payload, userId } = req.body ?? {};
@@ -130,14 +137,14 @@ export default async function handler(req: any, res: any) {
   if (!(currentType in LIMITS)) return res.status(400).json({ error: 'Ungültiger Request-Typ' });
 
   const limitForType = LIMITS[currentType];
-  if (limitForType > 0 && userStats[currentType] >= limitForType) {
+  if (!isCronRequest && limitForType > 0 && userStats[currentType] >= limitForType) {
     return res.status(429).json({
       error: `Tageslimit für ${type} erreicht.`,
       resetIn: Math.ceil((userStats.lastReset + WINDOW_MS - now) / 3600000),
     });
   }
 
-  if (DAILY_CAP > 0 && userStats.total >= DAILY_CAP) {
+  if (!isCronRequest && DAILY_CAP > 0 && userStats.total >= DAILY_CAP) {
     return res.status(429).json({
       error: 'Tageslimit für alle KI-Anfragen erreicht.',
       resetIn: Math.ceil((userStats.lastReset + WINDOW_MS - now) / 3600000),
@@ -270,43 +277,57 @@ Beispiele: Apple→AAPL (Technology/Consumer Electronics), Microsoft→MSFT, Mer
       }
     });
   } catch (error: any) {
-    const msg: string = error?.message ?? '';
+    const msg: string        = error?.message ?? '';
     const httpStatus: number = error?.status ?? error?.httpStatus ?? 0;
+    const errorCode: string  = error?.code    ?? error?.errorCode ?? '';
 
-    // Vollständiges Logging für Vercel-Logs
-    console.error('[MONETA API ERROR]', {
+    // ── Detailliertes Logging: Quelle, Status, Nachricht ─────────────────────
+    console.error('[MONETA GEMINI ERROR]', {
+      source:    'Gemini API Call',
       type,
-      message:   msg,
       httpStatus,
-      code:      error?.code ?? '',
+      errorCode,
+      message:   msg,
       errorType: error?.constructor?.name ?? '',
-      stack:     error?.stack?.split('\n').slice(0, 3).join(' | ') ?? '',
+      stack:     error?.stack?.split('\n').slice(0, 4).join(' | ') ?? '',
     });
 
-    // Auth-Fehler: API-Key ungültig oder API nicht aktiviert
-    const isAuthError =
-      httpStatus === 400 ||
+    // ── Auth-Fehler: NUR echter Key-/Permission-Fehler (401/403) ─────────────
+    // 400 = Bad Request (Konfiguration) → KEIN Auth-Fehler!
+    // 'not found' = Modell/Ressource nicht gefunden → KEIN Auth-Fehler!
+    const isGeminiAuthError =
       httpStatus === 401 ||
       httpStatus === 403 ||
-      msg.toLowerCase().includes('api key') ||
-      msg.toLowerCase().includes('api_key') ||
-      msg.toLowerCase().includes('permission') ||
-      msg.toLowerCase().includes('not valid') ||
-      msg.toLowerCase().includes('not enabled') ||
-      msg.toLowerCase().includes('not found') ||
-      msg.toLowerCase().includes('disabled');
+      msg.toLowerCase().includes('api key not valid') ||
+      msg.toLowerCase().includes('api_key_invalid')   ||
+      msg.toLowerCase().includes('invalid api key')   ||
+      msg.toLowerCase().includes('api key expired')   ||
+      (msg.toLowerCase().includes('permission') && !msg.toLowerCase().includes('not found'));
 
-    if (isAuthError) {
+    if (isGeminiAuthError) {
+      console.error('[MONETA] → Ursache: API-Key ungültig oder API nicht aktiviert (HTTP', httpStatus, ')');
       return res.status(401).json({
-        error: `Gemini API-Fehler: ${msg}. Bitte GEMINI_API_KEY prüfen und sicherstellen, dass die "Generative Language API" in der Google Cloud Console aktiviert ist.`,
+        error:   `Gemini API-Key-Fehler (HTTP ${httpStatus}): ${msg}`,
+        hint:    'GEMINI_API_KEY in Vercel prüfen und sicherstellen, dass "Generative Language API" in der Google Cloud Console aktiviert ist.',
+        source:  'google_auth',
       });
     }
 
+    // ── Modell nicht verfügbar / Bad Request ─────────────────────────────────
+    if (httpStatus === 400 || httpStatus === 404) {
+      console.error('[MONETA] → Ursache: Modell/Konfigurationsfehler (HTTP', httpStatus, ')');
+      return res.status(502).json({
+        error:  `Gemini Modell-/Konfigurationsfehler (HTTP ${httpStatus}): ${msg}`,
+        source: 'google_model',
+      });
+    }
+
+    // ── Alle anderen Fehler ───────────────────────────────────────────────────
     return res.status(500).json({
-      error: 'KI-Schnittstelle überlastet oder Fehler bei der Verarbeitung.',
-      message: error?.message,
-      stack: error?.stack,
-      location: "Gemini API Call",
+      error:    'KI-Schnittstelle: unerwarteter Fehler.',
+      message:  msg,
+      httpStatus,
+      source:   'google_api',
     });
   }
 
