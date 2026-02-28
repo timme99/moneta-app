@@ -22,7 +22,7 @@ import type { TickerEntry, FinancialDataResult } from '../lib/supabase-types.js'
 
 const CACHE_TTL_MINUTES = 60;
 const AV_BASE_URL       = 'https://www.alphavantage.co/query';
-const GEMINI_MODEL      = 'gemini-1.5-flash';
+const GEMINI_MODEL      = 'gemini-2.5-flash';
 
 // ── Haupt-Handler ─────────────────────────────────────────────────────────────
 
@@ -213,7 +213,7 @@ Regeln:
 `.trim();
 
   const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${geminiKey}`,
+    `https://generativelanguage.googleapis.com/v1/models/${GEMINI_MODEL}:generateContent?key=${geminiKey}`,
     {
       method : 'POST',
       headers: { 'Content-Type': 'application/json' },
