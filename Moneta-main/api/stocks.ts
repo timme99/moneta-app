@@ -1,7 +1,4 @@
 // api/stocks.ts - Alpha Vantage (direkt) mit Rate-Limit & 24h-Cache
-export const config = {
-  runtime: 'edge',
-};
 
 const AV_BASE_URL = 'https://www.alphavantage.co/query';
 
@@ -33,7 +30,7 @@ const CACHE_TTL_MS    = 24 * 60 * 60 * 1000; // 24h
 const LIMIT_PER_MINUTE = 5;
 const LIMIT_PER_DAY    = 25;
 
-// In-Memory: pro Edge-Instance (bei mehreren Instanzen je Instanz eigenes Limit)
+// In-Memory: pro Node-Instance
 type CachedQuote = { data: Record<string, unknown>; fetchedAt: number };
 const quoteCache = new Map<string, CachedQuote>();
 const apiCallTimestamps: number[] = [];
@@ -78,27 +75,23 @@ function buildPriceData(quote: Record<string, string>, symbol: string) {
   };
 }
 
-export default async function handler(request: Request) {
-  const headers = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
-    'Content-Type': 'application/json',
-  };
+export default async function handler(req: any, res: any) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-  if (request.method === 'OPTIONS') {
-    return new Response(null, { headers, status: 200 });
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
   }
 
   try {
-    const { searchParams } = new URL(request.url);
-    const rawInput = searchParams.get('symbol') ?? searchParams.get('isin') ?? 'AAPL';
+    const rawInput = (req.query.symbol ?? req.query.isin ?? 'AAPL') as string;
     const { symbol: alphaSymbol } = toAlphaVantageSymbol(rawInput);
-    const mode = searchParams.get('mode') || 'quote';
+    const mode = (req.query.mode as string) || 'quote';
 
     const apiKey = process.env.ALPHA_VANTAGE_API_KEY;
     if (!apiKey) {
-      return new Response(JSON.stringify({ error: 'ALPHA_VANTAGE_API_KEY nicht konfiguriert' }), { headers, status: 500 });
+      return res.status(500).json({ error: 'ALPHA_VANTAGE_API_KEY nicht konfiguriert' });
     }
 
     // Nur für Kurse: 24h-Cache und Rate-Limits (Cache-Key = Alpha-Vantage-Ticker)
@@ -113,35 +106,26 @@ export default async function handler(request: Request) {
 
       // Cache-Treffer: keine API-Anfrage, sofort ausliefern
       if (cacheValid) {
-        return new Response(
-          JSON.stringify({ ...cached.data, _cached: true, _cachedAt: cached.fetchedAt }),
-          { headers, status: 200 }
-        );
+        return res.status(200).json({ ...cached.data, _cached: true, _cachedAt: cached.fetchedAt });
       }
 
       // Limit erreicht: wenn wir (auch alte) Cache-Daten haben, trotzdem ausliefern
       if (atLimit && cached) {
-        return new Response(
-          JSON.stringify({
-            ...cached.data,
-            _limitReached: true,
-            _cachedOnly: true,
-            _cachedAt: cached.fetchedAt,
-          }),
-          { headers, status: 200 }
-        );
+        return res.status(200).json({
+          ...cached.data,
+          _limitReached: true,
+          _cachedOnly: true,
+          _cachedAt: cached.fetchedAt,
+        });
       }
 
       // Limit erreicht und kein Cache: Client soll gecachte/alte Daten nutzen
       if (atLimit) {
-        return new Response(
-          JSON.stringify({
-            error: 'Tageslimit für Kursabfragen erreicht. Bitte morgen erneut versuchen.',
-            limitReached: true,
-            useCached: false,
-          }),
-          { headers, status: 429 }
-        );
+        return res.status(429).json({
+          error: 'Tageslimit für Kursabfragen erreicht. Bitte morgen erneut versuchen.',
+          limitReached: true,
+          useCached: false,
+        });
       }
     }
 
@@ -163,19 +147,13 @@ export default async function handler(request: Request) {
     const data = await response.json();
 
     if (!response.ok) {
-      return new Response(
-        JSON.stringify({ error: data.message || 'Alpha Vantage Anfrage fehlgeschlagen' }),
-        { headers, status: response.status }
-      );
+      return res.status(response.status).json({ error: data.message || 'Alpha Vantage Anfrage fehlgeschlagen' });
     }
 
     // Alpha Vantage gibt HTTP 200 auch bei Fehlern zurück – Information im Body prüfen
     if (data['Note'] || data['Information']) {
       const msg = data['Note'] || data['Information'];
-      return new Response(
-        JSON.stringify({ error: msg, limitReached: true }),
-        { headers, status: 429 }
-      );
+      return res.status(429).json({ error: msg, limitReached: true });
     }
 
     if (mode === 'chat') {
@@ -183,24 +161,21 @@ export default async function handler(request: Request) {
       const comments = items
         .map((item: { title?: string; summary?: string }) => item.title || item.summary || '')
         .filter(Boolean);
-      return new Response(JSON.stringify({ symbol: alphaSymbol, comments }), { headers, status: 200 });
+      return res.status(200).json({ symbol: alphaSymbol, comments });
     }
 
     // Quote: zählen und cachen
     recordApiCall();
     const quote = data['Global Quote'];
     if (!quote || Object.keys(quote).length === 0) {
-      return new Response(
-        JSON.stringify({ error: 'Keine Kursdaten für dieses Symbol', symbol: alphaSymbol }),
-        { headers, status: 404 }
-      );
+      return res.status(404).json({ error: 'Keine Kursdaten für dieses Symbol', symbol: alphaSymbol });
     }
 
     const priceData = buildPriceData(quote, alphaSymbol);
     quoteCache.set(alphaSymbol, { data: priceData, fetchedAt: Date.now() });
 
-    return new Response(JSON.stringify(priceData), { headers, status: 200 });
+    return res.status(200).json(priceData);
   } catch (error) {
-    return new Response(JSON.stringify({ error: 'Interner Serverfehler' }), { headers, status: 500 });
+    return res.status(500).json({ error: 'Interner Serverfehler' });
   }
 }
