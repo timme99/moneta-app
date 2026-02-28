@@ -66,9 +66,6 @@ export interface PortfolioAnalysisReport {
   nextSteps: { action: string; description: string }[];
   textResponse?: string;
   lastMarketUpdate?: string;
-  /** M&A-Attraktivitäts-Score 1–10 (KGV, Sektor, News). */
-  ma_attractiveness_score?: number;
-  ma_attractiveness_note?: string;
 }
 
 export interface PortfolioHealthReport {

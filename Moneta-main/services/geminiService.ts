@@ -49,11 +49,6 @@ const PORTFOLIO_SYSTEM_PROMPT = `Analysiere das Depot und antworte NUR mit einem
 
 WICHTIG – Für jede Position (holding): gültiges Börsensymbol (ticker) setzen. Namen in Ticker umwandeln, z. B.: Apple → AAPL, Microsoft → MSFT, Mercedes/Daimler → DAI, MSCI World → EUNL, S&P 500 ETF → SXR8.
 
-Falls Sektor, Beschreibung oder Wettbewerber für eine Position im Depot-Text angegeben sind, beziehe diese Daten EXPLIZIT in die M&A-Bewertung ein:
-- Niedriges KGV in einem konsolidierungsreifen Sektor = hoher M&A-Score
-- Bekannte Wettbewerber als potenzielle Käufer oder Übernahmeziele einschätzen
-- Branchenbeschreibungen nutzen, um strategischen Fit bei einer Übernahme zu bewerten
-
 Das JSON MUSS folgende Felder enthalten:
 - holdings: Array mit Objekten { name, ticker, weight (Zahl 0–100), decision ("Kaufen"|"Halten"|"Verkaufen"), reason }
 - sectors: Array mit { name (z. B. "Technologie", "Finanzen"), value (Zahl) } – Aufteilung nach Branchen
@@ -64,9 +59,7 @@ Das JSON MUSS folgende Felder enthalten:
 - strengths: Array von Strings (Stärken)
 - considerations: Array von Strings (Verbesserungsideen)
 - nextSteps: Array von { action: string, description: string }
-- diversification_score: Zahl, risk_level: "low"|"medium"|"high", context: string, gaps: Array von Strings
-- ma_attractiveness_score: Zahl von 1 bis 10 – M&A-Attraktivitäts-Score des Depots. Berechne ihn aus: (1) KGV/P-E-Verhältnis der Positionen (niedriges KGV = attraktiver für Übernahme), (2) Sektor-Konsolidierungstrend (z. B. Automotive, Pharma = aktuell konsolidierungsreich), (3) Wettbewerbsdynamik aus den Depot-Metadaten (bekannte Wettbewerber als potenzielle Käufer), (4) aktuelle News (Übernahmegerüchte, Branchentrends). 1 = kaum attraktiv, 10 = sehr attraktiv für M&A.
-- ma_attractiveness_note: 1–2 Sätze, die den Score erklären und konkrete Wettbewerber oder Sektordynamiken nennen.`;
+- diversification_score: Zahl, risk_level: "low"|"medium"|"high", context: string, gaps: Array von Strings`;
 
 export const analyzePortfolio = async (input: { text?: string, fileBase64?: string, fileType?: string }) => {
   const contents: any[] = [{ 
@@ -98,10 +91,40 @@ export const getFinancialAdvice = async (message: string, history: any[]) => {
   return result.text;
 };
 
+const NEWS_IMPACT_PROMPT = (newsTitle: string, newsSnippet: string, holdingsList: string) =>
+`Du bist ein Finanzanalyse-Assistent. Analysiere den Einfluss folgender Marktnachricht auf das Portfolio des Nutzers.
+
+Nachricht: "${newsTitle}"
+Details: "${newsSnippet}"
+
+Portfolio-Positionen:
+${holdingsList}
+
+Antworte NUR mit einem gültigen JSON-Objekt exakt in diesem Format:
+{
+  "relevance": "high" | "medium" | "low",
+  "impact_summary": "2–3 Sätze: Wie stark und warum betrifft diese Nachricht das Portfolio?",
+  "context": "Hintergrundinformation: Was steckt hinter dieser Meldung?",
+  "perspectives": {
+    "bullish": "Optimistische Perspektive: Was spricht für eine positive Marktreaktion?",
+    "bearish": "Pessimistische Perspektive: Was sind die Risiken?"
+  },
+  "affected_holdings": [
+    { "ticker": "SYMBOL", "your_exposure": "Kurze Einschätzung zum Exposure dieser Position" }
+  ],
+  "educational_note": "Lehrreicher Hinweis: Was kann der Anleger aus dieser Situation lernen?"
+}
+
+Nur Positionen in affected_holdings aufführen, die wirklich betroffen sind. Kein anderer Text außer dem JSON.`;
+
 export const analyzeNewsImpact = async (news: any, holdings: any[]) => {
+  const holdingsList = holdings
+    .map(h => `- ${h.name} (${h.ticker || 'N/A'}), Gewichtung: ${h.weight ?? '?'}%`)
+    .join('\n');
+
   const result = await callProxy('news', {
-    contents: [{ parts: [{ text: `Impact News "${news.title}" auf ${JSON.stringify(holdings)}. JSON Output.` }] }],
-    config: { responseMimeType: "application/json" }
+    contents: [{ parts: [{ text: NEWS_IMPACT_PROMPT(news.title, news.snippet || '', holdingsList) }] }],
+    config: { responseMimeType: "application/json", temperature: 0.3 }
   });
   return JSON.parse(result.text);
 };
