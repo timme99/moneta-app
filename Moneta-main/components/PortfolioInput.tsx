@@ -13,7 +13,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Search, Plus, Trash2, Loader2, TrendingUp, BarChart3, BookMarked, Info,
-  TrendingDown, RefreshCw,
+  TrendingDown, RefreshCw, Pencil, MessageSquare,
 } from 'lucide-react';
 import { getSupabaseBrowser } from '../lib/supabaseBrowser';
 import type { TickerEntry } from '../lib/supabase-types';
@@ -29,9 +29,11 @@ interface HoldingRow {
 interface PortfolioInputProps {
   onAnalyze: (portfolioText: string) => void;
   isLoading?: boolean;
+  userAccount?: { id: string; name: string } | null;
+  onSendToAssistant?: (text: string) => void;
 }
 
-const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading }) => {
+const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, userAccount, onSendToAssistant }) => {
   const sb = getSupabaseBrowser();
 
   const [userId, setUserId]           = useState<string | null>(null);
@@ -58,21 +60,34 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading })
   const [isLoadingHoldings, setIsLoadingH] = useState(true);
   const [isSaving, setIsSaving]           = useState(false);
 
+  const [editingId, setEditingId] = useState<string | null>(null);
+
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dropRef     = useRef<HTMLDivElement>(null);
 
   // ── Auth ──────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!sb) { setAuthError(true); setIsLoadingH(false); return; }
-    sb.auth.getUser().then(({ data }) => {
+
+    sb.auth.getUser().then(async ({ data }) => {
       if (data.user) {
+        // Echte Supabase-Session vorhanden
         setUserId(data.user.id);
+      } else if (userAccount) {
+        // Mock-User aus localStorage → Anonymous-Session erstellen, damit RLS greift
+        const { data: anonData } = await sb.auth.signInAnonymously();
+        if (anonData?.user) {
+          setUserId(anonData.user.id);
+        } else {
+          setAuthError(true);
+          setIsLoadingH(false);
+        }
       } else {
         setAuthError(true);
         setIsLoadingH(false);
       }
     });
-  }, []);
+  }, [userAccount]);
 
   // ── Holdings laden ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -219,6 +234,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading })
       setBuyPrice('');
       setTotalValue('');
       setCurrentPrice(null);
+      setEditingId(null);
       await loadHoldings();
     } else {
       console.error('[PortfolioInput] upsert error:', error.message);
@@ -231,12 +247,32 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading })
     if (!sb) return;
     await sb.from('holdings').delete().eq('id', id);
     setHoldings((prev) => prev.filter((h) => h.id !== id));
+    if (editingId === id) {
+      setEditingId(null);
+      setSelected(null);
+      setQuery('');
+      setShares('');
+      setBuyPrice('');
+      setTotalValue('');
+    }
   };
 
-  // ── Analyse-Text formatieren ──────────────────────────────────────────────
-  const handleAnalyze = () => {
-    if (holdings.length === 0) return;
+  // ── Bearbeiten ────────────────────────────────────────────────────────────
+  const handleEdit = (h: HoldingRow) => {
+    setEditingId(h.id);
+    setSelected(h.ticker);
+    setQuery(`${h.ticker.company_name} (${h.ticker.symbol})`);
+    setShares(h.shares != null ? String(h.shares) : '');
+    setBuyPrice(h.buy_price != null ? String(h.buy_price) : '');
+    setTotalValue('');
+    setSuggestions([]);
+    setShowDrop(false);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
+  // ── Depot-Text für KI aufbereiten ─────────────────────────────────────────
+  const buildDepotText = (): string => {
+    if (holdings.length === 0) return '';
     const lines = holdings.map((h, i) => {
       const t   = h.ticker;
       const pos = h.watchlist
@@ -259,16 +295,25 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading })
       return `${i + 1}. ${t.company_name} (${t.symbol}) | ${pos}${meta ? ` | ${meta}` : ''}${desc}`;
     });
 
-    const text = [
+    return [
       'Depot-Analyse:',
       '',
       ...lines,
       '',
       'Bitte analysiere dieses Depot vollständig gemäß den Systemvorgaben.',
-      'Nutze Sektor-, Wettbewerber- und KGV-Daten für eine tiefgreifende M&A-Bewertung.',
     ].join('\n');
+  };
 
-    onAnalyze(text);
+  const handleAnalyze = () => {
+    if (holdings.length === 0) return;
+    const text = buildDepotText();
+    if (text) onAnalyze(text);
+  };
+
+  const handleSendToAssistant = () => {
+    if (holdings.length === 0 || !onSendToAssistant) return;
+    const text = buildDepotText();
+    if (text) onSendToAssistant(text);
   };
 
   // Hilfswert: ist die Eingabe nur Watchlist?
@@ -436,16 +481,28 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading })
                 : 'Stückzahl & Kaufpreis → vollständige Portfolio-Position'}
             </p>
 
-            <button
-              onClick={handleAdd}
-              disabled={isSaving}
-              className="w-full bg-slate-900 text-white py-3 rounded-[14px] text-[10px] font-black uppercase tracking-widest hover:bg-blue-600 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
-            >
-              {isSaving
-                ? <Loader2 className="w-4 h-4 animate-spin" />
-                : <Plus className="w-4 h-4" />}
-              {isWatchlistAdd ? 'Als Watchlist speichern' : 'Position ins Depot speichern'}
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={handleAdd}
+                disabled={isSaving}
+                className="flex-1 bg-slate-900 text-white py-3 rounded-[14px] text-[10px] font-black uppercase tracking-widest hover:bg-blue-600 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {isSaving
+                  ? <Loader2 className="w-4 h-4 animate-spin" />
+                  : <Plus className="w-4 h-4" />}
+                {editingId
+                  ? 'Position aktualisieren'
+                  : isWatchlistAdd ? 'Als Watchlist speichern' : 'Position ins Depot speichern'}
+              </button>
+              {editingId && (
+                <button
+                  onClick={() => { setEditingId(null); setSelected(null); setQuery(''); setShares(''); setBuyPrice(''); setTotalValue(''); }}
+                  className="px-4 py-3 rounded-[14px] text-[10px] font-black uppercase tracking-widest bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors"
+                >
+                  Abbrechen
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -507,32 +564,53 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading })
                     )}
                   </div>
                 </div>
-                <button
-                  onClick={() => handleDelete(h.id)}
-                  className="p-2 hover:bg-rose-50 hover:text-rose-500 text-slate-300 rounded-xl transition-colors shrink-0"
-                  title="Position entfernen"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => handleEdit(h)}
+                    className={`p-2 rounded-xl transition-colors shrink-0 ${editingId === h.id ? 'bg-blue-100 text-blue-600' : 'hover:bg-blue-50 hover:text-blue-500 text-slate-300'}`}
+                    title="Position bearbeiten"
+                  >
+                    <Pencil className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => handleDelete(h.id)}
+                    className="p-2 hover:bg-rose-50 hover:text-rose-500 text-slate-300 rounded-xl transition-colors shrink-0"
+                    title="Position entfernen"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
             ))}
           </div>
         )}
       </div>
 
-      {/* ── Analysieren-Button ────────────────────────────────────────────── */}
+      {/* ── Aktions-Buttons ───────────────────────────────────────────────── */}
       {holdings.length > 0 && (
-        <button
-          onClick={handleAnalyze}
-          disabled={isLoading}
-          className="w-full bg-blue-600 text-white py-5 rounded-[24px] font-black uppercase tracking-[0.2em] text-[10px] flex items-center justify-center gap-3 hover:bg-slate-900 transition-all shadow-xl shadow-blue-600/20 disabled:opacity-50"
-        >
-          {isLoading
-            ? <Loader2 className="w-5 h-5 animate-spin" />
-            : <BarChart3 className="w-5 h-5" />}
-          KI-Analyse starten · {holdings.filter(h => !h.watchlist).length} Position
-          {holdings.filter(h => !h.watchlist).length !== 1 ? 'en' : ''} + {holdings.filter(h => h.watchlist).length} Watchlist
-        </button>
+        <div className="flex flex-col sm:flex-row gap-3">
+          <button
+            onClick={handleAnalyze}
+            disabled={isLoading}
+            className="flex-1 bg-blue-600 text-white py-5 rounded-[24px] font-black uppercase tracking-[0.2em] text-[10px] flex items-center justify-center gap-3 hover:bg-slate-900 transition-all shadow-xl shadow-blue-600/20 disabled:opacity-50"
+          >
+            {isLoading
+              ? <Loader2 className="w-5 h-5 animate-spin" />
+              : <BarChart3 className="w-5 h-5" />}
+            KI-Analyse starten · {holdings.filter(h => !h.watchlist).length} Position
+            {holdings.filter(h => !h.watchlist).length !== 1 ? 'en' : ''}
+          </button>
+          {onSendToAssistant && (
+            <button
+              onClick={handleSendToAssistant}
+              disabled={isLoading}
+              className="flex-1 sm:flex-none bg-slate-100 text-slate-700 py-5 px-6 rounded-[24px] font-black uppercase tracking-[0.2em] text-[10px] flex items-center justify-center gap-3 hover:bg-slate-200 transition-all disabled:opacity-50"
+            >
+              <MessageSquare className="w-5 h-5" />
+              Mit Assistent besprechen
+            </button>
+          )}
+        </div>
       )}
     </div>
   );

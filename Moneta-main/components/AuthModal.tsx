@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import { X, Mail, User, ArrowRight, Loader2, ShieldCheck } from 'lucide-react';
 import { userService } from '../services/userService';
+import { getSupabaseBrowser } from '../lib/supabaseBrowser';
 import { UserAccount } from '../types';
 
 interface AuthModalProps {
@@ -21,7 +22,15 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLogin }) => {
     e.preventDefault();
     setIsLoading(true);
     try {
-      const user = await userService.authenticate(email, name);
+      // Echte Supabase-Session via Anonymous Auth → PortfolioInput-RLS funktioniert danach
+      let supabaseUserId: string | null = null;
+      const sb = getSupabaseBrowser();
+      if (sb) {
+        const { data: anonData } = await sb.auth.signInAnonymously();
+        if (anonData?.user) supabaseUserId = anonData.user.id;
+      }
+
+      const user = await userService.authenticate(email, name, supabaseUserId);
       onLogin(user);
       onClose();
     } catch (e) {

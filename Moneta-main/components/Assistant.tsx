@@ -7,9 +7,11 @@ import { ChatMessage } from '../types';
 interface AssistantProps {
   onAnalysisComplete?: (data: any) => void;
   isPremium?: boolean;
+  initialMessage?: string | null;
+  onInitialMessageConsumed?: () => void;
 }
 
-const Assistant: React.FC<AssistantProps> = ({ onAnalysisComplete }) => {
+const Assistant: React.FC<AssistantProps> = ({ onAnalysisComplete, initialMessage, onInitialMessageConsumed }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       role: 'assistant',
@@ -21,13 +23,38 @@ const Assistant: React.FC<AssistantProps> = ({ onAnalysisComplete }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [limitWarning, setLimitWarning] = useState<string | null>(null);
   const [pendingFile, setPendingFile] = useState<{name: string, type: string, base64: string} | null>(null);
-  
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages, pendingFile, isLoading]);
+
+  // Depot-Text vom "Mit Assistent besprechen"-Button automatisch absenden
+  useEffect(() => {
+    if (!initialMessage || isLoading) return;
+    onInitialMessageConsumed?.();
+    setInput('');
+    const userMsg: ChatMessage = { role: 'user', content: initialMessage, timestamp: new Date() };
+    setMessages(prev => [...prev, userMsg]);
+    setIsLoading(true);
+    analyzePortfolio({ text: initialMessage })
+      .then((masterData) => {
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: masterData.summary || "Depot-Analyse abgeschlossen. Was möchtest du genauer wissen?",
+          timestamp: new Date()
+        }]);
+        if (onAnalysisComplete) onAnalysisComplete(masterData);
+      })
+      .catch((error: any) => {
+        const msg = error.message?.includes(':') ? error.message.split(':')[1] : "Fehler bei der Depot-Analyse.";
+        setLimitWarning(msg);
+        setMessages(prev => [...prev, { role: 'assistant', content: msg, timestamp: new Date() }]);
+      })
+      .finally(() => setIsLoading(false));
+  }, [initialMessage]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];

@@ -71,6 +71,7 @@ const CACHED_PRICE_LABEL = '08:00 Uhr';
 const PortfolioDeepDive: React.FC<PortfolioDeepDiveProps> = ({ report, healthReport, savingsReport, selectedNewsFromTicker, onClearSelectedNews }) => {
   const [analyzingNews, setAnalyzingNews] = useState<string | null>(null);
   const [newsImpact, setNewsImpact] = useState<NewsImpactReport | null>(null);
+  const [impactError, setImpactError] = useState<string | null>(null);
   const [priceLoading, setPriceLoading] = useState(true);
   const [priceFetchFailed, setPriceFetchFailed] = useState(false);
 
@@ -98,11 +99,13 @@ const PortfolioDeepDive: React.FC<PortfolioDeepDiveProps> = ({ report, healthRep
 
   const handleNewsClick = async (news: any) => {
     setAnalyzingNews(news.title);
+    setImpactError(null);
     try {
       const impact = await analyzeNewsImpact(news, report!.holdings);
       setNewsImpact(impact);
-    } catch (e) {
-      console.error("Fehler bei der Analyse der News", e);
+    } catch (e: any) {
+      console.error("Fehler bei der Impact-Analyse:", e);
+      setImpactError(e?.message?.includes(':') ? e.message.split(':')[1] : "Impact-Analyse momentan nicht verfügbar. Bitte erneut versuchen.");
     } finally {
       setAnalyzingNews(null);
     }
@@ -323,6 +326,15 @@ const PortfolioDeepDive: React.FC<PortfolioDeepDiveProps> = ({ report, healthRep
           )}
         </div>
       </div>
+
+      {/* Impact-Fehler */}
+      {impactError && (
+        <div className="mx-0 mt-4 p-4 bg-rose-50 border border-rose-100 rounded-2xl flex items-center gap-3 text-rose-800 text-xs font-bold">
+          <AlertTriangle className="w-4 h-4 shrink-0" />
+          {impactError}
+          <button onClick={() => setImpactError(null)} className="ml-auto text-rose-400 hover:text-rose-600"><X className="w-4 h-4" /></button>
+        </div>
+      )}
 
       {/* 3. SICHERHEITS-CHECK */}
       {healthReport && (

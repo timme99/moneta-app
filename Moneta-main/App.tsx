@@ -28,6 +28,7 @@ const App: React.FC = () => {
   const [isGlobalLoading, setIsGlobalLoading] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<string | null>(null);
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [assistantSeed, setAssistantSeed] = useState<string | null>(null);
   const [legalModal, setLegalModal] = useState<{ isOpen: boolean, type: 'impressum' | 'disclaimer' | 'privacy' }>({
     isOpen: false,
     type: 'disclaimer'
@@ -59,8 +60,6 @@ const App: React.FC = () => {
       holdings: masterData.holdings || [],
       news: masterData.news || [],
       nextSteps: masterData.nextSteps || (masterData.next_step ? [{ action: "Check", description: masterData.next_step }] : []),
-      ma_attractiveness_score: masterData.ma_attractiveness_score != null ? Math.min(10, Math.max(1, Number(masterData.ma_attractiveness_score))) : undefined,
-      ma_attractiveness_note: masterData.ma_attractiveness_note,
     };
 
     const health: PortfolioHealthReport = {
@@ -192,7 +191,11 @@ const App: React.FC = () => {
         ) : (
           <div className="animate-in fade-in duration-500">
             {activeView === 'assistant' ? (
-               <Assistant onAnalysisComplete={(data: any) => processMasterData(data)} />
+               <Assistant
+                 onAnalysisComplete={(data: any) => processMasterData(data)}
+                 initialMessage={assistantSeed}
+                 onInitialMessageConsumed={() => setAssistantSeed(null)}
+               />
             ) : activeView === 'discover' ? (
                <Discover />
             ) : activeView === 'settings' ? (
@@ -208,6 +211,11 @@ const App: React.FC = () => {
                 <PortfolioInput
                   onAnalyze={handlePortfolioAnalysis}
                   isLoading={isGlobalLoading}
+                  userAccount={userAccount}
+                  onSendToAssistant={(text) => {
+                    setAssistantSeed(text);
+                    setActiveView('assistant');
+                  }}
                 />
               </div>
             ) : (

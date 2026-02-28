@@ -25,9 +25,9 @@ export const userService = {
     return true;
   },
 
-  async authenticate(email: string, name: string): Promise<UserAccount> {
+  async authenticate(email: string, name: string, supabaseId?: string | null): Promise<UserAccount> {
     const mockUser: UserAccount = {
-      id: Math.random().toString(36).substr(2, 9),
+      id: supabaseId || Math.random().toString(36).substr(2, 9),
       email,
       name,
       isLoggedIn: true,
