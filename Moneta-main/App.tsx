@@ -14,7 +14,22 @@ import PortfolioInput from './components/PortfolioInput';
 import { PortfolioAnalysisReport, PortfolioHealthReport, PortfolioSavingsReport, UserAccount } from './types';
 import { analyzePortfolio } from './services/geminiService';
 import { userService } from './services/userService';
+import { getSupabaseBrowser } from './lib/supabaseBrowser';
 import { Clock, AlertTriangle, ShieldCheck } from 'lucide-react';
+
+/** Erstellt ein UserAccount-Objekt aus einem Supabase-User */
+function userFromSupabase(sbUser: any): UserAccount {
+  return {
+    id:         sbUser.id,
+    email:      sbUser.email ?? '',
+    name:       sbUser.user_metadata?.full_name
+                ?? sbUser.user_metadata?.name
+                ?? sbUser.email?.split('@')[0]
+                ?? 'Nutzer',
+    isLoggedIn: true,
+    settings:   { autoNewsletter: true, weeklyDigest: true, cloudSync: true },
+  };
+}
 
 type NewsItem = PortfolioAnalysisReport['news'] extends (infer T)[] ? T : never;
 
@@ -35,19 +50,51 @@ const App: React.FC = () => {
   });
 
   useEffect(() => {
-    const loadData = async () => {
-      const user = await userService.fetchUserData();
-      if (user) {
-        setUserAccount(user);
-        if (user.portfolioData) {
-          setAnalysisReport(user.portfolioData.report);
-          setHealthReport(user.portfolioData.health);
-          setSavingsReport(user.portfolioData.savings);
-          setLastUpdate(localStorage.getItem('moneta_last_update'));
-        }
+    const sb = getSupabaseBrowser();
+
+    const applyUser = (account: UserAccount) => {
+      setUserAccount(account);
+      setShowAuthModal(false);
+      // Lade zuletzt gespeicherte Portfolio-Daten aus localStorage
+      const stored = localStorage.getItem('moneta_db_mock');
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored);
+          if (parsed.portfolioData) {
+            setAnalysisReport(parsed.portfolioData.report);
+            setHealthReport(parsed.portfolioData.health);
+            setSavingsReport(parsed.portfolioData.savings);
+            setLastUpdate(localStorage.getItem('moneta_last_update'));
+          }
+        } catch { /* ignore */ }
       }
     };
-    loadData();
+
+    if (sb) {
+      // 1. Aktuelle Session prüfen (OAuth-Callback, Magic Link, persistierte Session)
+      sb.auth.getSession().then(({ data: { session } }) => {
+        if (session?.user) {
+          applyUser(userFromSupabase(session.user));
+        } else {
+          // Kein Supabase-Login → localStorage-Fallback (alte Mock-User)
+          userService.fetchUserData().then(u => { if (u) applyUser(u); });
+        }
+      });
+
+      // 2. Auth-State-Changes (Login nach Magic Link oder OAuth-Redirect)
+      const { data: { subscription } } = sb.auth.onAuthStateChange((event, session) => {
+        if (event === 'SIGNED_IN' && session?.user) {
+          applyUser(userFromSupabase(session.user));
+        } else if (event === 'SIGNED_OUT') {
+          setUserAccount(null);
+        }
+      });
+
+      return () => subscription.unsubscribe();
+    } else {
+      // Supabase nicht konfiguriert → localStorage-Fallback
+      userService.fetchUserData().then(u => { if (u) applyUser(u); });
+    }
   }, []);
 
   const processMasterData = useCallback((masterData: any) => {
@@ -281,10 +328,7 @@ const App: React.FC = () => {
       <AuthModal
         isOpen={showAuthModal}
         onClose={() => setShowAuthModal(false)}
-        onLogin={(user) => {
-          setUserAccount(user);
-          setShowAuthModal(false);
-        }}
+        onLogin={() => { /* wird via onAuthStateChange in useEffect gehandelt */ }}
       />
     </div>
   );
