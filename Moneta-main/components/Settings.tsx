@@ -1,7 +1,8 @@
 
 import React from 'react';
-import { User, Shield, Wallet, ChevronRight, Mail, LogOut, Target, Scale, Bell, CheckCircle2 } from 'lucide-react';
+import { User, Shield, ChevronRight, Mail, LogOut, Target, Scale, Bell, CheckCircle2 } from 'lucide-react';
 import { UserAccount } from '../types';
+import { getSupabaseBrowser } from '../lib/supabaseBrowser';
 
 interface SettingsProps {
   account: UserAccount | null;
@@ -71,8 +72,13 @@ const Settings: React.FC<SettingsProps> = ({ account }) => {
         ))}
 
         {account ? (
-          <button 
-            onClick={() => { localStorage.clear(); window.location.reload(); }}
+          <button
+            onClick={async () => {
+              const sb = getSupabaseBrowser();
+              if (sb) await sb.auth.signOut();
+              localStorage.clear();
+              window.location.reload();
+            }}
             className="w-full flex items-center justify-center gap-3 p-6 bg-rose-50 text-rose-600 rounded-[32px] font-black uppercase tracking-widest text-[10px] hover:bg-rose-100 transition-all"
           >
             <LogOut className="w-4 h-4" /> Abmelden & Session beenden
