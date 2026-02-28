@@ -1,5 +1,5 @@
 /**
- * api/financial-data.ts  –  Vercel Edge Function
+ * api/financial-data.ts  –  Vercel Serverless Function (Node.js runtime)
  *
  * Smart-Data-Fetch: getFinancialData(input)
  *
@@ -15,8 +15,6 @@
  * Header: Authorization: Bearer <supabase-access-token>
  */
 
-export const config = { runtime: 'edge' };
-
 import { createClientWithToken, getSupabaseAdmin } from '../lib/supabaseClient';
 import type { TickerEntry, FinancialDataResult } from '../lib/supabase-types';
 
@@ -24,53 +22,43 @@ import type { TickerEntry, FinancialDataResult } from '../lib/supabase-types';
 
 const CACHE_TTL_MINUTES = 60;
 const AV_BASE_URL       = 'https://www.alphavantage.co/query';
-const GEMINI_MODEL      = 'gemini-2.5-flash';
-
-// ── CORS-Header ───────────────────────────────────────────────────────────────
-
-const BASE_HEADERS = {
-  'Access-Control-Allow-Origin' : '*',
-  'Access-Control-Allow-Methods': 'GET, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-  'Content-Type'                : 'application/json',
-};
-
-function json(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data), { headers: BASE_HEADERS, status });
-}
+const GEMINI_MODEL      = 'gemini-1.5-flash';
 
 // ── Haupt-Handler ─────────────────────────────────────────────────────────────
 
-export default async function handler(request: Request): Promise<Response> {
-  if (request.method === 'OPTIONS') {
-    return new Response(null, { headers: BASE_HEADERS, status: 200 });
+export default async function handler(req: any, res: any): Promise<void> {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
   }
 
-  if (request.method !== 'GET') {
-    return json({ error: 'Nur GET erlaubt.' }, 405);
+  if (req.method !== 'GET') {
+    return res.status(405).json({ error: 'Nur GET erlaubt.' });
   }
 
-  const { searchParams } = new URL(request.url);
-  const rawInput = (searchParams.get('q') ?? '').trim();
+  const rawInput = ((req.query.q as string) ?? '').trim();
 
   if (!rawInput) {
-    return json({ error: 'Parameter "q" fehlt (z. B. ?q=Mercedes oder ?q=SAP.DE).' }, 400);
+    return res.status(400).json({ error: 'Parameter "q" fehlt (z. B. ?q=Mercedes oder ?q=SAP.DE).' });
   }
 
   // ── 1. USER-CHECK ────────────────────────────────────────────────────────────
 
-  const authHeader = request.headers.get('Authorization') ?? '';
+  const authHeader = (req.headers.authorization ?? '') as string;
   const token      = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
 
   if (!token) {
-    return json({ error: 'Nicht authentifiziert. Bearer-Token fehlt.' }, 401);
+    return res.status(401).json({ error: 'Nicht authentifiziert. Bearer-Token fehlt.' });
   }
 
   const userClient = createClientWithToken(token);
   const { data: { user }, error: authError } = await userClient.auth.getUser();
 
   if (authError || !user) {
-    return json({ error: 'Ungültiges oder abgelaufenes Auth-Token.' }, 401);
+    return res.status(401).json({ error: 'Ungültiges oder abgelaufenes Auth-Token.' });
   }
 
   // Ab hier: user.id ist validiert
@@ -88,14 +76,13 @@ export default async function handler(request: Request): Promise<Response> {
       .from('price_cache')
       .select('price, last_updated')
       .eq('ticker_id', tickerEntry.id)
-      .maybeSingle();
+      .maybeSingle() as any;
 
-    const cachedAny = cached as any;
-    if (cachedAny && cachedAny.price !== null && cachedAny.last_updated) {
-      const ageMs = Date.now() - new Date(cachedAny.last_updated).getTime();
+    if (cached && cached.price !== null && cached.last_updated) {
+      const ageMs = Date.now() - new Date(cached.last_updated).getTime();
       if (ageMs < CACHE_TTL_MINUTES * 60 * 1000) {
-        const result: FinancialDataResult = buildResult(tickerEntry, cachedAny.price, cachedAny.last_updated, true);
-        return json(result);
+        const result: FinancialDataResult = buildResult(tickerEntry, cached.price, cached.last_updated, true);
+        return res.status(200).json(result);
       }
     }
 
@@ -121,12 +108,12 @@ export default async function handler(request: Request): Promise<Response> {
       currency     : quote.currency,
     };
 
-    return json(result);
+    return res.status(200).json(result);
 
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Unbekannter Fehler';
     console.error('[financial-data]', msg);
-    return json({ error: msg }, 500);
+    return res.status(500).json({ error: msg });
   }
 }
 
@@ -147,7 +134,7 @@ async function resolveTickerEntry(input: string): Promise<TickerEntry> {
     .from('ticker_mapping')
     .select('*')
     .eq('symbol', upperInput)
-    .maybeSingle();
+    .maybeSingle() as any;
 
   if (bySymbol) return bySymbol;
 
@@ -157,7 +144,7 @@ async function resolveTickerEntry(input: string): Promise<TickerEntry> {
     .select('*')
     .ilike('company_name', `%${input}%`)
     .limit(1)
-    .maybeSingle();
+    .maybeSingle() as any;
 
   if (byName) return byName;
 
@@ -174,7 +161,7 @@ async function resolveTickerEntry(input: string): Promise<TickerEntry> {
       industry    : resolved.industry ?? null,
     } as any)
     .select('*')
-    .single();
+    .single() as any;
 
   if (insertError || !inserted) {
     // Parallel-Race: anderer Request hat denselben Ticker schon eingefügt
@@ -182,7 +169,7 @@ async function resolveTickerEntry(input: string): Promise<TickerEntry> {
       .from('ticker_mapping')
       .select('*')
       .eq('symbol', resolved.symbol.toUpperCase())
-      .single();
+      .single() as any;
 
     if (existing) return existing;
     throw new Error(`Ticker-Mapping konnte nicht gespeichert werden: ${insertError?.message}`);
