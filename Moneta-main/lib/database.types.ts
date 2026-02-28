@@ -179,6 +179,32 @@ export interface Database {
         };
         Relationships: [];
       };
+
+      // ── news_cache ────────────────────────────────────────────────────────
+      // Cached Gemini-Ergebnisse für News-Sentiment pro Ticker-Kombination.
+      // Cache-Key = kommaseparierte, sortierte Ticker-Symbole (z. B. "AAPL,MSFT").
+      // TTL: 6 Stunden (geprüft im Code, nicht per DB-Constraint).
+      news_cache: {
+        Row: {
+          id: number;
+          ticker: string;
+          sentiment: string | null;
+          summary: string | null;
+          cached_at: string;
+        };
+        Insert: {
+          ticker: string;
+          sentiment?: string | null;
+          summary?: string | null;
+          cached_at?: string;
+        };
+        Update: {
+          sentiment?: string | null;
+          summary?: string | null;
+          cached_at?: string;
+        };
+        Relationships: [];
+      };
     };
   };
 }

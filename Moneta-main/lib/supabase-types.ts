@@ -12,9 +12,9 @@ export type {
   Tables,
   InsertTables,
   UpdateTables,
-} from './database.types';
+} from './database.types.js';
 
-import type { Database } from './database.types';
+import type { Database } from './database.types.js';
 
 // ── Tabellen-Zeilentypen ──────────────────────────────────────────────────────
 
@@ -23,6 +23,7 @@ export type TickerEntry  = Database['public']['Tables']['ticker_mapping']['Row']
 export type Holding      = Database['public']['Tables']['holdings']['Row'];
 export type PriceCache   = Database['public']['Tables']['price_cache']['Row'];
 export type Subscriber   = Database['public']['Tables']['subscribers']['Row'];
+export type NewsCache    = Database['public']['Tables']['news_cache']['Row'];
 
 // ── API-Ergebnistypen ─────────────────────────────────────────────────────────
 

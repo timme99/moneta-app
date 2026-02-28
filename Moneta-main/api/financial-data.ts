@@ -15,8 +15,8 @@
  * Header: Authorization: Bearer <supabase-access-token>
  */
 
-import { createClientWithToken, getSupabaseAdmin } from '../lib/supabaseClient';
-import type { TickerEntry, FinancialDataResult } from '../lib/supabase-types';
+import { createClientWithToken, getSupabaseAdmin } from '../lib/supabaseClient.js';
+import type { TickerEntry, FinancialDataResult } from '../lib/supabase-types.js';
 
 // ── Konstanten ────────────────────────────────────────────────────────────────
 
@@ -54,14 +54,18 @@ export default async function handler(req: any, res: any): Promise<void> {
     return res.status(401).json({ error: 'Nicht authentifiziert. Bearer-Token fehlt.' });
   }
 
-  const userClient = createClientWithToken(token);
-  const { data: { user }, error: authError } = await userClient.auth.getUser();
+  // Interner Zugang via CRON_SECRET (für server-seitige Backend-Calls)
+  const cronSecret   = process.env.CRON_SECRET;
+  const isCronAccess = !!(cronSecret && cronSecret.length >= 16 && token === cronSecret);
 
-  if (authError || !user) {
-    return res.status(401).json({ error: 'Ungültiges oder abgelaufenes Auth-Token.' });
+  if (!isCronAccess) {
+    const userClient = createClientWithToken(token);
+    const { data: { user }, error: authError } = await userClient.auth.getUser();
+
+    if (authError || !user) {
+      return res.status(401).json({ error: 'Ungültiges oder abgelaufenes Auth-Token.' });
+    }
   }
-
-  // Ab hier: user.id ist validiert
 
   try {
     // ── 2. MAPPING-PHASE ──────────────────────────────────────────────────────

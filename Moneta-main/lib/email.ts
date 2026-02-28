@@ -1,5 +1,5 @@
 import { Resend } from 'resend';
-import type { NewsletterSubscriber } from './subscribers';
+import type { NewsletterSubscriber } from './subscribers.js';
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 

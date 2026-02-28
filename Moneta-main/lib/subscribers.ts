@@ -3,7 +3,7 @@
  * Nutzt getSupabaseAdmin (Service-Role-Key) – funktioniert ohne aktive User-Session.
  */
 
-import { getSupabaseAdmin } from './supabaseClient';
+import { getSupabaseAdmin } from './supabaseClient.js';
 
 export interface NewsletterSubscriber {
   email: string;
