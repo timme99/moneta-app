@@ -17,23 +17,17 @@ import {
 } from 'lucide-react';
 import { getSupabaseBrowser } from '../lib/supabaseBrowser';
 import type { TickerEntry } from '../lib/supabase-types';
-
-interface HoldingRow {
-  id: string;
-  ticker: TickerEntry;
-  shares: number | null;
-  buy_price: number | null;
-  watchlist: boolean;
-}
+import type { HoldingRow } from '../types';
 
 interface PortfolioInputProps {
   onAnalyze: (portfolioText: string) => void;
   isLoading?: boolean;
   userAccount?: { id: string; name: string } | null;
   onSendToAssistant?: (text: string) => void;
+  onHoldingsChange?: (holdings: HoldingRow[]) => void;
 }
 
-const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, userAccount, onSendToAssistant }) => {
+const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, userAccount, onSendToAssistant, onHoldingsChange }) => {
   const sb = getSupabaseBrowser();
 
   const [userId, setUserId]           = useState<string | null>(null);
@@ -103,15 +97,16 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
 
-    setHoldings(
-      (data ?? []).map((row: any) => ({
-        id:        row.id,
-        ticker:    row.ticker_mapping as TickerEntry,
-        shares:    row.shares,
-        buy_price: row.buy_price,
-        watchlist: row.watchlist,
-      }))
-    );
+    const newHoldings: HoldingRow[] = (data ?? []).map((row: any) => ({
+      id:        row.id,
+      ticker:    row.ticker_mapping as TickerEntry,
+      shares:    row.shares,
+      buy_price: row.buy_price,
+      watchlist: row.watchlist,
+    }));
+
+    setHoldings(newHoldings);
+    onHoldingsChange?.(newHoldings);
     setIsLoadingH(false);
   };
 

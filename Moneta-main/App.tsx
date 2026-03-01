@@ -11,11 +11,11 @@ import MarketNewsTicker from './components/MarketNewsTicker';
 import Legal from './components/Legal';
 import AuthModal from './components/AuthModal';
 import PortfolioInput from './components/PortfolioInput';
-import { PortfolioAnalysisReport, PortfolioHealthReport, PortfolioSavingsReport, UserAccount } from './types';
+import { PortfolioAnalysisReport, PortfolioHealthReport, PortfolioSavingsReport, UserAccount, HoldingRow } from './types';
 import { analyzePortfolio } from './services/geminiService';
 import { userService } from './services/userService';
 import { getSupabaseBrowser } from './lib/supabaseBrowser';
-import { Clock, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { Clock, AlertTriangle, ShieldCheck, BarChart3, Loader2, BookMarked } from 'lucide-react';
 
 /** Erstellt ein UserAccount-Objekt aus einem Supabase-User */
 function userFromSupabase(sbUser: any): UserAccount {
@@ -36,6 +36,7 @@ type NewsItem = PortfolioAnalysisReport['news'] extends (infer T)[] ? T : never;
 const App: React.FC = () => {
   const [activeView, setActiveView] = useState('cockpit');
   const [userAccount, setUserAccount] = useState<UserAccount | null>(null);
+  const [holdings, setHoldings] = useState<HoldingRow[]>([]);
   const [analysisReport, setAnalysisReport] = useState<PortfolioAnalysisReport | null>(null);
   const [healthReport, setHealthReport] = useState<PortfolioHealthReport | null>(null);
   const [savingsReport, setSavingsReport] = useState<PortfolioSavingsReport | null>(null);
@@ -49,12 +50,62 @@ const App: React.FC = () => {
     type: 'disclaimer'
   });
 
+  /** Lädt Holdings des Nutzers aus Supabase und speichert sie im State */
+  const loadHoldingsForUser = useCallback(async (uid: string) => {
+    const sb = getSupabaseBrowser();
+    if (!sb || !uid) return;
+    const { data } = await sb
+      .from('holdings')
+      .select('id, shares, buy_price, watchlist, ticker_mapping(*)')
+      .eq('user_id', uid)
+      .order('created_at', { ascending: false });
+    setHoldings(
+      (data ?? []).map((row: any) => ({
+        id:        row.id,
+        ticker:    row.ticker_mapping,
+        shares:    row.shares,
+        buy_price: row.buy_price,
+        watchlist: row.watchlist,
+      }))
+    );
+  }, []);
+
+  /** Baut den Depot-Text für die KI-Analyse aus den aktuellen Holdings auf */
+  const buildDepotTextFromHoldings = useCallback((holds: HoldingRow[]): string => {
+    if (holds.length === 0) return '';
+    const lines = holds.map((h, i) => {
+      const t = h.ticker;
+      const pos = h.watchlist
+        ? 'Watchlist'
+        : `${h.shares} Stück | Kaufpreis: ${h.buy_price?.toFixed(2)} €`;
+      const meta = [
+        t.sector      ? `Sektor: ${t.sector}`           : null,
+        t.industry    ? `Industrie: ${t.industry}`       : null,
+        t.competitors ? `Wettbewerber: ${t.competitors}` : null,
+        t.pe_ratio_static != null ? `KGV: ${t.pe_ratio_static}` : null,
+      ].filter(Boolean).join(' | ');
+      const desc = t.description_static
+        ? `\n   Beschreibung: ${t.description_static}`
+        : '';
+      return `${i + 1}. ${t.company_name} (${t.symbol}) | ${pos}${meta ? ` | ${meta}` : ''}${desc}`;
+    });
+    return [
+      'Depot-Analyse:',
+      '',
+      ...lines,
+      '',
+      'Bitte analysiere dieses Depot vollständig gemäß den Systemvorgaben.',
+    ].join('\n');
+  }, []);
+
   useEffect(() => {
     const sb = getSupabaseBrowser();
 
     const applyUser = (account: UserAccount) => {
       setUserAccount(account);
       setShowAuthModal(false);
+      // Holdings aus Supabase laden (aktuellste Depot-Positionen)
+      loadHoldingsForUser(account.id);
       // Lade zuletzt gespeicherte Portfolio-Daten aus localStorage
       const stored = localStorage.getItem('moneta_db_mock');
       if (stored) {
@@ -87,6 +138,7 @@ const App: React.FC = () => {
           applyUser(userFromSupabase(session.user));
         } else if (event === 'SIGNED_OUT') {
           setUserAccount(null);
+          setHoldings([]);
         }
       });
 
@@ -95,7 +147,7 @@ const App: React.FC = () => {
       // Supabase nicht konfiguriert → localStorage-Fallback
       userService.fetchUserData().then(u => { if (u) applyUser(u); });
     }
-  }, []);
+  }, [loadHoldingsForUser]);
 
   const processMasterData = useCallback((masterData: any) => {
     if (!masterData || Object.keys(masterData).length === 0) return;
@@ -186,7 +238,7 @@ const App: React.FC = () => {
       />
       
       <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 w-full">
-        {activeView === 'cockpit' && analysisReport ? (
+        {activeView === 'cockpit' && (analysisReport || holdings.length > 0) ? (
           <div className="space-y-6">
             <div className="flex justify-between items-end mb-4">
               <div>
@@ -196,7 +248,7 @@ const App: React.FC = () => {
                 </div>
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">KI-gestützte Portfolio-Analyse & Echtzeit-Einblicke</p>
               </div>
-              {lastUpdate && (
+              {lastUpdate && analysisReport && (
                 <div className="flex items-center gap-2 text-slate-400 bg-white px-4 py-2 rounded-2xl border border-slate-100 shadow-sm">
                   <Clock className="w-3 h-3" />
                   <span className="text-[10px] font-bold uppercase">Stand: {lastUpdate}</span>
@@ -204,36 +256,132 @@ const App: React.FC = () => {
               )}
             </div>
 
-            <MarketNewsTicker 
-              news={analysisReport.news} 
-              onNewsClick={(item) => setSelectedNewsFromTicker(item)} 
-              isPremium={true} 
-            />
+            {/* ── Live Depot-Übersicht (immer sichtbar wenn Holdings vorhanden) ── */}
+            {holdings.length > 0 && (
+              <div className="bg-white border border-slate-200 rounded-[28px] shadow-sm overflow-hidden">
+                <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+                  <div>
+                    <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-[0.2em]">Mein Depot</h3>
+                    <p className="text-[9px] text-slate-400 font-medium mt-0.5">
+                      {holdings.filter(h => !h.watchlist).length} Position{holdings.filter(h => !h.watchlist).length !== 1 ? 'en' : ''}
+                      {holdings.filter(h => h.watchlist).length > 0 && ` · ${holdings.filter(h => h.watchlist).length} Watchlist`}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setActiveView('portfolio')}
+                    className="text-[9px] font-black text-blue-600 uppercase tracking-widest hover:text-slate-900 transition-colors"
+                  >
+                    Verwalten →
+                  </button>
+                </div>
 
-            <DashboardSummary 
-              report={analysisReport} 
-              healthReport={healthReport} 
-              savingsReport={savingsReport}
-              insight={null}
-            />
+                <div className="divide-y divide-slate-50">
+                  {holdings.slice(0, 6).map((h) => (
+                    <div key={h.id} className="flex items-center gap-4 px-6 py-3 hover:bg-slate-50/50 transition-colors">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-bold text-slate-900 truncate">{h.ticker.company_name}</span>
+                          <span className="text-[10px] text-slate-400 font-mono">{h.ticker.symbol}</span>
+                          {h.watchlist && (
+                            <span className="text-[9px] font-black text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded-full uppercase tracking-widest">
+                              Watchlist
+                            </span>
+                          )}
+                          {h.ticker.sector && (
+                            <span className="text-[9px] text-slate-400 font-medium">{h.ticker.sector}</span>
+                          )}
+                        </div>
+                      </div>
+                      {!h.watchlist && h.shares != null && (
+                        <div className="text-right shrink-0">
+                          <span className="text-sm font-bold text-slate-700">{h.shares} Stk.</span>
+                          {h.buy_price != null && (
+                            <p className="text-[10px] text-blue-500 font-bold">
+                              {(h.shares * h.buy_price).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} € Einstand
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  {holdings.length > 6 && (
+                    <div className="px-6 py-3 text-center">
+                      <button
+                        onClick={() => setActiveView('portfolio')}
+                        className="text-[10px] text-blue-500 font-bold hover:text-blue-600 transition-colors"
+                      >
+                        + {holdings.length - 6} weitere Position{holdings.length - 6 !== 1 ? 'en' : ''} anzeigen
+                      </button>
+                    </div>
+                  )}
+                </div>
 
-            <div className="bg-amber-50 border border-amber-100 p-5 rounded-[32px] flex items-start gap-4 shadow-sm">
-              <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-              <div className="space-y-1">
-                <p className="text-xs font-black text-amber-900 uppercase tracking-widest">Wichtiger Risikohinweis</p>
-                <p className="text-[11px] text-amber-700 font-medium leading-relaxed">
-                  Die dargestellten Analysen sind rein informativ und stellen keine Anlageberatung dar. Investitionen an der Börse bergen Risiken bis zum Totalverlust. Dieses Tool ist ein privates Beta-Projekt.
-                </p>
+                {/* KI-Analyse starten wenn noch keine Analyse vorhanden */}
+                {!analysisReport && holdings.filter(h => !h.watchlist).length > 0 && (
+                  <div className="px-6 py-4 bg-slate-50 border-t border-slate-100">
+                    <button
+                      onClick={() => {
+                        const text = buildDepotTextFromHoldings(holdings);
+                        if (text) handleAnalysis({ text });
+                      }}
+                      disabled={isGlobalLoading}
+                      className="w-full bg-blue-600 text-white py-3 rounded-[14px] text-[10px] font-black uppercase tracking-widest hover:bg-slate-900 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+                    >
+                      {isGlobalLoading
+                        ? <Loader2 className="w-4 h-4 animate-spin" />
+                        : <BarChart3 className="w-4 h-4" />}
+                      KI-Analyse starten · {holdings.filter(h => !h.watchlist).length} Position{holdings.filter(h => !h.watchlist).length !== 1 ? 'en' : ''}
+                    </button>
+                  </div>
+                )}
+
+                {/* Hinweis wenn nur Watchlist-Einträge vorhanden */}
+                {!analysisReport && holdings.filter(h => !h.watchlist).length === 0 && (
+                  <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center gap-3">
+                    <BookMarked className="w-4 h-4 text-amber-500 shrink-0" />
+                    <p className="text-[10px] text-slate-500 font-medium">
+                      Füge Positionen mit Stückzahl & Kaufpreis hinzu, um eine KI-Analyse zu starten.
+                    </p>
+                  </div>
+                )}
               </div>
-            </div>
+            )}
 
-            <PortfolioDeepDive 
-              report={analysisReport} 
-              healthReport={healthReport} 
-              savingsReport={savingsReport}
-              selectedNewsFromTicker={selectedNewsFromTicker}
-              onClearSelectedNews={() => setSelectedNewsFromTicker(null)}
-            />
+            {/* ── KI-Analyse Ergebnisse (nur wenn vorhanden) ──────────────── */}
+            {analysisReport && (
+              <>
+                <MarketNewsTicker
+                  news={analysisReport.news}
+                  onNewsClick={(item) => setSelectedNewsFromTicker(item)}
+                  isPremium={true}
+                />
+
+                <DashboardSummary
+                  report={analysisReport}
+                  healthReport={healthReport}
+                  savingsReport={savingsReport}
+                  insight={null}
+                />
+
+                <div className="bg-amber-50 border border-amber-100 p-5 rounded-[32px] flex items-start gap-4 shadow-sm">
+                  <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p className="text-xs font-black text-amber-900 uppercase tracking-widest">Wichtiger Risikohinweis</p>
+                    <p className="text-[11px] text-amber-700 font-medium leading-relaxed">
+                      Die dargestellten Analysen sind rein informativ und stellen keine Anlageberatung dar. Investitionen an der Börse bergen Risiken bis zum Totalverlust. Dieses Tool ist ein privates Beta-Projekt.
+                    </p>
+                  </div>
+                </div>
+
+                <PortfolioDeepDive
+                  report={analysisReport}
+                  healthReport={healthReport}
+                  savingsReport={savingsReport}
+                  selectedNewsFromTicker={selectedNewsFromTicker}
+                  onClearSelectedNews={() => setSelectedNewsFromTicker(null)}
+                />
+              </>
+            )}
           </div>
         ) : (
           <div className="animate-in fade-in duration-500">
@@ -259,6 +407,7 @@ const App: React.FC = () => {
                   onAnalyze={handlePortfolioAnalysis}
                   isLoading={isGlobalLoading}
                   userAccount={userAccount}
+                  onHoldingsChange={setHoldings}
                   onSendToAssistant={(text) => {
                     setAssistantSeed(text);
                     setActiveView('assistant');
