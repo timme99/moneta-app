@@ -142,7 +142,8 @@ const App: React.FC = () => {
     const resolved: Array<{ ticker: string }> = (await resp.json()).tickers ?? [];
     if (resolved.length === 0) return 0;
 
-    const symbols = resolved.map((t) => t.ticker).filter(Boolean);
+    // Validierung: Einträge mit Leerzeichen sind noch Namen, keine Börsensymbole → verwerfen
+    const symbols = resolved.map((t) => t.ticker).filter((s: string) => s && !s.includes(' '));
     const { data: mapped } = await sb.from('ticker_mapping').select('id, symbol').in('symbol', symbols);
     if (!mapped || mapped.length === 0) return 0;
 

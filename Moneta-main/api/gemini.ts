@@ -176,7 +176,7 @@ export default async function handler(req: any, res: any) {
   let ai: GoogleGenAI;
   try {
     ai = new GoogleGenAI({ apiKey: geminiKey, httpOptions: { apiVersion: 'v1' } });
-    console.log("[MONETA] Phase 2: GoogleGenAI initialisiert ✓ (Modell: gemini-2.5-flash, API: v1beta)");
+    console.log("[MONETA] Phase 2: GoogleGenAI initialisiert ✓ (Modell: gemini-2.5-flash, API: v1)");
   } catch (error: any) {
     console.error('[MONETA INIT ERROR]', error);
     return res.status(500).json({ error: error.message, phase: "initialization" });

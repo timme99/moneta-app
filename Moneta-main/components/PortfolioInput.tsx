@@ -361,7 +361,8 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
     if (resolved.length === 0) return 0;
 
     // Schritt 2: IDs aus ticker_mapping holen
-    const symbols = resolved.map((t) => t.ticker).filter(Boolean);
+    // Validierung: Einträge mit Leerzeichen sind noch Namen, keine Börsensymbole → verwerfen
+    const symbols = resolved.map((t) => t.ticker).filter((s) => s && !s.includes(' '));
     const { data: mapped } = await sb
       .from('ticker_mapping')
       .select('id, symbol')
