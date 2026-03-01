@@ -45,6 +45,11 @@ export default async function handler(req: any, res: any): Promise<void> {
     return res.status(400).json({ error: 'Parameter "q" fehlt (z. B. ?q=Mercedes oder ?q=SAP.DE).' });
   }
 
+  // ── Äußerer try/catch: fängt Fehler in Auth + Haupt-Logik ab ────────────────
+  // Verhindert, dass Node/Vercel einen 502 wirft, wenn createClientWithToken
+  // oder getUser() eine unerwartete Exception auslösen.
+  try {
+
   // ── 1. USER-CHECK ────────────────────────────────────────────────────────────
 
   const authHeader = (req.headers.authorization ?? '') as string;
@@ -59,7 +64,12 @@ export default async function handler(req: any, res: any): Promise<void> {
   const isCronAccess = !!(cronSecret && cronSecret.length >= 16 && token === cronSecret);
 
   if (!isCronAccess) {
-    const userClient = createClientWithToken(token);
+    let userClient;
+    try {
+      userClient = createClientWithToken(token);
+    } catch {
+      return res.status(500).json({ error: 'Supabase-Client konnte nicht erstellt werden. Umgebungsvariablen prüfen.' });
+    }
     const { data: { user }, error: authError } = await userClient.auth.getUser();
 
     if (authError || !user) {
@@ -119,6 +129,13 @@ export default async function handler(req: any, res: any): Promise<void> {
     console.error('[financial-data]', msg);
     return res.status(500).json({ error: msg });
   }
+
+  } catch (outerErr: unknown) {
+    // Äußerer Catch: Fehler im Auth-Block oder sonstige unerwartete Exceptions
+    const msg = outerErr instanceof Error ? outerErr.message : 'Unbekannter Fehler';
+    console.error('[financial-data] Unhandled:', msg);
+    return res.status(500).json({ error: 'Interner Serverfehler.', detail: msg });
+  }
 }
 
 // ── Mapping-Logik ─────────────────────────────────────────────────────────────
@@ -143,10 +160,13 @@ async function resolveTickerEntry(input: string): Promise<TickerEntry> {
   if (bySymbol) return bySymbol;
 
   // b) Name-Suche (case-insensitive LIKE)
+  // PostgreSQL-Wildcards escapen, damit Nutzereingaben wie "%" oder "_" nicht
+  // unbeabsichtigt als LIKE-Pattern interpretiert werden.
+  const escapedInput = input.replace(/[%_\\]/g, '\\$&');
   const { data: byName } = await admin
     .from('ticker_mapping')
     .select('*')
-    .ilike('company_name', `%${input}%`)
+    .ilike('company_name', `%${escapedInput}%`)
     .limit(1)
     .maybeSingle() as any;
 
