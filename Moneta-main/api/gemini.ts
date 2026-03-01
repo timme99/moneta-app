@@ -251,9 +251,9 @@ Beispiele: Apple→AAPL (Technology/Consumer Electronics), Microsoft→MSFT, Mer
       const parsed = JSON.parse(responseText);
       const tickers = parsed.tickers || [];
 
-      // Neu aufgelöste Ticker asynchron in ticker_mapping speichern (fire & forget)
+      // Neu aufgelöste Ticker in ticker_mapping speichern (awaited, damit Bulk-Import sie sofort findet)
       if (tickers.length > 0) {
-        upsertTickerMapping(tickers).catch(() => {});
+        await upsertTickerMapping(tickers);
       }
 
       return res.status(200).json({

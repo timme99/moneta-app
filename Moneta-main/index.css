@@ -1,15 +1,21 @@
 /*
  * Moneta App – Globale Styles
  *
- * Tailwind CSS wird via CDN geladen (cdn.tailwindcss.com).
- * Diese Datei ergänzt Utilities, die im CDN-Bundle fehlen –
- * insbesondere die Animationsklassen aus tailwindcss-animate.
+ * Tailwind CSS wird lokal über PostCSS eingebunden (tailwindcss ^3.4).
+ * Die drei @tailwind-Direktiven erzeugen beim Build:
+ *   base       → Normalize / Preflight-Reset
+ *   components → komponentenbasierte Klassen (aktuell leer)
+ *   utilities  → alle Utility-Klassen (PurgeCSS entfernt unbenutzte)
  */
 
-/* ── tailwindcss-animate Ersatz ───────────────────────────────────────────── */
-/* Die CDN-Version von Tailwind CSS enthält tailwindcss-animate nicht.        */
-/* .animate-in + .fade-in werden in PortfolioInput und anderen Komponenten    */
-/* verwendet – hier definiert, damit kein FOUC entsteht.                      */
+/* ── Tailwind-Direktiven (MÜSSEN vor allen anderen Regeln stehen) ─────────── */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Benutzerdefinierte Animationen ──────────────────────────────────────── */
+/* Tailwind v3 enthält tailwindcss-animate NICHT im Core.                    */
+/* .animate-in + Varianten werden in App.tsx, PortfolioInput u. a. genutzt.  */
 
 @keyframes fadeIn {
   from {
@@ -63,12 +69,12 @@
   animation-name: scaleIn;
 }
 
-/* Dauer-Overrides (ergänzen Tailwinds transition-duration für animation-duration) */
+/* Dauer-Overrides */
 .animate-in.duration-150 { animation-duration: 150ms; }
 .animate-in.duration-200 { animation-duration: 200ms; }
 .animate-in.duration-300 { animation-duration: 300ms; }
 
-/* ── Basis-Reset (ergänzend zu Tailwind Preflight) ────────────────────────── */
+/* ── Basis-Reset ──────────────────────────────────────────────────────────── */
 
 /* Smooth Scrolling */
 html {
