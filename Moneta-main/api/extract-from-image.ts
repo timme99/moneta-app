@@ -41,14 +41,23 @@ export default async function handler(req: any, res: any) {
 
     const ai = new GoogleGenAI({ apiKey: geminiKey, httpOptions: { apiVersion: 'v1' } });
 
-    const prompt = `Du bist ein OCR-Experte für Finanzdaten. Analysiere dieses Bild und extrahiere alle erkennbaren Börsenticker-Symbole, Unternehmensnamen, ISINs oder WKNs.
+    const prompt = `Du bist ein Börsen-Experte für Ticker-Symbole. Deine einzige Aufgabe: Extrahiere alle Aktien, ETFs und Fonds aus diesem Bild und gib AUSSCHLIESSLICH die offiziellen Börsenkürzel zurück.
 
-Antworte NUR mit einem JSON-Array der gefundenen Werte – kein anderer Text, keine Erklärungen:
-["AAPL","MSFT","SAP"]
+KRITISCH: NIEMALS Firmennamen oder Wörter zurückgeben – nur Börsensymbole!
+Übersetze Namen ZWINGEND in Kürzel:
+  "Allianz" → "ALV.DE"
+  "Mercedes", "Daimler" → "MBG.DE"
+  "Volkswagen", "VW" → "VOW3.DE"
+  "Apple" → "AAPL"
+  "Microsoft" → "MSFT"
+  "MSCI World" → "EUNL"
+  "Vanguard All-World" → "VWRL"
+  "S&P 500 ETF" → "SXR8"
 
-Falls keine Ticker erkennbar sind, antworte mit: []
+Antworte NUR mit einem JSON-Array der Börsenkürzel – kein anderer Text:
+["AAPL","ALV.DE","EUNL"]
 
-Akzeptiere: US-Ticker (AAPL, MSFT), europäische Ticker (SAP.DE, MBG.DE), ETF-Ticker (EUNL, VWRL), vollständige Firmennamen (Apple, Microsoft) sowie ISINs (US0378331005) oder WKNs (865985).`;
+Falls nichts Erkennbares im Bild: []`;
 
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',

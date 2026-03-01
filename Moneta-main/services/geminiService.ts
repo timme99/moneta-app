@@ -1,4 +1,10 @@
 
+/** Entfernt Markdown-Code-Fences aus der Gemini-Antwort, falls vorhanden. */
+function stripJsonFences(text: string): string {
+  const m = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  return m ? m[1].trim() : text.trim();
+}
+
 const wait = (ms: number) => new Promise(res => setTimeout(res, ms));
 
 /**
@@ -73,9 +79,9 @@ export const analyzePortfolio = async (input: { text?: string, fileBase64?: stri
 
   const result = await callProxy('analysis', {
     contents,
-    config: { responseMimeType: "application/json", temperature: 0.1 }
+    config: { temperature: 0.1 }
   });
-  return JSON.parse(result.text);
+  return JSON.parse(stripJsonFences(result.text));
 };
 
 export const getFinancialAdvice = async (message: string, history: any[]) => {
@@ -124,33 +130,33 @@ export const analyzeNewsImpact = async (news: any, holdings: any[]) => {
 
   const result = await callProxy('news', {
     contents: [{ parts: [{ text: NEWS_IMPACT_PROMPT(news.title, news.snippet || '', holdingsList) }] }],
-    config: { responseMimeType: "application/json", temperature: 0.3 }
+    config: { temperature: 0.3 }
   });
-  return JSON.parse(result.text);
+  return JSON.parse(stripJsonFences(result.text));
 };
 
 export const compareETFs = async (isins: string[]) => {
   const result = await callProxy('analysis', {
     contents: [{ parts: [{ text: `Vergleiche diese ETFs basierend auf ISINs: ${isins.join(', ')}. Gib die Antwort als JSON im Format der Schnittstelle ETFComparison zurück.` }] }],
-    config: { responseMimeType: "application/json" }
+    config: {}
   });
-  return JSON.parse(result.text);
+  return JSON.parse(stripJsonFences(result.text));
 };
 
 export const explainStrategy = async (name: string) => {
   const result = await callProxy('chat', {
     contents: [{ parts: [{ text: `Erkläre die Anlagestrategie "${name}" detailliert. Gib die Antwort als JSON im Format der Schnittstelle StrategyExplanation zurück.` }] }],
-    config: { responseMimeType: "application/json" }
+    config: {}
   });
-  return JSON.parse(result.text);
+  return JSON.parse(stripJsonFences(result.text));
 };
 
 export const generatePortfolioSuggestion = async (data: any) => {
   const result = await callProxy('analysis', {
     contents: [{ parts: [{ text: `${PORTFOLIO_SYSTEM_PROMPT}\n\nErstelle einen personalisierten Portfolio-Vorschlag basierend auf: ${JSON.stringify(data)}. Gib die Antwort als JSON im Format PortfolioAnalysisReport zurück. Jedes holding mit name und ticker (z. B. AAPL, EUNL, VWRL).` }] }],
-    config: { responseMimeType: "application/json" }
+    config: {}
   });
-  return JSON.parse(result.text);
+  return JSON.parse(stripJsonFences(result.text));
 };
 
 /** Namen (z. B. "Apple", "Mercedes") in Börsenticker umwandeln (AAPL, DAI). Nutzt Gemini. */
