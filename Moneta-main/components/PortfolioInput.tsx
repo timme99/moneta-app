@@ -13,7 +13,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Search, Plus, Trash2, Loader2, TrendingUp, BarChart3, BookMarked, Info,
-  TrendingDown, RefreshCw, Pencil, MessageSquare,
+  TrendingDown, RefreshCw, Pencil, MessageSquare, Camera, FileSpreadsheet,
+  CheckCircle2, AlertCircle,
 } from 'lucide-react';
 import { getSupabaseBrowser } from '../lib/supabaseBrowser';
 import type { TickerEntry } from '../lib/supabase-types';
@@ -56,8 +57,15 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
 
   const [editingId, setEditingId] = useState<string | null>(null);
 
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const dropRef     = useRef<HTMLDivElement>(null);
+  // Bulk-Import (Screenshot / Excel)
+  const [importState, setImportState] = useState<{ loading: boolean; message: string; error: string }>({
+    loading: false, message: '', error: '',
+  });
+
+  const debounceRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dropRef      = useRef<HTMLDivElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const excelInputRef = useRef<HTMLInputElement>(null);
 
   // ── Auth ──────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -311,6 +319,133 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
     if (text) onSendToAssistant(text);
   };
 
+  // ── Bild-Resize (Canvas, max. 1024 px) ───────────────────────────────────
+  const resizeImage = (file: File): Promise<{ base64: string; mimeType: string }> =>
+    new Promise((resolve, reject) => {
+      const img = new Image();
+      const objectUrl = URL.createObjectURL(file);
+      img.onload = () => {
+        const MAX = 1024;
+        let { width, height } = img;
+        if (width > MAX || height > MAX) {
+          if (width > height) { height = Math.round((height * MAX) / width); width = MAX; }
+          else { width = Math.round((width * MAX) / height); height = MAX; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) { URL.revokeObjectURL(objectUrl); reject(new Error('Canvas nicht verfügbar')); return; }
+        ctx.drawImage(img, 0, 0, width, height);
+        URL.revokeObjectURL(objectUrl);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+        resolve({ base64: dataUrl.split(',')[1], mimeType: 'image/jpeg' });
+      };
+      img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error('Bild konnte nicht geladen werden')); };
+      img.src = objectUrl;
+    });
+
+  // ── Bulk-Add: Ticker-Namen → Gemini → ticker_mapping → holdings ──────────
+  const bulkAddTickers = async (names: string[]): Promise<number> => {
+    if (!sb || !userId || names.length === 0) return 0;
+
+    // Schritt 1: Gemini löst Namen auf und speichert sie in ticker_mapping (awaited)
+    const resp = await fetch('/api/gemini', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'resolve_ticker', payload: { names }, userId }),
+    });
+    if (!resp.ok) throw new Error('Ticker-Auflösung fehlgeschlagen');
+    const data = await resp.json();
+    const resolved: Array<{ ticker: string }> = data.tickers ?? [];
+    if (resolved.length === 0) return 0;
+
+    // Schritt 2: IDs aus ticker_mapping holen
+    const symbols = resolved.map((t) => t.ticker).filter(Boolean);
+    const { data: mapped } = await sb
+      .from('ticker_mapping')
+      .select('id, symbol')
+      .in('symbol', symbols);
+    if (!mapped || mapped.length === 0) return 0;
+
+    // Schritt 3: Als Watchlist-Einträge in holdings speichern
+    const rows = (mapped as Array<{ id: string; symbol: string }>).map((t) => ({
+      user_id: userId,
+      ticker_id: t.id,
+      watchlist: true,
+      shares: null,
+      buy_price: null,
+    }));
+    const { error } = await sb.from('holdings').upsert(rows, { onConflict: 'user_id,ticker_id' });
+    if (error) throw new Error(error.message);
+
+    await loadHoldings();
+    return mapped.length;
+  };
+
+  // ── Screenshot-Import ────────────────────────────────────────────────────
+  const handleImageImport = async (file: File) => {
+    setImportState({ loading: true, message: '', error: '' });
+    try {
+      const { base64, mimeType } = await resizeImage(file);
+      const resp = await fetch('/api/extract-from-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageBase64: base64, mimeType }),
+      });
+      if (!resp.ok) throw new Error('Bild-Analyse fehlgeschlagen');
+      const { tickers } = await resp.json();
+      if (!tickers || tickers.length === 0) {
+        setImportState({ loading: false, message: '', error: 'Keine Ticker im Bild erkannt.' });
+        return;
+      }
+      const count = await bulkAddTickers(tickers);
+      setImportState({ loading: false, message: `${count} Ticker aus Screenshot importiert.`, error: '' });
+    } catch (e: any) {
+      setImportState({ loading: false, message: '', error: e?.message ?? 'Fehler beim Bild-Import.' });
+    }
+  };
+
+  // ── Excel / CSV-Import ───────────────────────────────────────────────────
+  const handleExcelImport = async (file: File) => {
+    setImportState({ loading: true, message: '', error: '' });
+    try {
+      const XLSX = await import('xlsx');
+      const buffer = await file.arrayBuffer();
+      const wb = XLSX.read(buffer, { type: 'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows: any[] = XLSX.utils.sheet_to_json(ws, { defval: '' });
+
+      if (rows.length === 0) {
+        setImportState({ loading: false, message: '', error: 'Keine Daten in der Datei gefunden.' });
+        return;
+      }
+
+      // Erkenne Spalte: Ticker, Symbol, Symbol/Ticker, ISIN, WKN
+      const lowerHeaders = Object.keys(rows[0]).map((h) => h.trim().toLowerCase());
+      const matchedLower = lowerHeaders.find(
+        (h) => h === 'ticker' || h === 'symbol' || h === 'symbol/ticker' ||
+               h === 'isin' || h === 'wkn' || h.includes('ticker') || h.includes('symbol'),
+      );
+      if (!matchedLower) {
+        setImportState({ loading: false, message: '', error: 'Keine Spalte "Ticker", "Symbol" oder "ISIN" gefunden.' });
+        return;
+      }
+      const origKey = Object.keys(rows[0]).find((k) => k.trim().toLowerCase() === matchedLower) ?? matchedLower;
+      const values = rows.map((r: any) => String(r[origKey] ?? '').trim()).filter((v) => v.length >= 1);
+
+      if (values.length === 0) {
+        setImportState({ loading: false, message: '', error: 'Keine Werte in der Spalte gefunden.' });
+        return;
+      }
+
+      const count = await bulkAddTickers(values);
+      setImportState({ loading: false, message: `${count} Ticker aus Excel importiert.`, error: '' });
+    } catch (e: any) {
+      setImportState({ loading: false, message: '', error: e?.message ?? 'Fehler beim Excel-Import.' });
+    }
+  };
+
   // Hilfswert: ist die Eingabe nur Watchlist?
   const isWatchlistAdd = !shares.trim() || !buyPrice.trim();
 
@@ -502,6 +637,53 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
         )}
       </div>
 
+      {/* ── Schnell-Import (Screenshot / Excel) ──────────────────────── */}
+      <div className="bg-slate-50 border border-slate-200 rounded-[24px] p-4 space-y-3">
+        <p className="text-[9px] font-black text-slate-500 uppercase tracking-[0.2em]">
+          Schnell importieren
+        </p>
+        <div className="flex gap-3">
+          {/* Screenshot-Button */}
+          <button
+            onClick={() => { setImportState({ loading: false, message: '', error: '' }); imageInputRef.current?.click(); }}
+            disabled={importState.loading}
+            className="flex-1 flex items-center justify-center gap-2 py-3 bg-purple-50 border border-purple-100 hover:bg-purple-100 rounded-[16px] text-[10px] font-black text-purple-700 uppercase tracking-widest transition-colors disabled:opacity-50"
+          >
+            <Camera className="w-4 h-4" />
+            Screenshot
+          </button>
+          {/* Excel-Button */}
+          <button
+            onClick={() => { setImportState({ loading: false, message: '', error: '' }); excelInputRef.current?.click(); }}
+            disabled={importState.loading}
+            className="flex-1 flex items-center justify-center gap-2 py-3 bg-emerald-50 border border-emerald-100 hover:bg-emerald-100 rounded-[16px] text-[10px] font-black text-emerald-700 uppercase tracking-widest transition-colors disabled:opacity-50"
+          >
+            <FileSpreadsheet className="w-4 h-4" />
+            Excel / CSV
+          </button>
+        </div>
+
+        {/* Status */}
+        {importState.loading && (
+          <div className="flex items-center gap-2 text-[10px] text-slate-500 font-medium">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            Ticker werden erkannt und importiert…
+          </div>
+        )}
+        {importState.message && !importState.loading && (
+          <div className="flex items-center gap-2 text-[10px] text-emerald-700 font-bold">
+            <CheckCircle2 className="w-3.5 h-3.5" />
+            {importState.message}
+          </div>
+        )}
+        {importState.error && !importState.loading && (
+          <div className="flex items-center gap-2 text-[10px] text-rose-600 font-bold">
+            <AlertCircle className="w-3.5 h-3.5" />
+            {importState.error}
+          </div>
+        )}
+      </div>
+
       {/* ── Depot-Liste ──────────────────────────────────────────────────── */}
       <div className="bg-white border border-slate-200 rounded-[24px] overflow-hidden shadow-sm">
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
@@ -607,6 +789,22 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
           )}
         </div>
       )}
+
+      {/* ── Versteckte File-Inputs ────────────────────────────────────────── */}
+      <input
+        ref={imageInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImageImport(f); e.target.value = ''; }}
+      />
+      <input
+        ref={excelInputRef}
+        type="file"
+        accept=".xlsx,.xls,.csv"
+        className="hidden"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleExcelImport(f); e.target.value = ''; }}
+      />
     </div>
   );
 };
