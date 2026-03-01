@@ -2,6 +2,12 @@ import { GoogleGenAI } from "@google/genai";
 import { getSupabaseAdmin } from '../lib/supabaseClient.js';
 import type { InsertTables } from '../lib/supabase-types.js';
 
+/** Entfernt Markdown-Code-Fences aus der Gemini-Antwort, falls vorhanden. */
+function stripJsonFences(text: string): string {
+  const m = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  return m ? m[1].trim() : text.trim();
+}
+
 // Speicher für Rate-Limits (In-Memory, pro Nutzer/IP)
 const limitStore = new Map<string, any>();
 
@@ -169,7 +175,7 @@ export default async function handler(req: any, res: any) {
 
   let ai: GoogleGenAI;
   try {
-    ai = new GoogleGenAI({ apiKey: geminiKey, httpOptions: { apiVersion: 'v1beta' } });
+    ai = new GoogleGenAI({ apiKey: geminiKey, httpOptions: { apiVersion: 'v1' } });
     console.log("[MONETA] Phase 2: GoogleGenAI initialisiert ✓ (Modell: gemini-2.5-flash, API: v1beta)");
   } catch (error: any) {
     console.error('[MONETA INIT ERROR]', error);
@@ -205,7 +211,7 @@ Antworte NUR mit diesem JSON (kein anderer Text):
 Bezeichnungen: ${names.join('; ')}
 Beispiele: Apple→AAPL (Technology/Consumer Electronics), Microsoft→MSFT, Mercedes/Daimler→MBG.DE, MSCI World→EUNL, Vanguard All-World→VWRL.`;
       contents = [{ role: 'user', parts: [{ text: prompt }] }];
-      config = { responseMimeType: 'application/json', temperature: 0.1 };
+      config = { temperature: 0.1 };
     }
 
     // News-Cache: DB-Treffer zurückgeben (6h TTL) wenn Tickers explizit übergeben
@@ -248,7 +254,7 @@ Beispiele: Apple→AAPL (Technology/Consumer Electronics), Microsoft→MSFT, Mer
     }
 
     if (type === 'resolve_ticker') {
-      const parsed = JSON.parse(responseText);
+      const parsed = JSON.parse(stripJsonFences(responseText));
       const tickers = parsed.tickers || [];
 
       // Neu aufgelöste Ticker in ticker_mapping speichern (awaited, damit Bulk-Import sie sofort findet)

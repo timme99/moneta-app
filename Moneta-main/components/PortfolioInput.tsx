@@ -14,7 +14,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Search, Plus, Trash2, Loader2, TrendingUp, BarChart3, BookMarked, Info,
   TrendingDown, RefreshCw, Pencil, MessageSquare, Camera, FileSpreadsheet,
-  CheckCircle2, AlertCircle,
+  CheckCircle2, AlertCircle, Zap,
 } from 'lucide-react';
 import { getSupabaseBrowser } from '../lib/supabaseBrowser';
 import type { TickerEntry } from '../lib/supabase-types';
@@ -483,7 +483,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
             {isFetching && <Loader2 className="w-4 h-4 text-slate-400 animate-spin shrink-0" />}
           </div>
 
-          {/* Dropdown */}
+          {/* Dropdown – DB-Ergebnisse */}
           {showDrop && suggestions.length > 0 && (
             <div className="mt-3 border-t border-slate-100 pt-3 space-y-0.5">
               {suggestions.map((t) => (
@@ -503,6 +503,41 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
                   )}
                 </button>
               ))}
+            </div>
+          )}
+
+          {/* Dropdown – Nicht in DB: KI-Vorschlag */}
+          {showDrop && !isFetching && suggestions.length === 0 && query.trim().length >= 2 && (
+            <div className="mt-3 border-t border-slate-100 pt-3">
+              <button
+                onClick={async () => {
+                  const q = query.trim();
+                  setShowDrop(false);
+                  setImportState({ loading: true, message: '', error: '' });
+                  try {
+                    const count = await bulkAddTickers([q]);
+                    setQuery('');
+                    setImportState({
+                      loading: false,
+                      message: count > 0 ? `„${q}" wurde erkannt und ins Depot übernommen.` : `„${q}" konnte nicht aufgelöst werden.`,
+                      error: '',
+                    });
+                  } catch (e: any) {
+                    setImportState({ loading: false, message: '', error: e?.message ?? 'KI-Auflösung fehlgeschlagen.' });
+                  }
+                }}
+                className="w-full flex items-center gap-3 px-3 py-3 hover:bg-blue-50 rounded-xl text-left transition-colors group"
+              >
+                <div className="w-7 h-7 bg-blue-50 rounded-lg flex items-center justify-center text-blue-600 shrink-0 group-hover:bg-blue-600 group-hover:text-white transition-colors">
+                  <Zap className="w-3.5 h-3.5" />
+                </div>
+                <div>
+                  <span className="text-sm font-bold text-slate-700">„{query.trim()}" mit KI hinzufügen</span>
+                  <p className="text-[9px] text-slate-400 font-medium mt-0.5">
+                    Nicht in Datenbank – Gemini löst Ticker auf und speichert ihn
+                  </p>
+                </div>
+              </button>
             </div>
           )}
         </div>

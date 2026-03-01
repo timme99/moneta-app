@@ -50,6 +50,11 @@ const App: React.FC = () => {
     type: 'disclaimer'
   });
 
+  // ── Cockpit-Import (Screenshot / Excel – für EmptyState-Buttons) ──────────
+  const [cockpitImportState, setCockpitImportState] = useState<{ loading: boolean; message: string; error: string }>({
+    loading: false, message: '', error: '',
+  });
+
   /** Lädt Holdings des Nutzers aus Supabase und speichert sie im State */
   const loadHoldingsForUser = useCallback(async (uid: string) => {
     const sb = getSupabaseBrowser();
@@ -97,6 +102,105 @@ const App: React.FC = () => {
       'Bitte analysiere dieses Depot vollständig gemäß den Systemvorgaben.',
     ].join('\n');
   }, []);
+
+  /** Bild via Canvas auf max. 1024 px verkleinern (Browser-seitig) */
+  const resizeImageInApp = (file: File): Promise<{ base64: string; mimeType: string }> =>
+    new Promise((resolve, reject) => {
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      img.onload = () => {
+        const MAX = 1024;
+        let { width, height } = img;
+        if (width > MAX || height > MAX) {
+          if (width > height) { height = Math.round((height * MAX) / width); width = MAX; }
+          else { width = Math.round((width * MAX) / height); height = MAX; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width; canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) { URL.revokeObjectURL(url); reject(new Error('Canvas nicht verfügbar')); return; }
+        ctx.drawImage(img, 0, 0, width, height);
+        URL.revokeObjectURL(url);
+        resolve({ base64: canvas.toDataURL('image/jpeg', 0.85).split(',')[1], mimeType: 'image/jpeg' });
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Bild konnte nicht geladen werden')); };
+      img.src = url;
+    });
+
+  /** Tickers (Namen/Symbole) → Gemini → ticker_mapping → holdings */
+  const bulkAddTickersInCockpit = useCallback(async (names: string[]): Promise<number> => {
+    const sb = getSupabaseBrowser();
+    const uid = userAccount?.id;
+    if (!sb || !uid || names.length === 0) throw new Error('Nicht eingeloggt');
+
+    const resp = await fetch('/api/gemini', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'resolve_ticker', payload: { names }, userId: uid }),
+    });
+    if (!resp.ok) throw new Error('Ticker-Auflösung fehlgeschlagen');
+    const resolved: Array<{ ticker: string }> = (await resp.json()).tickers ?? [];
+    if (resolved.length === 0) return 0;
+
+    const symbols = resolved.map((t) => t.ticker).filter(Boolean);
+    const { data: mapped } = await sb.from('ticker_mapping').select('id, symbol').in('symbol', symbols);
+    if (!mapped || mapped.length === 0) return 0;
+
+    const rows = (mapped as Array<{ id: string }>).map((t) => ({
+      user_id: uid, ticker_id: t.id, watchlist: true, shares: null, buy_price: null,
+    }));
+    const { error } = await sb.from('holdings').upsert(rows, { onConflict: 'user_id,ticker_id' });
+    if (error) throw new Error(error.message);
+
+    await loadHoldingsForUser(uid);
+    return mapped.length;
+  }, [userAccount, loadHoldingsForUser]);
+
+  const handleCockpitImageImport = useCallback(async (file: File) => {
+    if (!userAccount) { setCockpitImportState({ loading: false, message: '', error: 'Bitte zuerst einloggen.' }); return; }
+    setCockpitImportState({ loading: true, message: '', error: '' });
+    try {
+      const { base64, mimeType } = await resizeImageInApp(file);
+      const resp = await fetch('/api/extract-from-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageBase64: base64, mimeType }),
+      });
+      if (!resp.ok) throw new Error('Bild-Analyse fehlgeschlagen');
+      const { tickers } = await resp.json();
+      if (!tickers?.length) { setCockpitImportState({ loading: false, message: '', error: 'Keine Ticker im Bild erkannt.' }); return; }
+      const count = await bulkAddTickersInCockpit(tickers);
+      setCockpitImportState({ loading: false, message: `${count} Ticker aus Screenshot importiert.`, error: '' });
+    } catch (e: any) {
+      setCockpitImportState({ loading: false, message: '', error: e?.message ?? 'Fehler beim Import.' });
+    }
+  }, [userAccount, bulkAddTickersInCockpit]);
+
+  const handleCockpitExcelImport = useCallback(async (file: File) => {
+    if (!userAccount) { setCockpitImportState({ loading: false, message: '', error: 'Bitte zuerst einloggen.' }); return; }
+    setCockpitImportState({ loading: true, message: '', error: '' });
+    try {
+      const XLSX = await import('xlsx');
+      const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
+      if (!rows.length) { setCockpitImportState({ loading: false, message: '', error: 'Keine Daten gefunden.' }); return; }
+
+      const lowerHeaders = Object.keys(rows[0]).map((h) => h.trim().toLowerCase());
+      const matched = lowerHeaders.find(
+        (h) => h === 'ticker' || h === 'symbol' || h === 'symbol/ticker' || h === 'isin' || h === 'wkn' || h.includes('ticker') || h.includes('symbol'),
+      );
+      if (!matched) { setCockpitImportState({ loading: false, message: '', error: 'Keine Spalte "Ticker", "Symbol" oder "ISIN" gefunden.' }); return; }
+
+      const origKey = Object.keys(rows[0]).find((k) => k.trim().toLowerCase() === matched) ?? matched;
+      const values = rows.map((r: any) => String(r[origKey] ?? '').trim()).filter((v) => v.length >= 1);
+      if (!values.length) { setCockpitImportState({ loading: false, message: '', error: 'Keine Werte in der Spalte.' }); return; }
+
+      const count = await bulkAddTickersInCockpit(values);
+      setCockpitImportState({ loading: false, message: `${count} Ticker aus Excel importiert.`, error: '' });
+    } catch (e: any) {
+      setCockpitImportState({ loading: false, message: '', error: e?.message ?? 'Fehler beim Import.' });
+    }
+  }, [userAccount, bulkAddTickersInCockpit]);
 
   useEffect(() => {
     const sb = getSupabaseBrowser();
@@ -420,6 +524,9 @@ const App: React.FC = () => {
                 onUploadClick={() => setActiveView('assistant')}
                 onManagePortfolio={() => setActiveView('portfolio')}
                 isLoading={isGlobalLoading}
+                onImageImport={handleCockpitImageImport}
+                onExcelImport={handleCockpitExcelImport}
+                importStatus={cockpitImportState}
               />
             )}
           </div>
