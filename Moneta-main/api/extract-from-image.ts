@@ -1,5 +1,11 @@
 import { GoogleGenAI } from "@google/genai";
 
+/** Entfernt Markdown-Code-Fences aus der Gemini-Antwort, falls vorhanden. */
+function stripJsonFences(text: string): string {
+  const m = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  return m ? m[1].trim() : text.trim();
+}
+
 /**
  * POST /api/extract-from-image
  *
@@ -33,11 +39,11 @@ export default async function handler(req: any, res: any) {
       return res.status(503).json({ error: 'GEMINI_API_KEY nicht konfiguriert.' });
     }
 
-    const ai = new GoogleGenAI({ apiKey: geminiKey, httpOptions: { apiVersion: 'v1beta' } });
+    const ai = new GoogleGenAI({ apiKey: geminiKey, httpOptions: { apiVersion: 'v1' } });
 
     const prompt = `Du bist ein OCR-Experte für Finanzdaten. Analysiere dieses Bild und extrahiere alle erkennbaren Börsenticker-Symbole, Unternehmensnamen, ISINs oder WKNs.
 
-Antworte NUR mit einem JSON-Array der gefundenen Werte – kein anderer Text:
+Antworte NUR mit einem JSON-Array der gefundenen Werte – kein anderer Text, keine Erklärungen:
 ["AAPL","MSFT","SAP"]
 
 Falls keine Ticker erkennbar sind, antworte mit: []
@@ -56,7 +62,6 @@ Akzeptiere: US-Ticker (AAPL, MSFT), europäische Ticker (SAP.DE, MBG.DE), ETF-Ti
         },
       ],
       config: {
-        responseMimeType: 'application/json',
         temperature: 0.1,
         maxOutputTokens: 512,
       },
@@ -64,7 +69,7 @@ Akzeptiere: US-Ticker (AAPL, MSFT), europäische Ticker (SAP.DE, MBG.DE), ETF-Ti
 
     let tickers: string[] = [];
     try {
-      const parsed = JSON.parse(response.text ?? '[]');
+      const parsed = JSON.parse(stripJsonFences(response.text ?? '[]'));
       tickers = Array.isArray(parsed)
         ? parsed.filter((t: any) => typeof t === 'string' && t.trim().length > 0)
         : [];
@@ -79,3 +84,4 @@ Akzeptiere: US-Ticker (AAPL, MSFT), europäische Ticker (SAP.DE, MBG.DE), ETF-Ti
     return res.status(500).json({ error: 'Fehler beim Bild-Scan.', detail: msg });
   }
 }
+
