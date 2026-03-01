@@ -1,3 +1,13 @@
+import type { TickerEntry } from './lib/supabase-types';
+
+/** Eine Position im Depot (echte Position oder Watchlist-Eintrag) */
+export interface HoldingRow {
+  id: string;
+  ticker: TickerEntry;
+  shares: number | null;
+  buy_price: number | null;
+  watchlist: boolean;
+}
 
 export interface ETF {
   id: string;
