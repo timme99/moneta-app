@@ -68,19 +68,22 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
   const excelInputRef = useRef<HTMLInputElement>(null);
 
   // ── Auth ──────────────────────────────────────────────────────────────────
+  // Priorität: 1. Supabase-Session (getUser) 2. userAccount.id (aus App.tsx) 3. anon session
   useEffect(() => {
     if (!sb) { setAuthError(true); setIsLoadingH(false); return; }
 
     sb.auth.getUser().then(async ({ data }) => {
       if (data.user) {
-        // Echte Supabase-Session vorhanden
+        // Echte Supabase-Session – immer bevorzugen
         setUserId(data.user.id);
-      } else if (userAccount) {
-        // Mock-User aus localStorage → Anonymous-Session erstellen, damit RLS greift
-        const { data: anonData } = await sb.auth.signInAnonymously();
-        if (anonData?.user) {
-          setUserId(anonData.user.id);
+      } else if (userAccount?.id) {
+        // userAccount.id kommt aus der App-Level-Session (zuverlässig)
+        // Versuche erst ob die Session nur kurz verzögert ist
+        const { data: session } = await sb.auth.getSession();
+        if (session.session?.user?.id) {
+          setUserId(session.session.user.id);
         } else {
+          // Kein Session – authError setzen, Nutzer muss einloggen
           setAuthError(true);
           setIsLoadingH(false);
         }
@@ -89,7 +92,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
         setIsLoadingH(false);
       }
     });
-  }, [userAccount]);
+  }, [userAccount?.id]);
 
   // ── Holdings laden ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -97,12 +100,16 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
   }, [userId]);
 
   const loadHoldings = async () => {
-    if (!sb || !userId) return;
+    if (!sb) return;
+    // userId direkt aus aktueller Session holen (robust gegen Race Conditions)
+    const { data: sessionData } = await sb.auth.getSession();
+    const effectiveUserId = sessionData?.session?.user?.id ?? userId;
+    if (!effectiveUserId) { setIsLoadingH(false); return; }
     setIsLoadingH(true);
     const { data } = await sb
       .from('holdings')
       .select('id, shares, buy_price, watchlist, ticker_mapping(*)')
-      .eq('user_id', userId)
+      .eq('user_id', effectiveUserId)
       .order('created_at', { ascending: false });
 
     const newHoldings: HoldingRow[] = (data ?? []).map((row: any) => ({
@@ -212,8 +219,18 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
 
   // ── Hinzufügen ────────────────────────────────────────────────────────────
   const handleAdd = async () => {
-    if (!sb || !userId || !selected) return;
+    if (!sb || !selected) return;
     setIsSaving(true);
+
+    // Aktuelle Session direkt abfragen für zuverlässige user_id
+    const { data: sessionData } = await sb.auth.getSession();
+    const effectiveUserId = sessionData?.session?.user?.id ?? userId;
+    if (!effectiveUserId) {
+      console.error('[PortfolioInput] Kein eingeloggter Nutzer – Speichern nicht möglich.');
+      setIsSaving(false);
+      return;
+    }
+    if (effectiveUserId !== userId) setUserId(effectiveUserId);
 
     const sharesNum = shares.trim()   ? parseFloat(shares.replace(',', '.'))   : null;
     const priceNum  = buyPrice.trim() ? parseFloat(buyPrice.replace(',', '.')) : null;
@@ -221,7 +238,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
 
     const { error } = await sb.from('holdings').upsert(
       {
-        user_id:   userId,
+        user_id:   effectiveUserId,
         ticker_id: selected.id,
         watchlist: isWatchlist,
         shares:    isWatchlist ? null : sharesNum,
@@ -347,13 +364,18 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
 
   // ── Bulk-Add: Ticker-Namen → Gemini → ticker_mapping → holdings ──────────
   const bulkAddTickers = async (names: string[]): Promise<number> => {
-    if (!sb || !userId || names.length === 0) return 0;
+    if (!sb || names.length === 0) return 0;
+
+    // Aktuelle Auth-Session direkt abfragen (verhindert Race Conditions mit userId-State)
+    const { data: sessionData } = await sb.auth.getSession();
+    const effectiveUserId = sessionData?.session?.user?.id ?? userId;
+    if (!effectiveUserId) throw new Error('Nicht eingeloggt – bitte zuerst anmelden.');
 
     // Schritt 1: Gemini löst Namen auf und speichert sie in ticker_mapping (awaited)
     const resp = await fetch('/api/gemini', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'resolve_ticker', payload: { names }, userId }),
+      body: JSON.stringify({ type: 'resolve_ticker', payload: { names }, userId: effectiveUserId }),
     });
     if (!resp.ok) throw new Error('Ticker-Auflösung fehlgeschlagen');
     const data = await resp.json();
@@ -369,9 +391,9 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
       .in('symbol', symbols);
     if (!mapped || mapped.length === 0) return 0;
 
-    // Schritt 3: Als Watchlist-Einträge in holdings speichern
+    // Schritt 3: Mit korrekter user_id in holdings speichern
     const rows = (mapped as Array<{ id: string; symbol: string }>).map((t) => ({
-      user_id: userId,
+      user_id: effectiveUserId,
       ticker_id: t.id,
       watchlist: true,
       shares: null,
@@ -379,6 +401,9 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
     }));
     const { error } = await sb.from('holdings').upsert(rows, { onConflict: 'user_id,ticker_id' });
     if (error) throw new Error(error.message);
+
+    // State mit korrekter userId aktualisieren falls nötig
+    if (effectiveUserId !== userId) setUserId(effectiveUserId);
 
     await loadHoldings();
     return mapped.length;

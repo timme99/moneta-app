@@ -161,6 +161,43 @@ export const generatePortfolioSuggestion = async (data: any) => {
   return JSON.parse(stripJsonFences(result.text));
 };
 
+const HOLDING_THESES_PROMPT = (holdings: { name: string; ticker: string; shares: number | null; buyPrice: number | null }[]) =>
+`Du bist ein neutraler Finanzinformations-Assistent. Erstelle für jede der folgenden Positionen eine kurze, sachliche Markteinschätzung (genau 2 Sätze).
+
+WICHTIG:
+- KEINE Kauf- oder Verkaufsempfehlungen
+- Beschreibe nur beobachtbare Marktlage, Fundamentaldaten oder Branchenkontext
+- Neutral formulieren ("Das Unternehmen... ist bekannt für... / operiert in...")
+- Falls kein Kaufdatum/Kaufpreis bekannt: aktuelle Markteinschätzung zur Branchenstellung geben
+
+Positionen:
+${holdings.map((h, i) => `${i + 1}. ${h.name} (${h.ticker})${h.shares ? ` · ${h.shares} Stk. · Kaufpreis ${h.buyPrice?.toFixed(2)} €` : ' · Nur Marktbeobachtung'}`).join('\n')}
+
+Antworte NUR mit einem gültigen JSON-Array:
+[
+  {
+    "ticker": "SYMBOL",
+    "thesis": "Erster Satz zur Unternehmens-/Branchenstellung. Zweiter Satz zu aktuellem Marktumfeld oder Kennzahl."
+  }
+]
+
+Kein anderer Text außer dem JSON-Array.`;
+
+export const generateHoldingTheses = async (
+  holdings: { name: string; ticker: string; shares: number | null; buyPrice: number | null }[]
+): Promise<{ ticker: string; thesis: string }[]> => {
+  if (holdings.length === 0) return [];
+  const result = await callProxy('chat', {
+    contents: [{ parts: [{ text: HOLDING_THESES_PROMPT(holdings) }] }],
+    config: { temperature: 0.4, maxOutputTokens: 2000 }
+  });
+  try {
+    return JSON.parse(stripJsonFences(result.text));
+  } catch {
+    return [];
+  }
+};
+
 const EARNINGS_CALENDAR_PROMPT = (tickers: string[], today: string) =>
 `Du bist ein Finanzinformations-Assistent. Erstelle auf Basis deines Wissensstands einen informativen Earnings-Kalender für die folgenden Börsensymbole: ${tickers.join(', ')}.
 

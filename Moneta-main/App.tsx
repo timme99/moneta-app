@@ -468,17 +468,8 @@ const App: React.FC = () => {
                   healthReport={healthReport}
                   savingsReport={savingsReport}
                   insight={null}
+                  holdings={holdings}
                 />
-
-                <div className="bg-amber-50 border border-amber-100 p-5 rounded-[32px] flex items-start gap-4 shadow-sm">
-                  <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-                  <div className="space-y-1">
-                    <p className="text-xs font-black text-amber-900 uppercase tracking-widest">Wichtiger Risikohinweis</p>
-                    <p className="text-[11px] text-amber-700 font-medium leading-relaxed">
-                      <strong>Kein Anlageberatungsangebot.</strong> Alle Informationen dienen ausschließlich der allgemeinen Bildung und stellen keine Anlageberatung, Finanzberatung oder Empfehlung zum Kauf oder Verkauf von Wertpapieren dar. Bitte konsultieren Sie vor jeder Anlageentscheidung einen zugelassenen Finanzberater. Kapitaleinsatz an der Börse ist mit Risiken bis zum Totalverlust verbunden.
-                    </p>
-                  </div>
-                </div>
 
                 <PortfolioDeepDive
                   report={analysisReport}
@@ -528,7 +519,7 @@ const App: React.FC = () => {
             ) : (
               <EmptyState
                 onAnalyzeText={(t) => handleAnalysis({ text: t })}
-                onUploadClick={() => setActiveView('assistant')}
+                onUploadClick={() => setActiveView('portfolio')}
                 onManagePortfolio={() => setActiveView('portfolio')}
                 isLoading={isGlobalLoading}
                 onImageImport={handleCockpitImageImport}
