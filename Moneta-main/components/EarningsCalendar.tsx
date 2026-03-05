@@ -1,11 +1,36 @@
-import React, { useState, useEffect } from 'react';
-import { Calendar, Clock, TrendingUp, Loader2, RefreshCcw, AlertTriangle, Info } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Calendar, Clock, TrendingUp, Loader2, RefreshCcw, AlertTriangle, Info, DollarSign, TrendingDown } from 'lucide-react';
 import { fetchEarningsCalendar } from '../services/geminiService';
 import { EarningsEvent, HoldingRow } from '../types';
+import { supabase as sb } from '../lib/supabaseClient';
 
 interface EarningsCalendarProps {
   holdings: HoldingRow[];
 }
+
+// ── Typen ──────────────────────────────────────────────────────────────────────
+
+interface DividendInfo {
+  symbol: string;
+  dividendPerShare: number;
+  exDividendDate: string;
+  dividendDate: string;
+  dividendYield: number;
+  price: number;
+  noData: boolean;
+}
+
+interface HoldingDividend {
+  symbol: string;
+  name: string;
+  shares: number;
+  dividendPerShare: number;
+  annualIncome: number;
+  exDividendDate: string;
+  isPaid: boolean; // Ex-Date in diesem Jahr bereits vergangen
+}
+
+// ── Helper ─────────────────────────────────────────────────────────────────────
 
 const timeOfDayColor = (t: string) => {
   if (t === 'vor Marktöffnung') return 'bg-amber-50 text-amber-700 border-amber-100';
@@ -24,12 +49,17 @@ const daysUntil = (dateStr: string): number => {
 const formatDate = (dateStr: string): string => {
   try {
     return new Date(dateStr).toLocaleDateString('de-DE', {
-      weekday: 'short', day: '2-digit', month: 'short', year: 'numeric'
+      weekday: 'short', day: '2-digit', month: 'short', year: 'numeric',
     });
   } catch {
     return dateStr;
   }
 };
+
+const formatCurrency = (value: number): string =>
+  value.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+// ── Komponente ─────────────────────────────────────────────────────────────────
 
 const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
   const [events, setEvents] = useState<EarningsEvent[]>([]);
@@ -37,22 +67,33 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
   const [error, setError] = useState<string | null>(null);
   const [lastFetch, setLastFetch] = useState<Date | null>(null);
 
+  // Dividenden-State
+  const [dividendData, setDividendData] = useState<DividendInfo[]>([]);
+  const [isDivLoading, setIsDivLoading] = useState(false);
+  const [divError, setDivError] = useState<string | null>(null);
+
+  // Nur echte Depot-Positionen (keine Watchlist)
   const tickers = holdings
-    .filter(h => !h.watchlist && h.ticker?.symbol)
-    .map(h => h.ticker.symbol)
+    .filter(h => !h.watchlist)
+    .map(h => h.ticker?.symbol ?? h.symbol)
+    .filter(Boolean)
     .slice(0, 12);
 
-  // Stabiler Key: neu laden wenn sich die Ticker-Menge ändert
   const tickerKey = tickers.slice().sort().join(',');
 
-  const load = async () => {
+  // Nur Positionen mit Stückzahl für Dividenden-Berechnung
+  const portfolioHoldings = holdings.filter(h => !h.watchlist && h.shares && h.shares > 0);
+
+  // ── Earnings laden ──────────────────────────────────────────────────────────
+
+  const loadEarnings = async () => {
     if (tickers.length === 0) return;
     setIsLoading(true);
     setError(null);
     try {
       const data = await fetchEarningsCalendar(tickers);
       const sorted = (data as EarningsEvent[]).sort(
-        (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+        (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
       );
       setEvents(sorted);
       setLastFetch(new Date());
@@ -63,19 +104,106 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
     }
   };
 
-  // Neu laden wenn sich die Ticker-Zusammensetzung ändert (neue Aktie hinzugefügt / gelöscht)
+  // ── Dividenden laden ────────────────────────────────────────────────────────
+
+  const loadDividends = async () => {
+    if (portfolioHoldings.length === 0) return;
+    setIsDivLoading(true);
+    setDivError(null);
+    try {
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session?.access_token) {
+        setDivError('Nicht angemeldet.');
+        return;
+      }
+      const symbolList = portfolioHoldings
+        .map(h => h.ticker?.symbol ?? h.symbol)
+        .filter(Boolean)
+        .slice(0, 10)
+        .join(',');
+
+      const res = await fetch(`/api/dividends?symbols=${encodeURIComponent(symbolList)}`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.error ?? `HTTP ${res.status}`);
+      }
+
+      const json: DividendInfo[] = await res.json();
+      setDividendData(json);
+    } catch (e: any) {
+      setDivError(e?.message ?? 'Dividenden-Daten konnten nicht geladen werden.');
+    } finally {
+      setIsDivLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (tickers.length > 0) {
-      load();
+      loadEarnings();
+      loadDividends();
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tickerKey]);
+
+  // ── Dividenden-Berechnungen ─────────────────────────────────────────────────
+
+  const currentYear = new Date().getFullYear();
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const holdingDividends: HoldingDividend[] = useMemo(() => {
+    if (dividendData.length === 0) return [];
+
+    return portfolioHoldings
+      .map(h => {
+        const sym = h.ticker?.symbol ?? h.symbol;
+        const divInfo = dividendData.find(d => d.symbol === sym);
+        if (!divInfo || divInfo.noData || divInfo.dividendPerShare === 0) return null;
+
+        const shares = h.shares ?? 0;
+        const annualIncome = shares * divInfo.dividendPerShare;
+
+        // Ex-Datum in aktuellem Jahr und bereits vergangen → "bezahlt"
+        let isPaid = false;
+        if (divInfo.exDividendDate) {
+          const exDate = new Date(divInfo.exDividendDate);
+          isPaid = exDate.getFullYear() === currentYear && exDate <= today;
+        }
+
+        return {
+          symbol: sym,
+          name: h.ticker?.company_name ?? sym,
+          shares,
+          dividendPerShare: divInfo.dividendPerShare,
+          annualIncome,
+          exDividendDate: divInfo.exDividendDate,
+          isPaid,
+        } as HoldingDividend;
+      })
+      .filter((x): x is HoldingDividend => x !== null)
+      .sort((a, b) => b.annualIncome - a.annualIncome);
+  }, [dividendData, portfolioHoldings, currentYear]);
+
+  const totalAnnualDividend = holdingDividends.reduce((sum, h) => sum + h.annualIncome, 0);
+  // "Erhalten": Ex-Datum dieses Jahr schon vergangen → schätzungsweise erhaltene Dividende
+  const receivedDividends = holdingDividends
+    .filter(h => h.isPaid)
+    .reduce((sum, h) => sum + h.annualIncome / 4, 0); // ~1 Quartalszahlung als Schätzung
+  // "Erwartet": Rest des Jahres basierend auf Jahresdividende
+  const monthsRemaining = Math.max(0, 12 - (today.getMonth() + 1));
+  const expectedDividends = totalAnnualDividend * (monthsRemaining / 12);
+
+  // ── Earnings-Aufteilung ────────────────────────────────────────────────────
 
   const upcoming = events.filter(e => daysUntil(e.date) >= 0);
   const past = events.filter(e => daysUntil(e.date) < 0);
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
+
       {/* Header */}
       <div className="bg-gradient-to-br from-slate-900 to-blue-950 p-8 md:p-12 rounded-[40px] text-white relative overflow-hidden shadow-2xl">
         <div className="absolute top-0 right-0 w-64 h-64 bg-blue-500/10 rounded-full -mr-16 -mt-16 blur-3xl" />
@@ -84,20 +212,142 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
             <Calendar className="w-5 h-5 text-blue-400" />
             <span className="text-blue-400 font-black text-[10px] uppercase tracking-[0.3em]">Depot-Kalender</span>
           </div>
-          <h2 className="text-3xl md:text-4xl font-black mb-3 tracking-tighter">Earnings Calendar</h2>
+          <h2 className="text-3xl md:text-4xl font-black mb-3 tracking-tighter">Earnings & Dividenden</h2>
           <p className="text-slate-400 font-medium leading-relaxed text-sm max-w-xl">
-            Bevorstehende Quartalszahlen deiner Depot-Positionen. KI-Schätzungen auf Basis historischer Quartalsmuster – rein informativ, keine Anlageberatung.
+            Bevorstehende Quartalszahlen und Dividenden-Schätzungen für deine Depot-Positionen.
+            KI-Schätzungen auf Basis historischer Daten – rein informativ, keine Anlageberatung.
           </p>
         </div>
       </div>
 
-      {/* Disclaimer */}
+      {/* Allgemeiner Disclaimer */}
       <div className="bg-amber-50 border border-amber-100 p-4 rounded-[20px] flex items-start gap-3">
         <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
         <p className="text-[11px] text-amber-700 font-medium leading-relaxed">
-          <strong>Hinweis:</strong> Alle Earnings-Daten sind KI-Schätzungen auf Basis historischer Quartalsmuster und stellen keine verlässlichen Prognosen dar. Offizielle Termine immer auf der Unternehmens-IR-Seite prüfen. Keine Anlageberatung.
+          <strong>Hinweis:</strong> Alle Earnings- und Dividenden-Daten sind Schätzungen auf Basis historischer Daten
+          und stellen keine verlässlichen Prognosen dar. Dividendenangaben sind keine Garantie für zukünftige Zahlungen.
+          Offizielle Termine immer auf der Unternehmens-IR-Seite prüfen. Keine Anlageberatung.
         </p>
       </div>
+
+      {/* ── Dividenden-Tracker ──────────────────────────────────────────────── */}
+
+      {portfolioHoldings.length > 0 && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-[0.2em] flex items-center gap-2">
+              <DollarSign className="w-4 h-4 text-emerald-600" /> Dividenden-Tracker {currentYear}
+            </h3>
+            {isDivLoading && (
+              <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-medium">
+                <Loader2 className="w-3 h-3 animate-spin" /> Lädt…
+              </div>
+            )}
+          </div>
+
+          {/* Zwei Karten: Erhalten + Erwartet */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Erhaltene Dividenden */}
+            <div className="bg-white border border-emerald-100 rounded-[24px] p-6 shadow-sm">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-8 h-8 bg-emerald-100 rounded-xl flex items-center justify-center">
+                  <TrendingUp className="w-4 h-4 text-emerald-600" />
+                </div>
+                <div>
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Erhaltene Dividenden</p>
+                  <p className="text-[9px] text-slate-400">{currentYear} (Schätzung)</p>
+                </div>
+              </div>
+              {isDivLoading ? (
+                <div className="h-8 bg-slate-100 rounded-lg animate-pulse" />
+              ) : holdingDividends.length > 0 ? (
+                <p className="text-2xl font-black text-slate-900">
+                  {formatCurrency(receivedDividends)} <span className="text-sm font-medium text-slate-400">€</span>
+                </p>
+              ) : (
+                <p className="text-sm text-slate-400 font-medium">Keine Dividenden-Daten</p>
+              )}
+              {holdingDividends.filter(h => h.isPaid).length > 0 && (
+                <p className="text-[10px] text-emerald-600 font-medium mt-1">
+                  {holdingDividends.filter(h => h.isPaid).length} Position{holdingDividends.filter(h => h.isPaid).length !== 1 ? 'en' : ''} mit Ex-Datum in {currentYear}
+                </p>
+              )}
+            </div>
+
+            {/* Erwartete Dividenden */}
+            <div className="bg-white border border-blue-100 rounded-[24px] p-6 shadow-sm">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-8 h-8 bg-blue-100 rounded-xl flex items-center justify-center">
+                  <TrendingDown className="w-4 h-4 text-blue-600" />
+                </div>
+                <div>
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Erwartete Dividenden</p>
+                  <p className="text-[9px] text-slate-400">Rest {currentYear} (Schätzung)</p>
+                </div>
+              </div>
+              {isDivLoading ? (
+                <div className="h-8 bg-slate-100 rounded-lg animate-pulse" />
+              ) : holdingDividends.length > 0 ? (
+                <p className="text-2xl font-black text-slate-900">
+                  {formatCurrency(expectedDividends)} <span className="text-sm font-medium text-slate-400">€</span>
+                </p>
+              ) : (
+                <p className="text-sm text-slate-400 font-medium">Keine Dividenden-Daten</p>
+              )}
+              {holdingDividends.length > 0 && (
+                <p className="text-[10px] text-blue-600 font-medium mt-1">
+                  Gesamt p.a.: {formatCurrency(totalAnnualDividend)} €
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* Dividenden-Fehler */}
+          {divError && !isDivLoading && (
+            <div className="bg-rose-50 border border-rose-100 p-4 rounded-[16px] text-rose-700 text-xs font-medium">
+              Dividenden: {divError}
+            </div>
+          )}
+
+          {/* Per-Position-Liste */}
+          {holdingDividends.length > 0 && !isDivLoading && (
+            <div className="bg-white border border-slate-200 rounded-[24px] overflow-hidden shadow-sm">
+              <div className="px-6 py-4 border-b border-slate-100">
+                <p className="text-[10px] font-black text-slate-900 uppercase tracking-widest">Dividenden je Position</p>
+              </div>
+              <div className="divide-y divide-slate-100">
+                {holdingDividends.map((h, i) => (
+                  <div key={i} className="px-6 py-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-2 h-2 rounded-full ${h.isPaid ? 'bg-emerald-500' : 'bg-blue-400'}`} />
+                      <div>
+                        <p className="text-sm font-bold text-slate-800">{h.name}</p>
+                        <p className="text-[10px] font-mono text-slate-400">
+                          {h.symbol} · {h.shares} Stk · {formatCurrency(h.dividendPerShare)} €/Aktie p.a.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-black text-slate-900">{formatCurrency(h.annualIncome)} €</p>
+                      <p className={`text-[9px] font-bold uppercase tracking-widest ${h.isPaid ? 'text-emerald-600' : 'text-blue-500'}`}>
+                        {h.isPaid ? 'Ex-Datum vergangen' : h.exDividendDate ? `Ex: ${formatDate(h.exDividendDate)}` : 'Termin offen'}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="px-6 py-3 bg-slate-50 border-t border-slate-100">
+                <p className="text-[10px] text-slate-400 italic">
+                  * Schätzungen basierend auf Alpha Vantage OVERVIEW-Daten (jährliche Dividende). Keine Garantie für
+                  zukünftige Zahlungen. Angaben in lokaler Währung des jeweiligen Börsenplatzes.
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Earnings Calendar ───────────────────────────────────────────────── */}
 
       {tickers.length === 0 && (
         <div className="bg-white border border-slate-200 rounded-[28px] p-12 text-center shadow-sm">
@@ -112,11 +362,11 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
             {tickers.length} Position{tickers.length !== 1 ? 'en' : ''} analysiert
           </p>
           <button
-            onClick={load}
-            disabled={isLoading}
+            onClick={() => { loadEarnings(); loadDividends(); }}
+            disabled={isLoading || isDivLoading}
             className="flex items-center gap-2 text-[10px] font-black text-blue-600 uppercase tracking-widest hover:text-slate-900 transition-colors disabled:opacity-50"
           >
-            <RefreshCcw className={`w-3 h-3 ${isLoading ? 'animate-spin' : ''}`} />
+            <RefreshCcw className={`w-3 h-3 ${(isLoading || isDivLoading) ? 'animate-spin' : ''}`} />
             {lastFetch ? `Aktualisiert ${lastFetch.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}` : 'Laden'}
           </button>
         </div>
@@ -126,7 +376,7 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
         <div className="flex justify-center py-16">
           <div className="bg-white px-6 py-4 rounded-2xl shadow-xl border border-slate-100 flex items-center gap-3">
             <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
-            <span className="text-xs font-black text-slate-900 uppercase tracking-widest">KI analysiert Earnings-Kalender...</span>
+            <span className="text-xs font-black text-slate-900 uppercase tracking-widest">KI analysiert Earnings-Kalender…</span>
           </div>
         </div>
       )}
