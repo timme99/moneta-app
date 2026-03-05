@@ -56,6 +56,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
   const [isSaving, setIsSaving]           = useState(false);
 
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Bulk-Import (Screenshot / Excel)
   const [importState, setImportState] = useState<{ loading: boolean; message: string; error: string }>({
@@ -68,28 +69,30 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
   const excelInputRef = useRef<HTMLInputElement>(null);
 
   // ── Auth ──────────────────────────────────────────────────────────────────
+  // Wenn userAccount.id gesetzt ist, hat App.tsx bereits die Supabase-Session geprüft.
+  // Wir vertrauen dieser ID direkt und setzen userId sofort.
+  // Falls keine userAccount vorhanden: eigene Session prüfen.
   useEffect(() => {
     if (!sb) { setAuthError(true); setIsLoadingH(false); return; }
 
-    sb.auth.getUser().then(async ({ data }) => {
-      if (data.user) {
-        // Echte Supabase-Session vorhanden
-        setUserId(data.user.id);
-      } else if (userAccount) {
-        // Mock-User aus localStorage → Anonymous-Session erstellen, damit RLS greift
-        const { data: anonData } = await sb.auth.signInAnonymously();
-        if (anonData?.user) {
-          setUserId(anonData.user.id);
-        } else {
-          setAuthError(true);
-          setIsLoadingH(false);
-        }
+    if (userAccount?.id) {
+      // App.tsx hat den User bereits authentifiziert – ID direkt übernehmen
+      setUserId(userAccount.id);
+      setAuthError(false);
+      return;
+    }
+
+    // Kein userAccount: direkt Supabase-Session prüfen
+    sb.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user?.id) {
+        setUserId(session.user.id);
+        setAuthError(false);
       } else {
         setAuthError(true);
         setIsLoadingH(false);
       }
     });
-  }, [userAccount]);
+  }, [userAccount?.id]);
 
   // ── Holdings laden ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -97,12 +100,16 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
   }, [userId]);
 
   const loadHoldings = async () => {
-    if (!sb || !userId) return;
+    if (!sb) return;
+    // userId direkt aus aktueller Session holen (robust gegen Race Conditions)
+    const { data: sessionData } = await sb.auth.getSession();
+    const effectiveUserId = sessionData?.session?.user?.id ?? userId;
+    if (!effectiveUserId) { setIsLoadingH(false); return; }
     setIsLoadingH(true);
     const { data } = await sb
       .from('holdings')
       .select('id, shares, buy_price, watchlist, ticker_mapping(*)')
-      .eq('user_id', userId)
+      .eq('user_id', effectiveUserId)
       .order('created_at', { ascending: false });
 
     const newHoldings: HoldingRow[] = (data ?? []).map((row: any) => ({
@@ -212,8 +219,19 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
 
   // ── Hinzufügen ────────────────────────────────────────────────────────────
   const handleAdd = async () => {
-    if (!sb || !userId || !selected) return;
+    if (!sb || !selected) return;
     setIsSaving(true);
+    setSaveError(null);
+
+    // Aktuelle Session direkt abfragen für zuverlässige user_id
+    const { data: sessionData } = await sb.auth.getSession();
+    const effectiveUserId = sessionData?.session?.user?.id ?? userId;
+    if (!effectiveUserId) {
+      setSaveError('Bitte zuerst anmelden, um Positionen zu speichern.');
+      setIsSaving(false);
+      return;
+    }
+    if (effectiveUserId !== userId) setUserId(effectiveUserId);
 
     const sharesNum = shares.trim()   ? parseFloat(shares.replace(',', '.'))   : null;
     const priceNum  = buyPrice.trim() ? parseFloat(buyPrice.replace(',', '.')) : null;
@@ -221,7 +239,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
 
     const { error } = await sb.from('holdings').upsert(
       {
-        user_id:   userId,
+        user_id:   effectiveUserId,
         ticker_id: selected.id,
         watchlist: isWatchlist,
         shares:    isWatchlist ? null : sharesNum,
@@ -231,6 +249,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
     );
 
     if (!error) {
+      setSaveError(null);
       setQuery('');
       setSelected(null);
       setShares('');
@@ -241,6 +260,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
       await loadHoldings();
     } else {
       console.error('[PortfolioInput] upsert error:', error.message);
+      setSaveError(`Speichern fehlgeschlagen: ${error.message}`);
     }
     setIsSaving(false);
   };
@@ -248,8 +268,20 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
   // ── Löschen ───────────────────────────────────────────────────────────────
   const handleDelete = async (id: string) => {
     if (!sb) return;
-    await sb.from('holdings').delete().eq('id', id);
+    // Aktuelle Session abfragen für sichere user_id-Filterung (RLS-Fallback)
+    const { data: sessionData } = await sb.auth.getSession();
+    const uid = sessionData?.session?.user?.id ?? userId;
+    if (!uid) {
+      console.error('[PortfolioInput] Delete: keine gültige Session');
+      return;
+    }
+    const { error } = await sb.from('holdings').delete().eq('id', id).eq('user_id', uid);
+    if (error) {
+      console.error('[PortfolioInput] Delete error:', error.message);
+      return;
+    }
     setHoldings((prev) => prev.filter((h) => h.id !== id));
+    onHoldingsChange?.((holdings).filter((h) => h.id !== id));
     if (editingId === id) {
       setEditingId(null);
       setSelected(null);
@@ -347,13 +379,18 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
 
   // ── Bulk-Add: Ticker-Namen → Gemini → ticker_mapping → holdings ──────────
   const bulkAddTickers = async (names: string[]): Promise<number> => {
-    if (!sb || !userId || names.length === 0) return 0;
+    if (!sb || names.length === 0) return 0;
+
+    // Aktuelle Auth-Session direkt abfragen (verhindert Race Conditions mit userId-State)
+    const { data: sessionData } = await sb.auth.getSession();
+    const effectiveUserId = sessionData?.session?.user?.id ?? userId;
+    if (!effectiveUserId) throw new Error('Nicht eingeloggt – bitte zuerst anmelden.');
 
     // Schritt 1: Gemini löst Namen auf und speichert sie in ticker_mapping (awaited)
     const resp = await fetch('/api/gemini', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'resolve_ticker', payload: { names }, userId }),
+      body: JSON.stringify({ type: 'resolve_ticker', payload: { names }, userId: effectiveUserId }),
     });
     if (!resp.ok) throw new Error('Ticker-Auflösung fehlgeschlagen');
     const data = await resp.json();
@@ -369,9 +406,9 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
       .in('symbol', symbols);
     if (!mapped || mapped.length === 0) return 0;
 
-    // Schritt 3: Als Watchlist-Einträge in holdings speichern
+    // Schritt 3: Mit korrekter user_id in holdings speichern
     const rows = (mapped as Array<{ id: string; symbol: string }>).map((t) => ({
-      user_id: userId,
+      user_id: effectiveUserId,
       ticker_id: t.id,
       watchlist: true,
       shares: null,
@@ -379,6 +416,9 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
     }));
     const { error } = await sb.from('holdings').upsert(rows, { onConflict: 'user_id,ticker_id' });
     if (error) throw new Error(error.message);
+
+    // State mit korrekter userId aktualisieren falls nötig
+    if (effectiveUserId !== userId) setUserId(effectiveUserId);
 
     await loadHoldings();
     return mapped.length;
@@ -646,6 +686,13 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
                 ? 'Felder leer → wird als Watchlist-Eintrag gespeichert (kein Bestand)'
                 : 'Stückzahl & Kaufpreis → vollständige Portfolio-Position'}
             </p>
+
+            {saveError && (
+              <div className="flex items-center gap-2 text-[10px] text-rose-600 font-bold bg-rose-50 px-4 py-3 rounded-[14px] border border-rose-100">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                {saveError}
+              </div>
+            )}
 
             <div className="flex gap-2">
               <button

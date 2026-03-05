@@ -11,6 +11,8 @@ import MarketNewsTicker from './components/MarketNewsTicker';
 import Legal from './components/Legal';
 import AuthModal from './components/AuthModal';
 import PortfolioInput from './components/PortfolioInput';
+import EarningsCalendar from './components/EarningsCalendar';
+import ScenarioAnalysis from './components/ScenarioAnalysis';
 import { PortfolioAnalysisReport, PortfolioHealthReport, PortfolioSavingsReport, UserAccount, HoldingRow } from './types';
 import { analyzePortfolio } from './services/geminiService';
 import { userService } from './services/userService';
@@ -351,7 +353,7 @@ const App: React.FC = () => {
                   <h1 className="text-4xl font-black text-slate-900 tracking-tighter">Cockpit</h1>
                   <span className="bg-slate-200 text-slate-600 text-[9px] font-black px-2 py-0.5 rounded-md uppercase tracking-widest">Beta</span>
                 </div>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">KI-gestützte Portfolio-Analyse & Echtzeit-Einblicke</p>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Informative Depot-Übersicht · Keine Anlageberatung</p>
               </div>
               {lastUpdate && analysisReport && (
                 <div className="flex items-center gap-2 text-slate-400 bg-white px-4 py-2 rounded-2xl border border-slate-100 shadow-sm">
@@ -466,17 +468,8 @@ const App: React.FC = () => {
                   healthReport={healthReport}
                   savingsReport={savingsReport}
                   insight={null}
+                  holdings={holdings}
                 />
-
-                <div className="bg-amber-50 border border-amber-100 p-5 rounded-[32px] flex items-start gap-4 shadow-sm">
-                  <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-                  <div className="space-y-1">
-                    <p className="text-xs font-black text-amber-900 uppercase tracking-widest">Wichtiger Risikohinweis</p>
-                    <p className="text-[11px] text-amber-700 font-medium leading-relaxed">
-                      Die dargestellten Analysen sind rein informativ und stellen keine Anlageberatung dar. Investitionen an der Börse bergen Risiken bis zum Totalverlust. Dieses Tool ist ein privates Beta-Projekt.
-                    </p>
-                  </div>
-                </div>
 
                 <PortfolioDeepDive
                   report={analysisReport}
@@ -498,8 +491,12 @@ const App: React.FC = () => {
                />
             ) : activeView === 'discover' ? (
                <Discover />
+            ) : activeView === 'earnings' ? (
+               <EarningsCalendar holdings={holdings} />
+            ) : activeView === 'scenarios' ? (
+               <ScenarioAnalysis holdings={holdings} report={analysisReport} />
             ) : activeView === 'settings' ? (
-               <Settings account={userAccount} />
+               <Settings account={userAccount} onOpenAuth={() => setShowAuthModal(true)} />
             ) : activeView === 'portfolio' ? (
               <div className="space-y-6">
                 <div>
@@ -522,7 +519,7 @@ const App: React.FC = () => {
             ) : (
               <EmptyState
                 onAnalyzeText={(t) => handleAnalysis({ text: t })}
-                onUploadClick={() => setActiveView('assistant')}
+                onUploadClick={() => setActiveView('portfolio')}
                 onManagePortfolio={() => setActiveView('portfolio')}
                 isLoading={isGlobalLoading}
                 onImageImport={handleCockpitImageImport}
@@ -570,7 +567,7 @@ const App: React.FC = () => {
           </div>
           <div className="pt-8 border-t border-slate-100 flex flex-col md:flex-row justify-between items-center gap-4">
             <p className="text-[10px] text-slate-400 font-medium italic">
-              &copy; {new Date().getFullYear()} Moneta. Nur für private Zwecke. Keine kommerzielle Anlageberatung.
+              &copy; {new Date().getFullYear()} Moneta · Tim Bischof · Privates Bildungsprojekt · Kein Anlageberatungsangebot gemäß KWG/WpIG
             </p>
             <div className="flex items-center gap-2 px-3 py-1 bg-slate-50 rounded-full border border-slate-100">
                <span className="w-2 h-2 bg-emerald-500 rounded-full"></span>
