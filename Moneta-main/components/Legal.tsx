@@ -24,7 +24,7 @@ const Legal: React.FC<LegalProps> = ({ isOpen, onClose, type }) => {
           <section>
             <h4 className="font-black text-slate-900 uppercase text-[10px] tracking-widest mb-2">Angaben gemäß § 5 TMG</h4>
             <p className="leading-relaxed">
-              Tim Eichmann<br />
+              Tim Bischof<br />
               E-Mail: tiimmme@gmail.com
             </p>
           </section>
@@ -32,7 +32,7 @@ const Legal: React.FC<LegalProps> = ({ isOpen, onClose, type }) => {
           <section>
             <h4 className="font-black text-slate-900 uppercase text-[10px] tracking-widest mb-2">Verantwortlich für den Inhalt (§ 18 Abs. 2 MStV)</h4>
             <p className="leading-relaxed">
-              Tim Eichmann<br />
+              Tim Bischof<br />
               E-Mail: tiimmme@gmail.com
             </p>
           </section>
@@ -106,7 +106,7 @@ const Legal: React.FC<LegalProps> = ({ isOpen, onClose, type }) => {
         <div className="space-y-4 text-sm text-slate-600">
           <section>
             <h4 className="font-black text-slate-900 uppercase text-[10px] tracking-widest mb-2">Verantwortlicher (Art. 4 Nr. 7 DSGVO)</h4>
-            <p>Tim Eichmann · tiimmme@gmail.com</p>
+            <p>Tim Bischof · tiimmme@gmail.com</p>
           </section>
 
           <section>

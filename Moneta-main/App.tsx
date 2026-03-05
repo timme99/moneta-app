@@ -576,7 +576,7 @@ const App: React.FC = () => {
           </div>
           <div className="pt-8 border-t border-slate-100 flex flex-col md:flex-row justify-between items-center gap-4">
             <p className="text-[10px] text-slate-400 font-medium italic">
-              &copy; {new Date().getFullYear()} Moneta · Tim Eichmann · Privates Bildungsprojekt · Kein Anlageberatungsangebot gemäß KWG/WpIG
+              &copy; {new Date().getFullYear()} Moneta · Tim Bischof · Privates Bildungsprojekt · Kein Anlageberatungsangebot gemäß KWG/WpIG
             </p>
             <div className="flex items-center gap-2 px-3 py-1 bg-slate-50 rounded-full border border-slate-100">
                <span className="w-2 h-2 bg-emerald-500 rounded-full"></span>
