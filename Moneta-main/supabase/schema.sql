@@ -176,20 +176,110 @@ CREATE TABLE IF NOT EXISTS public.holdings (
   UNIQUE (user_id, symbol)                                  -- Pro User nur eine Zeile je Symbol
 );
 
--- Migration für bestehende Installationen (ticker_id → symbol):
--- Falls die Tabelle mit ticker_id existiert, symbol-Spalte ergänzen
+-- ── Migration für bestehende Installationen ───────────────────────────────────
+-- Behandelt alle bekannten Vorgänger-Schemata:
+--   a) Spalte 'ticker' TEXT (direkte Ticker-Speicherung) → umbenennen
+--   b) Spalte 'ticker_id' INTEGER (FK auf ticker_mapping)  → nullable machen
+--   c) Spalte 'symbol' fehlt noch                          → hinzufügen
+--   d) UNIQUE-Constraint auf (user_id, symbol) fehlt       → hinzufügen
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- a) 'ticker' TEXT → 'symbol' umbenennen (wenn symbol noch nicht existiert)
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'holdings'
+      AND column_name = 'ticker'
+      AND data_type IN ('text', 'character varying')
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'holdings'
+      AND column_name = 'symbol'
+  ) THEN
+    ALTER TABLE public.holdings RENAME COLUMN ticker TO symbol;
+    RAISE NOTICE 'holdings: Spalte ticker → symbol umbenannt';
+  END IF;
+END $$;
+
+-- b) 'ticker_id' INTEGER → nullable + 'symbol' als Text-Spalte ergänzen
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'holdings'
+      AND column_name = 'ticker_id'
+  ) THEN
+    ALTER TABLE public.holdings ALTER COLUMN ticker_id DROP NOT NULL;
+    RAISE NOTICE 'holdings: ticker_id nullable gemacht';
+  END IF;
+END $$;
+
+-- c) 'symbol' hinzufügen falls noch nicht vorhanden
 ALTER TABLE public.holdings ADD COLUMN IF NOT EXISTS symbol TEXT;
+
+-- c2) 'watchlist' boolean-Spalte entfernen falls vorhanden (jetzt UI-computed)
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'holdings'
+      AND column_name = 'watchlist'
+  ) THEN
+    -- symbol aus watchlist ableiten falls leer (Fallback: id)
+    UPDATE public.holdings SET symbol = COALESCE(symbol, id::text) WHERE symbol IS NULL;
+    ALTER TABLE public.holdings DROP COLUMN IF EXISTS watchlist;
+    RAISE NOTICE 'holdings: watchlist-Spalte entfernt';
+  END IF;
+END $$;
+
+-- c3) symbol-Werte füllen (Fallback: UUID als Platzhalter, damit NOT NULL möglich)
+UPDATE public.holdings SET symbol = COALESCE(symbol, id::text) WHERE symbol IS NULL;
+
+-- c4) symbol NOT NULL setzen
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'holdings'
+      AND column_name = 'symbol' AND is_nullable = 'YES'
+  ) THEN
+    ALTER TABLE public.holdings ALTER COLUMN symbol SET NOT NULL;
+  END IF;
+END $$;
+
+-- d) Optionale Spalten ergänzen
 ALTER TABLE public.holdings ADD COLUMN IF NOT EXISTS buy_date DATE;
 ALTER TABLE public.holdings ADD COLUMN IF NOT EXISTS notes TEXT;
 ALTER TABLE public.holdings ALTER COLUMN shares DROP NOT NULL;
 ALTER TABLE public.holdings ALTER COLUMN buy_price DROP NOT NULL;
 
--- Alte Constraints entfernen (falls vorhanden)
+-- e) Alte Check-Constraints entfernen (falls vorhanden)
 ALTER TABLE public.holdings
   DROP CONSTRAINT IF EXISTS holdings_shares_check,
   DROP CONSTRAINT IF EXISTS holdings_buy_price_check,
   DROP CONSTRAINT IF EXISTS holdings_shares_watchlist_check,
   DROP CONSTRAINT IF EXISTS holdings_buy_price_watchlist_check;
+
+-- f) UNIQUE-Constraint auf (user_id, symbol) hinzufügen falls nicht vorhanden
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint c
+    JOIN pg_class t ON c.conrelid = t.oid
+    JOIN pg_namespace n ON t.relnamespace = n.oid
+    WHERE n.nspname = 'public' AND t.relname = 'holdings'
+      AND c.contype = 'u'
+      AND array_to_string(
+            ARRAY(SELECT a.attname FROM pg_attribute a
+                  WHERE a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+                  ORDER BY a.attnum), ',')
+          = 'user_id,symbol'
+  ) THEN
+    ALTER TABLE public.holdings ADD CONSTRAINT holdings_user_symbol_unique UNIQUE (user_id, symbol);
+    RAISE NOTICE 'holdings: UNIQUE(user_id, symbol) hinzugefügt';
+  END IF;
+END $$;
 
 -- Automatisches updated_at
 CREATE OR REPLACE FUNCTION public.set_updated_at()

@@ -80,31 +80,100 @@ export interface AddHoldingResult {
 }
 
 /**
- * Speichert oder aktualisiert eine Holding in Supabase (upsert auf user_id + symbol).
+ * Speichert oder aktualisiert eine Holding in Supabase.
+ *
+ * Strategie (robust gegen verschiedene DB-Zustände):
+ *  1. Optimistisch: upsert mit onConflict:'user_id,symbol' (benötigt UNIQUE-Constraint)
+ *  2. Fallback:     SELECT → UPDATE oder INSERT (falls UNIQUE-Constraint noch fehlt)
+ *
+ * Tipp: Führe die Migration in supabase/schema.sql aus, um den UNIQUE-Constraint
+ * anzulegen – dann ist nur Schritt 1 nötig und der DB-Roundtrip entfällt.
  */
 export async function addHolding(opts: AddHoldingOptions): Promise<AddHoldingResult> {
   const sb = getSupabaseBrowser();
-  if (!sb)         return { success: false, error: 'Supabase nicht konfiguriert.' };
+  if (!sb)          return { success: false, error: 'Supabase nicht konfiguriert.' };
   if (!opts.userId) return { success: false, error: 'Kein User eingeloggt.' };
   if (!opts.symbol) return { success: false, error: 'Kein Ticker-Symbol angegeben.' };
 
-  const { error } = await sb.from('holdings').upsert(
-    {
-      user_id:   opts.userId,
-      symbol:    opts.symbol.trim().toUpperCase(),
-      shares:    opts.shares   ?? null,
-      buy_price: opts.buyPrice ?? null,
-      buy_date:  opts.buyDate  ?? null,
-      notes:     opts.notes    ?? null,
-    },
-    { onConflict: 'user_id,symbol' }
-  );
+  const symbol = opts.symbol.trim().toUpperCase();
+  const row = {
+    user_id:   opts.userId,
+    symbol,
+    shares:    opts.shares   ?? null,
+    buy_price: opts.buyPrice ?? null,
+    buy_date:  opts.buyDate  ?? null,
+    notes:     opts.notes    ?? null,
+  };
 
-  if (error) {
-    console.error('[holdingsService] addHolding error:', error.message);
-    return { success: false, error: error.message };
+  // ── 1. Optimistischer Upsert (schnell, benötigt UNIQUE-Constraint) ──────────
+  const { error: upsertErr } = await sb
+    .from('holdings')
+    .upsert(row, { onConflict: 'user_id,symbol' });
+
+  if (!upsertErr) return { success: true };
+
+  // ── 2. Fallback: manuelles Upsert ohne UNIQUE-Constraint ────────────────────
+  // Tritt auf wenn die Migration noch nicht ausgeführt wurde.
+  const needsFallback =
+    upsertErr.message.includes('no unique or exclusion constraint') ||
+    upsertErr.message.includes('PGRST116') ||
+    (upsertErr as any).code === '42P10';
+
+  if (needsFallback) {
+    console.warn('[holdingsService] UNIQUE-Constraint fehlt – nutze SELECT+INSERT/UPDATE Fallback. Bitte Migration ausführen.');
+
+    const { data: existing, error: selectErr } = await sb
+      .from('holdings')
+      .select('id')
+      .eq('user_id', opts.userId)
+      .eq('symbol', symbol)
+      .maybeSingle();
+
+    if (selectErr) {
+      return { success: false, error: selectErr.message };
+    }
+
+    if (existing) {
+      const { error: updateErr } = await sb
+        .from('holdings')
+        .update({
+          shares:    row.shares,
+          buy_price: row.buy_price,
+          buy_date:  row.buy_date,
+          notes:     row.notes,
+        })
+        .eq('id', (existing as any).id)
+        .eq('user_id', opts.userId);
+      if (updateErr) return { success: false, error: updateErr.message };
+    } else {
+      const { error: insertErr } = await sb
+        .from('holdings')
+        .insert(row);
+      if (insertErr) return { success: false, error: insertErr.message };
+    }
+    return { success: true };
   }
-  return { success: true };
+
+  // ── 3. Anderer Fehler: Klare Fehlermeldung ────────────────────────────────
+  console.error('[holdingsService] addHolding error:', upsertErr.message);
+
+  // Schema-Problem: Migration noch nicht ausgeführt
+  if (
+    upsertErr.message.includes('"symbol"') ||
+    upsertErr.message.includes("'symbol'") ||
+    upsertErr.message.includes('"ticker"') ||
+    upsertErr.message.includes("'ticker'") ||
+    upsertErr.message.includes('column') ||
+    upsertErr.message.includes('schema cache')
+  ) {
+    return {
+      success: false,
+      error:
+        'Datenbank-Schema veraltet: Bitte die Migration in supabase/schema.sql im Supabase SQL-Editor ausführen.',
+    };
+  }
+
+  return { success: false, error: upsertErr.message };
 }
 
 // ── Bulk-Add: Namen → Gemini → ticker_mapping → holdings ────────────────────
@@ -158,24 +227,58 @@ export async function addTickersByName(
   if (symbols.length === 0) return { count: 0 };
 
   // Schritt 3: Direkt als Watchlist-Einträge in holdings speichern
-  // (kein ticker_id-Lookup mehr nötig – symbol wird direkt gespeichert)
   const rows = symbols.map((symbol) => ({
     user_id:   userId,
     symbol,
-    shares:    null,
-    buy_price: null,
+    shares:    null as null,
+    buy_price: null as null,
   }));
 
+  // Optimistisch: Upsert mit UNIQUE-Constraint
   const { error: insertErr } = await sb
     .from('holdings')
     .upsert(rows, { onConflict: 'user_id,symbol' });
 
-  if (insertErr) {
-    console.error('[holdingsService] holdings upsert error:', insertErr.message);
-    return { count: 0, error: insertErr.message };
+  if (!insertErr) return { count: symbols.length };
+
+  // Fallback: kein UNIQUE-Constraint → einzeln insert
+  const needsFallback =
+    insertErr.message.includes('no unique or exclusion constraint') ||
+    insertErr.message.includes('PGRST116') ||
+    (insertErr as any).code === '42P10';
+
+  if (needsFallback) {
+    console.warn('[holdingsService] Bulk-Upsert Fallback: UNIQUE-Constraint fehlt.');
+    let inserted = 0;
+    for (const r of rows) {
+      const { data: ex } = await sb.from('holdings').select('id').eq('user_id', userId).eq('symbol', r.symbol).maybeSingle();
+      if (!ex) {
+        const { error: e2 } = await sb.from('holdings').insert(r);
+        if (!e2) inserted++;
+      } else {
+        inserted++;
+      }
+    }
+    return { count: inserted };
   }
 
-  return { count: symbols.length };
+  console.error('[holdingsService] holdings upsert error:', insertErr.message);
+
+  if (
+    insertErr.message.includes('"symbol"') ||
+    insertErr.message.includes("'symbol'") ||
+    insertErr.message.includes('"ticker"') ||
+    insertErr.message.includes("'ticker'") ||
+    insertErr.message.includes('column') ||
+    insertErr.message.includes('schema cache')
+  ) {
+    return {
+      count: 0,
+      error: 'Datenbank-Schema veraltet: Bitte die Migration in supabase/schema.sql im Supabase SQL-Editor ausführen.',
+    };
+  }
+
+  return { count: 0, error: insertErr.message };
 }
 
 // ── Holding löschen ───────────────────────────────────────────────────────────
