@@ -249,6 +249,44 @@ CREATE POLICY "price_cache_select_authenticated"
 
 
 -- ============================================================
+-- 5. SUBSCRIBERS – Newsletter-Abonnenten (auch ohne Moneta-Account)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS public.subscribers (
+  id              SERIAL      PRIMARY KEY,
+  email           TEXT        NOT NULL UNIQUE,
+  name            TEXT,
+  weekly_digest   BOOLEAN     NOT NULL DEFAULT false,
+  auto_newsletter BOOLEAN     NOT NULL DEFAULT false,
+  confirmed       BOOLEAN     NOT NULL DEFAULT false,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- RLS: Schreiben nur via Service-Role; Lesen gesperrt für normale User
+ALTER TABLE public.subscribers ENABLE ROW LEVEL SECURITY;
+
+
+-- ============================================================
+-- 6. NEWS CACHE – Gemini News-Sentiment (6-Stunden-TTL)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS public.news_cache (
+  id          SERIAL      PRIMARY KEY,
+  ticker      TEXT        NOT NULL UNIQUE,     -- kommaseparierte, sortierte Ticker-Symbole
+  sentiment   TEXT,                            -- z. B. "positiv", "negativ", "neutral"
+  summary     TEXT,                            -- KI-generierter Nachrichtentext
+  cached_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- RLS: Lesen für authentifizierte User; Schreiben nur via Service-Role
+ALTER TABLE public.news_cache ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "news_cache_select_authenticated"
+  ON public.news_cache FOR SELECT
+  TO authenticated
+  USING (true);
+
+
+-- ============================================================
 -- INDEX-Optimierungen
 -- ============================================================
 CREATE INDEX IF NOT EXISTS idx_ticker_mapping_symbol       ON public.ticker_mapping (symbol);
@@ -256,3 +294,5 @@ CREATE INDEX IF NOT EXISTS idx_ticker_mapping_company_name ON public.ticker_mapp
 CREATE INDEX IF NOT EXISTS idx_holdings_user_id            ON public.holdings (user_id);
 CREATE INDEX IF NOT EXISTS idx_price_cache_ticker_id       ON public.price_cache (ticker_id);
 CREATE INDEX IF NOT EXISTS idx_price_cache_last_updated    ON public.price_cache (last_updated);
+CREATE INDEX IF NOT EXISTS idx_news_cache_ticker           ON public.news_cache (ticker);
+CREATE INDEX IF NOT EXISTS idx_news_cache_cached_at        ON public.news_cache (cached_at);

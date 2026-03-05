@@ -19,6 +19,7 @@ import {
 import { getSupabaseBrowser } from '../lib/supabaseBrowser';
 import type { TickerEntry } from '../lib/supabase-types';
 import type { HoldingRow } from '../types';
+import { addHolding, addTickersByName, deleteHolding } from '../services/holdingsService';
 
 interface PortfolioInputProps {
   onAnalyze: (portfolioText: string) => void;
@@ -26,9 +27,11 @@ interface PortfolioInputProps {
   userAccount?: { id: string; name: string } | null;
   onSendToAssistant?: (text: string) => void;
   onHoldingsChange?: (holdings: HoldingRow[]) => void;
+  /** Globaler Refresh: wird nach jeder Änderung aufgerufen, um App.tsx-State zu synchronisieren */
+  onRefresh?: () => Promise<void>;
 }
 
-const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, userAccount, onSendToAssistant, onHoldingsChange }) => {
+const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, userAccount, onSendToAssistant, onHoldingsChange, onRefresh }) => {
   const sb = getSupabaseBrowser();
 
   const [userId, setUserId]           = useState<string | null>(null);
@@ -219,13 +222,17 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
 
   // ── Hinzufügen ────────────────────────────────────────────────────────────
   const handleAdd = async () => {
-    if (!sb || !selected) return;
+    if (!selected) return;
     setIsSaving(true);
     setSaveError(null);
 
     // Aktuelle Session direkt abfragen für zuverlässige user_id
-    const { data: sessionData } = await sb.auth.getSession();
-    const effectiveUserId = sessionData?.session?.user?.id ?? userId;
+    let effectiveUserId = userId;
+    if (sb) {
+      const { data: sessionData } = await sb.auth.getSession();
+      effectiveUserId = sessionData?.session?.user?.id ?? userId;
+    }
+
     if (!effectiveUserId) {
       setSaveError('Bitte zuerst anmelden, um Positionen zu speichern.');
       setIsSaving(false);
@@ -235,20 +242,15 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
 
     const sharesNum = shares.trim()   ? parseFloat(shares.replace(',', '.'))   : null;
     const priceNum  = buyPrice.trim() ? parseFloat(buyPrice.replace(',', '.')) : null;
-    const isWatchlist = sharesNum === null || priceNum === null;
 
-    const { error } = await sb.from('holdings').upsert(
-      {
-        user_id:   effectiveUserId,
-        ticker_id: selected.id,
-        watchlist: isWatchlist,
-        shares:    isWatchlist ? null : sharesNum,
-        buy_price: isWatchlist ? null : priceNum,
-      },
-      { onConflict: 'user_id,ticker_id' }
-    );
+    const result = await addHolding({
+      userId:    effectiveUserId,
+      tickerId:  selected.id,
+      shares:    sharesNum,
+      buyPrice:  priceNum,
+    });
 
-    if (!error) {
+    if (result.success) {
       setSaveError(null);
       setQuery('');
       setSelected(null);
@@ -257,31 +259,35 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
       setTotalValue('');
       setCurrentPrice(null);
       setEditingId(null);
+      // Zentralen App.tsx-State aktualisieren, dann lokalen State synchronisieren
+      await onRefresh?.();
       await loadHoldings();
     } else {
-      console.error('[PortfolioInput] upsert error:', error.message);
-      setSaveError(`Speichern fehlgeschlagen: ${error.message}`);
+      console.error('[PortfolioInput] addHolding error:', result.error);
+      setSaveError(`Speichern fehlgeschlagen: ${result.error}`);
     }
     setIsSaving(false);
   };
 
   // ── Löschen ───────────────────────────────────────────────────────────────
   const handleDelete = async (id: string) => {
-    if (!sb) return;
-    // Aktuelle Session abfragen für sichere user_id-Filterung (RLS-Fallback)
-    const { data: sessionData } = await sb.auth.getSession();
-    const uid = sessionData?.session?.user?.id ?? userId;
+    let uid = userId;
+    if (sb) {
+      const { data: sessionData } = await sb.auth.getSession();
+      uid = sessionData?.session?.user?.id ?? userId;
+    }
     if (!uid) {
       console.error('[PortfolioInput] Delete: keine gültige Session');
       return;
     }
-    const { error } = await sb.from('holdings').delete().eq('id', id).eq('user_id', uid);
-    if (error) {
-      console.error('[PortfolioInput] Delete error:', error.message);
+    const result = await deleteHolding(id, uid);
+    if (!result.success) {
+      console.error('[PortfolioInput] Delete error:', result.error);
       return;
     }
-    setHoldings((prev) => prev.filter((h) => h.id !== id));
-    onHoldingsChange?.((holdings).filter((h) => h.id !== id));
+    const updated = holdings.filter((h) => h.id !== id);
+    setHoldings(updated);
+    onHoldingsChange?.(updated);
     if (editingId === id) {
       setEditingId(null);
       setSelected(null);
@@ -290,6 +296,8 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
       setBuyPrice('');
       setTotalValue('');
     }
+    // Globalen State synchronisieren
+    await onRefresh?.();
   };
 
   // ── Bearbeiten ────────────────────────────────────────────────────────────
@@ -378,50 +386,28 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
     });
 
   // ── Bulk-Add: Ticker-Namen → Gemini → ticker_mapping → holdings ──────────
+  // Nutzt den zentralen holdingsService für zuverlässige DB-Operationen
   const bulkAddTickers = async (names: string[]): Promise<number> => {
-    if (!sb || names.length === 0) return 0;
+    if (names.length === 0) return 0;
 
-    // Aktuelle Auth-Session direkt abfragen (verhindert Race Conditions mit userId-State)
-    const { data: sessionData } = await sb.auth.getSession();
-    const effectiveUserId = sessionData?.session?.user?.id ?? userId;
+    // Aktuelle Auth-Session direkt abfragen
+    let effectiveUserId = userId;
+    if (sb) {
+      const { data: sessionData } = await sb.auth.getSession();
+      effectiveUserId = sessionData?.session?.user?.id ?? userId;
+    }
     if (!effectiveUserId) throw new Error('Nicht eingeloggt – bitte zuerst anmelden.');
 
-    // Schritt 1: Gemini löst Namen auf und speichert sie in ticker_mapping (awaited)
-    const resp = await fetch('/api/gemini', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'resolve_ticker', payload: { names }, userId: effectiveUserId }),
-    });
-    if (!resp.ok) throw new Error('Ticker-Auflösung fehlgeschlagen');
-    const data = await resp.json();
-    const resolved: Array<{ ticker: string }> = data.tickers ?? [];
-    if (resolved.length === 0) return 0;
+    const { count, error } = await addTickersByName(names, effectiveUserId);
+    if (error) throw new Error(error);
 
-    // Schritt 2: IDs aus ticker_mapping holen
-    // Validierung: Einträge mit Leerzeichen sind noch Namen, keine Börsensymbole → verwerfen
-    const symbols = resolved.map((t) => t.ticker).filter((s) => s && !s.includes(' '));
-    const { data: mapped } = await sb
-      .from('ticker_mapping')
-      .select('id, symbol')
-      .in('symbol', symbols);
-    if (!mapped || mapped.length === 0) return 0;
-
-    // Schritt 3: Mit korrekter user_id in holdings speichern
-    const rows = (mapped as Array<{ id: string; symbol: string }>).map((t) => ({
-      user_id: effectiveUserId,
-      ticker_id: t.id,
-      watchlist: true,
-      shares: null,
-      buy_price: null,
-    }));
-    const { error } = await sb.from('holdings').upsert(rows, { onConflict: 'user_id,ticker_id' });
-    if (error) throw new Error(error.message);
-
-    // State mit korrekter userId aktualisieren falls nötig
+    // userId-State korrigieren falls nötig
     if (effectiveUserId !== userId) setUserId(effectiveUserId);
 
+    // Lokalen State + globalen App.tsx-State aktualisieren
+    await onRefresh?.();
     await loadHoldings();
-    return mapped.length;
+    return count;
   };
 
   // ── Screenshot-Import ────────────────────────────────────────────────────
