@@ -42,6 +42,9 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
     .map(h => h.ticker.symbol)
     .slice(0, 12);
 
+  // Stabiler Key: neu laden wenn sich die Ticker-Menge ändert
+  const tickerKey = tickers.slice().sort().join(',');
+
   const load = async () => {
     if (tickers.length === 0) return;
     setIsLoading(true);
@@ -60,11 +63,13 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
     }
   };
 
+  // Neu laden wenn sich die Ticker-Zusammensetzung ändert (neue Aktie hinzugefügt / gelöscht)
   useEffect(() => {
-    if (tickers.length > 0 && events.length === 0) {
+    if (tickers.length > 0) {
       load();
     }
-  }, [holdings]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tickerKey]);
 
   const upcoming = events.filter(e => daysUntil(e.date) >= 0);
   const past = events.filter(e => daysUntil(e.date) < 0);
