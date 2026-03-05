@@ -97,31 +97,36 @@ export interface Database {
       };
 
       // ── holdings ──────────────────────────────────────────────────────────
+      // Watchlist-Einträge haben shares = null und buy_price = null.
+      // Echte Positionen haben shares > 0 und buy_price > 0.
       holdings: {
         Row: {
           id: string;
           user_id: string;
-          ticker_id: number;
-          watchlist: boolean;
+          symbol: string;
           shares: number | null;
           buy_price: number | null;
+          buy_date: string | null;
+          notes: string | null;
           created_at: string;
           updated_at: string;
         };
         Insert: {
           id?: string;
           user_id: string;
-          ticker_id: number;
-          watchlist?: boolean;
+          symbol: string;
           shares?: number | null;
           buy_price?: number | null;
+          buy_date?: string | null;
+          notes?: string | null;
           created_at?: string;
           updated_at?: string;
         };
         Update: {
-          watchlist?: boolean;
           shares?: number | null;
           buy_price?: number | null;
+          buy_date?: string | null;
+          notes?: string | null;
           updated_at?: string;
         };
         Relationships: [];

@@ -19,7 +19,7 @@ import {
 import { getSupabaseBrowser } from '../lib/supabaseBrowser';
 import type { TickerEntry } from '../lib/supabase-types';
 import type { HoldingRow } from '../types';
-import { addHolding, addTickersByName, deleteHolding } from '../services/holdingsService';
+import { addHolding, addTickersByName, deleteHolding, loadUserHoldings } from '../services/holdingsService';
 
 interface PortfolioInputProps {
   onAnalyze: (portfolioText: string) => void;
@@ -102,27 +102,17 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
     if (userId) loadHoldings();
   }, [userId]);
 
+  // Nutzt den zentralen holdingsService statt direkt sb aufzurufen
   const loadHoldings = async () => {
-    if (!sb) return;
-    // userId direkt aus aktueller Session holen (robust gegen Race Conditions)
-    const { data: sessionData } = await sb.auth.getSession();
-    const effectiveUserId = sessionData?.session?.user?.id ?? userId;
+    let effectiveUserId = userId;
+    if (sb) {
+      const { data: sessionData } = await sb.auth.getSession();
+      effectiveUserId = sessionData?.session?.user?.id ?? userId;
+    }
     if (!effectiveUserId) { setIsLoadingH(false); return; }
     setIsLoadingH(true);
-    const { data } = await sb
-      .from('holdings')
-      .select('id, shares, buy_price, watchlist, ticker_mapping(*)')
-      .eq('user_id', effectiveUserId)
-      .order('created_at', { ascending: false });
 
-    const newHoldings: HoldingRow[] = (data ?? []).map((row: any) => ({
-      id:        row.id,
-      ticker:    row.ticker_mapping as TickerEntry,
-      shares:    row.shares,
-      buy_price: row.buy_price,
-      watchlist: row.watchlist,
-    }));
-
+    const newHoldings = await loadUserHoldings(effectiveUserId);
     setHoldings(newHoldings);
     onHoldingsChange?.(newHoldings);
     setIsLoadingH(false);
@@ -245,7 +235,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
 
     const result = await addHolding({
       userId:    effectiveUserId,
-      tickerId:  selected.id,
+      symbol:    selected.symbol,
       shares:    sharesNum,
       buyPrice:  priceNum,
     });
@@ -303,8 +293,8 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
   // ── Bearbeiten ────────────────────────────────────────────────────────────
   const handleEdit = (h: HoldingRow) => {
     setEditingId(h.id);
-    setSelected(h.ticker);
-    setQuery(`${h.ticker.company_name} (${h.ticker.symbol})`);
+    setSelected(h.ticker ?? null);
+    setQuery(h.ticker ? `${h.ticker.company_name} (${h.ticker.symbol})` : h.symbol);
     setShares(h.shares != null ? String(h.shares) : '');
     setBuyPrice(h.buy_price != null ? String(h.buy_price) : '');
     setTotalValue('');
@@ -318,24 +308,24 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
     if (holdings.length === 0) return '';
     const lines = holdings.map((h, i) => {
       const t   = h.ticker;
+      const displayName = t?.company_name ?? h.symbol;
       const pos = h.watchlist
         ? 'Watchlist'
         : `${h.shares} Stück | Kaufpreis: ${h.buy_price?.toFixed(2)} €`;
 
-      const meta = [
+      const meta = t ? [
         t.sector      ? `Sektor: ${t.sector}`           : null,
         t.industry    ? `Industrie: ${t.industry}`       : null,
         t.competitors ? `Wettbewerber: ${t.competitors}` : null,
         t.pe_ratio_static != null ? `KGV: ${t.pe_ratio_static}` : null,
-      ]
-        .filter(Boolean)
-        .join(' | ');
+      ].filter(Boolean).join(' | ') : '';
 
-      const desc = t.description_static
+      const desc = t?.description_static
         ? `\n   Beschreibung: ${t.description_static}`
         : '';
+      const notesLine = h.notes ? `\n   Investment-These: ${h.notes}` : '';
 
-      return `${i + 1}. ${t.company_name} (${t.symbol}) | ${pos}${meta ? ` | ${meta}` : ''}${desc}`;
+      return `${i + 1}. ${displayName} (${h.symbol}) | ${pos}${meta ? ` | ${meta}` : ''}${desc}${notesLine}`;
     });
 
     return [
@@ -785,7 +775,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-sm font-bold text-slate-900 truncate">
-                      {h.ticker.company_name}
+                      {h.ticker?.company_name ?? h.symbol}
                     </span>
                     {h.watchlist && (
                       <span className="shrink-0 text-[9px] font-black text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full uppercase tracking-widest">
@@ -794,7 +784,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
                     )}
                   </div>
                   <div className="flex items-center gap-3 mt-0.5 flex-wrap">
-                    <span className="text-[10px] text-slate-400 font-mono">{h.ticker.symbol}</span>
+                    <span className="text-[10px] text-slate-400 font-mono">{h.symbol}</span>
                     {!h.watchlist && h.shares != null && (
                       <span className="text-[10px] text-slate-500 font-medium">
                         {h.shares} Stk. · {h.buy_price?.toFixed(2)} €/Stk.
@@ -805,7 +795,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
                         = {(h.shares * h.buy_price).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} € Einstand
                       </span>
                     )}
-                    {h.ticker.sector && (
+                    {h.ticker?.sector && (
                       <span className="text-[9px] text-slate-400 font-medium">{h.ticker.sector}</span>
                     )}
                   </div>

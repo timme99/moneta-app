@@ -159,38 +159,37 @@ ON CONFLICT (symbol) DO NOTHING;
 
 
 -- ============================================================
--- 3. HOLDINGS – User-Portfolio mit RLS (inkl. Watchlist-Support)
+-- 3. HOLDINGS – User-Portfolio (symbol-basiert, kein ticker_id FK)
 -- ============================================================
+-- Watchlist-Einträge: shares und buy_price sind NULL
+-- Echte Positionen:   shares und buy_price gesetzt
 CREATE TABLE IF NOT EXISTS public.holdings (
   id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id     UUID        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  ticker_id   INTEGER     NOT NULL REFERENCES public.ticker_mapping(id) ON DELETE RESTRICT,
-  watchlist   BOOLEAN     NOT NULL DEFAULT false,            -- true = Watchlist-Eintrag ohne Kaufdaten
-  shares      NUMERIC(15, 6) CHECK (watchlist = true OR (shares IS NOT NULL AND shares > 0)),
-  buy_price   NUMERIC(15, 4) CHECK (watchlist = true OR (buy_price IS NOT NULL AND buy_price > 0)),
+  symbol      TEXT        NOT NULL,                          -- Börsensymbol, z. B. "AAPL", "SAP.DE"
+  shares      NUMERIC(15, 6),                               -- NULL = Watchlist-Eintrag
+  buy_price   NUMERIC(15, 4),                               -- NULL = Watchlist-Eintrag
+  buy_date    DATE,                                         -- optionales Kaufdatum
+  notes       TEXT,                                         -- Investment-These / Notizen
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (user_id, ticker_id)  -- Pro User nur eine Zeile je Ticker
+  UNIQUE (user_id, symbol)                                  -- Pro User nur eine Zeile je Symbol
 );
 
--- Watchlist-Spalte und angepasste Constraints für bestehende Installationen
-ALTER TABLE public.holdings
-  ADD COLUMN IF NOT EXISTS watchlist BOOLEAN NOT NULL DEFAULT false;
--- Alte strikte Constraints entfernen (falls vorhanden) und durch watchlist-kompatible ersetzen
+-- Migration für bestehende Installationen (ticker_id → symbol):
+-- Falls die Tabelle mit ticker_id existiert, symbol-Spalte ergänzen
+ALTER TABLE public.holdings ADD COLUMN IF NOT EXISTS symbol TEXT;
+ALTER TABLE public.holdings ADD COLUMN IF NOT EXISTS buy_date DATE;
+ALTER TABLE public.holdings ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE public.holdings ALTER COLUMN shares DROP NOT NULL;
+ALTER TABLE public.holdings ALTER COLUMN buy_price DROP NOT NULL;
+
+-- Alte Constraints entfernen (falls vorhanden)
 ALTER TABLE public.holdings
   DROP CONSTRAINT IF EXISTS holdings_shares_check,
-  DROP CONSTRAINT IF EXISTS holdings_buy_price_check;
-ALTER TABLE public.holdings
-  ALTER COLUMN shares DROP NOT NULL,
-  ALTER COLUMN buy_price DROP NOT NULL;
-ALTER TABLE public.holdings
+  DROP CONSTRAINT IF EXISTS holdings_buy_price_check,
   DROP CONSTRAINT IF EXISTS holdings_shares_watchlist_check,
   DROP CONSTRAINT IF EXISTS holdings_buy_price_watchlist_check;
-ALTER TABLE public.holdings
-  ADD CONSTRAINT holdings_shares_watchlist_check
-    CHECK (watchlist = true OR (shares IS NOT NULL AND shares > 0)),
-  ADD CONSTRAINT holdings_buy_price_watchlist_check
-    CHECK (watchlist = true OR (buy_price IS NOT NULL AND buy_price > 0));
 
 -- Automatisches updated_at
 CREATE OR REPLACE FUNCTION public.set_updated_at()
