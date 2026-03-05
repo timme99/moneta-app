@@ -17,6 +17,7 @@ import { PortfolioAnalysisReport, PortfolioHealthReport, PortfolioSavingsReport,
 import { analyzePortfolio } from './services/geminiService';
 import { userService } from './services/userService';
 import { getSupabaseBrowser } from './lib/supabaseBrowser';
+import { loadUserHoldings, addTickersByName } from './services/holdingsService';
 import { Clock, AlertTriangle, ShieldCheck, BarChart3, Loader2, BookMarked, Database, Calendar, FlaskConical } from 'lucide-react';
 
 /** Erstellt ein UserAccount-Objekt aus einem Supabase-User */
@@ -57,25 +58,18 @@ const App: React.FC = () => {
     loading: false, message: '', error: '',
   });
 
-  /** Lädt Holdings des Nutzers aus Supabase und speichert sie im State */
+  /** Lädt Holdings des Nutzers aus Supabase und speichert sie im State.
+   *  Nutzt den zentralen holdingsService – einzige Quelle für Holdings-Daten. */
   const loadHoldingsForUser = useCallback(async (uid: string) => {
-    const sb = getSupabaseBrowser();
-    if (!sb || !uid) return;
-    const { data } = await sb
-      .from('holdings')
-      .select('id, shares, buy_price, watchlist, ticker_mapping(*)')
-      .eq('user_id', uid)
-      .order('created_at', { ascending: false });
-    setHoldings(
-      (data ?? []).map((row: any) => ({
-        id:        row.id,
-        ticker:    row.ticker_mapping,
-        shares:    row.shares,
-        buy_price: row.buy_price,
-        watchlist: row.watchlist,
-      }))
-    );
+    if (!uid) return;
+    const rows = await loadUserHoldings(uid);
+    setHoldings(rows);
   }, []);
+
+  /** Globaler Refresh: lädt Holdings aus Supabase und aktualisiert den zentralen State. */
+  const refreshHoldings = useCallback(async () => {
+    if (userAccount?.id) await loadHoldingsForUser(userAccount.id);
+  }, [userAccount?.id, loadHoldingsForUser]);
 
   /** Baut den Depot-Text für die KI-Analyse aus den aktuellen Holdings auf */
   const buildDepotTextFromHoldings = useCallback((holds: HoldingRow[]): string => {
@@ -129,35 +123,19 @@ const App: React.FC = () => {
       img.src = url;
     });
 
-  /** Tickers (Namen/Symbole) → Gemini → ticker_mapping → holdings */
+  /** Tickers (Namen/Symbole) → Gemini → ticker_mapping → holdings.
+   *  Nutzt den zentralen holdingsService für zuverlässige DB-Operationen. */
   const bulkAddTickersInCockpit = useCallback(async (names: string[]): Promise<number> => {
-    const sb = getSupabaseBrowser();
     const uid = userAccount?.id;
-    if (!sb || !uid || names.length === 0) throw new Error('Nicht eingeloggt');
+    if (!uid || names.length === 0) throw new Error('Nicht eingeloggt');
 
-    const resp = await fetch('/api/gemini', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'resolve_ticker', payload: { names }, userId: uid }),
-    });
-    if (!resp.ok) throw new Error('Ticker-Auflösung fehlgeschlagen');
-    const resolved: Array<{ ticker: string }> = (await resp.json()).tickers ?? [];
-    if (resolved.length === 0) return 0;
+    const { count, error } = await addTickersByName(names, uid);
+    if (error) throw new Error(error);
 
-    // Validierung: Einträge mit Leerzeichen sind noch Namen, keine Börsensymbole → verwerfen
-    const symbols = resolved.map((t) => t.ticker).filter((s: string) => s && !s.includes(' '));
-    const { data: mapped } = await sb.from('ticker_mapping').select('id, symbol').in('symbol', symbols);
-    if (!mapped || mapped.length === 0) return 0;
-
-    const rows = (mapped as Array<{ id: string }>).map((t) => ({
-      user_id: uid, ticker_id: t.id, watchlist: true, shares: null, buy_price: null,
-    }));
-    const { error } = await sb.from('holdings').upsert(rows, { onConflict: 'user_id,ticker_id' });
-    if (error) throw new Error(error.message);
-
+    // Zentralen State sofort aktualisieren
     await loadHoldingsForUser(uid);
-    return mapped.length;
-  }, [userAccount, loadHoldingsForUser]);
+    return count;
+  }, [userAccount?.id, loadHoldingsForUser]);
 
   const handleCockpitImageImport = useCallback(async (file: File) => {
     if (!userAccount) { setCockpitImportState({ loading: false, message: '', error: 'Bitte zuerst einloggen.' }); return; }
@@ -545,9 +523,21 @@ const App: React.FC = () => {
             ) : activeView === 'discover' ? (
                <Discover />
             ) : activeView === 'earnings' ? (
-               <EarningsCalendar holdings={holdings} />
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 bg-amber-50 border border-amber-100 rounded-2xl px-5 py-3">
+                  <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
+                  <p className="text-[10px] text-amber-700 font-bold">Keine Anlageberatung. KI-generierte Informationen dienen ausschließlich Bildungszwecken.</p>
+                </div>
+                <EarningsCalendar holdings={holdings} />
+              </div>
             ) : activeView === 'scenarios' ? (
-               <ScenarioAnalysis holdings={holdings} report={analysisReport} />
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 bg-amber-50 border border-amber-100 rounded-2xl px-5 py-3">
+                  <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
+                  <p className="text-[10px] text-amber-700 font-bold">Keine Anlageberatung. KI-generierte Informationen dienen ausschließlich Bildungszwecken.</p>
+                </div>
+                <ScenarioAnalysis holdings={holdings} report={analysisReport} />
+              </div>
             ) : activeView === 'settings' ? (
                <Settings account={userAccount} onOpenAuth={() => setShowAuthModal(true)} />
             ) : activeView === 'portfolio' ? (
@@ -558,11 +548,19 @@ const App: React.FC = () => {
                     Aktien & ETFs hinzufügen · Watchlist pflegen · KI-Analyse starten
                   </p>
                 </div>
+                {/* Pflicht-Disclaimer */}
+                <div className="flex items-center gap-2 bg-amber-50 border border-amber-100 rounded-2xl px-5 py-3">
+                  <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
+                  <p className="text-[10px] text-amber-700 font-bold">
+                    Keine Anlageberatung. KI-generierte Informationen dienen ausschließlich Bildungszwecken und ersetzen keine professionelle Finanzberatung.
+                  </p>
+                </div>
                 <PortfolioInput
                   onAnalyze={handlePortfolioAnalysis}
                   isLoading={isGlobalLoading}
                   userAccount={userAccount}
                   onHoldingsChange={setHoldings}
+                  onRefresh={refreshHoldings}
                   onSendToAssistant={(text) => {
                     setAssistantSeed(text);
                     setActiveView('assistant');
