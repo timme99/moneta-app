@@ -90,7 +90,7 @@ const StrategyCard = ({ title, desc, risk, icon: Icon, color, returns, onLearnMo
     <p className="text-sm text-slate-500 mb-8 leading-relaxed font-medium flex-1">{desc}</p>
     
     <div className="flex items-center justify-between">
-      <div className="text-emerald-600 font-black text-lg">{returns} <span className="text-[9px] text-slate-400 uppercase tracking-widest block font-bold">Ø Rendite p.a.</span></div>
+      <div className="text-slate-500 font-black text-lg">{returns} <span className="text-[9px] text-slate-400 uppercase tracking-widest block font-bold">Hist. Ø p.a.*</span></div>
       <button 
         onClick={(e) => { e.stopPropagation(); onLearnMore(); }}
         className="px-5 py-3 bg-slate-900 text-white text-[9px] font-black uppercase tracking-widest rounded-xl hover:bg-blue-600 transition-all flex items-center gap-2 shadow-xl shadow-slate-900/10"
@@ -127,7 +127,7 @@ const Strategies: React.FC = () => {
             <span className="text-amber-400 font-black text-[10px] uppercase tracking-[0.3em]">Premium Insights</span>
           </div>
           <h2 className="text-5xl font-black mb-6 tracking-tighter leading-none">Strategie-Hub</h2>
-          <p className="text-slate-400 text-lg font-medium leading-relaxed">Entdecken Sie wissenschaftlich fundierte Anlage-Modelle. Wir erklären Ihnen die Zusammenhänge – neutral und faktenbasiert.</p>
+          <p className="text-slate-400 text-lg font-medium leading-relaxed">Rein bildungsorientierte Übersicht verbreiteter Portfolio-Konzepte. Kein Anlageberatungsangebot – alle Informationen dienen ausschließlich der allgemeinen Finanzbildung.</p>
         </div>
       </div>
 
@@ -169,6 +169,8 @@ const Strategies: React.FC = () => {
           onLearnMore={() => handleLearnMore("All-Weather Portfolio Strategy")}
         />
       </div>
+
+      <p className="text-[10px] text-slate-400 italic text-center pt-2">* Historische Renditen sind kein verlässlicher Indikator für zukünftige Entwicklungen. Keine Anlageberatung. Bitte konsultieren Sie vor Anlageentscheidungen einen zugelassenen Finanzberater.</p>
 
       {selectedStrategy && <ExplanationModal info={selectedStrategy} onClose={() => setSelectedStrategy(null)} />}
     </div>

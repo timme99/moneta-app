@@ -42,16 +42,36 @@ export interface PerformanceDataPoint {
   benchmark: number;
 }
 
+export interface EarningsEvent {
+  ticker: string;
+  company: string;
+  date: string;
+  epsEstimate: string;
+  revenueEstimate: string;
+  quarter: string;
+  timeOfDay: 'vor Marktöffnung' | 'nach Marktschluss' | 'unbekannt';
+}
+
+export interface ScenarioResult {
+  scenario: string;
+  description: string;
+  estimatedImpact: string;
+  impactPercent: number;
+  affectedHoldings: { ticker: string; name: string; impact: string }[];
+  explanation: string;
+  historicalComparison: string;
+}
+
 export interface PortfolioAnalysisReport {
-  holdings: { 
-    name: string; 
-    weight: number; 
-    isin?: string; 
-    ticker?: string; 
-    decision: 'Kaufen' | 'Halten' | 'Verkaufen'; 
-    reason: string; 
-    currentPrice?: string; 
-    trend?: string 
+  holdings: {
+    name: string;
+    weight: number;
+    isin?: string;
+    ticker?: string;
+    sentiment: 'Positiv' | 'Neutral' | 'Negativ';
+    reason: string;
+    currentPrice?: string;
+    trend?: string
   }[];
   sectors: { name: string; value: number }[];
   regions: { name: string; value: number }[];

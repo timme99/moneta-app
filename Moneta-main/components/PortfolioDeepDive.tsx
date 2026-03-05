@@ -176,11 +176,11 @@ const PortfolioDeepDive: React.FC<PortfolioDeepDiveProps> = ({ report, healthRep
                   <span className="text-[10px] font-mono text-slate-400 mt-0.5">{holding.ticker || holding.isin || 'N/A'}</span>
                 </div>
                 <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest shrink-0 ${
-                  holding.decision === 'Kaufen' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' :
-                  holding.decision === 'Verkaufen' ? 'bg-rose-50 text-rose-600 border border-rose-100' :
+                  (holding.sentiment ?? holding.decision) === 'Positiv' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' :
+                  (holding.sentiment ?? holding.decision) === 'Negativ' ? 'bg-rose-50 text-rose-600 border border-rose-100' :
                   'bg-slate-100 text-slate-600 border border-slate-200'
                 }`}>
-                  {holding.decision}
+                  {holding.sentiment ?? holding.decision ?? 'Neutral'}
                 </span>
               </div>
               
@@ -223,8 +223,8 @@ const PortfolioDeepDive: React.FC<PortfolioDeepDiveProps> = ({ report, healthRep
               <tr className="bg-slate-50 text-[10px] font-black uppercase tracking-widest text-slate-400">
                 <th className="px-8 py-4">Firma / Anlage</th>
                 <th className="px-8 py-4">Gewichtung</th>
-                <th className="px-8 py-4">KI-Check</th>
-                <th className="px-8 py-4">Warum?</th>
+                <th className="px-8 py-4">Marktstimmung</th>
+                <th className="px-8 py-4">Marktlage (informativ)</th>
                 <th className="px-8 py-4">Trend</th>
               </tr>
             </thead>
@@ -247,11 +247,11 @@ const PortfolioDeepDive: React.FC<PortfolioDeepDiveProps> = ({ report, healthRep
                   </td>
                   <td className="px-8 py-6">
                     <span className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest ${
-                      holding.decision === 'Kaufen' ? 'bg-emerald-50 text-emerald-600' :
-                      holding.decision === 'Verkaufen' ? 'bg-rose-50 text-rose-600' :
+                      (holding.sentiment ?? holding.decision) === 'Positiv' ? 'bg-emerald-50 text-emerald-600' :
+                      (holding.sentiment ?? holding.decision) === 'Negativ' ? 'bg-rose-50 text-rose-600' :
                       'bg-slate-100 text-slate-600'
                     }`}>
-                      {holding.decision}
+                      {holding.sentiment ?? holding.decision ?? 'Neutral'}
                     </span>
                   </td>
                   <td className="px-8 py-6">

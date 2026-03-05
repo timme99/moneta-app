@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { TrendingUp, Bell, User, BarChart3, Search, MessageSquare, Settings as SettingsIcon, LogIn, Database } from 'lucide-react';
+import { TrendingUp, Bell, User, BarChart3, Search, MessageSquare, Settings as SettingsIcon, LogIn, Database, Calendar, FlaskConical } from 'lucide-react';
 import type { UserAccount } from '../types';
 
 interface HeaderProps {
@@ -15,6 +15,8 @@ const Header: React.FC<HeaderProps> = ({ activeView, onViewChange, userAccount, 
 
   const navItems = [
     { id: 'cockpit', label: 'Cockpit', icon: BarChart3 },
+    { id: 'earnings', label: 'Earnings', icon: Calendar },
+    { id: 'scenarios', label: 'Szenarien', icon: FlaskConical },
     { id: 'assistant', label: 'Assistent', icon: MessageSquare },
     { id: 'discover', label: 'Entdecken', icon: Search },
   ];
@@ -23,7 +25,7 @@ const Header: React.FC<HeaderProps> = ({ activeView, onViewChange, userAccount, 
     <header className="bg-white/80 backdrop-blur-md border-b border-slate-200 sticky top-0 z-[100] shadow-sm">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-20">
-          <div className="flex items-center gap-12">
+          <div className="flex items-center gap-8">
             <button
               onClick={() => onViewChange('cockpit')}
               className="flex-shrink-0 flex items-center gap-2 group"
@@ -36,12 +38,12 @@ const Header: React.FC<HeaderProps> = ({ activeView, onViewChange, userAccount, 
               </span>
             </button>
 
-            <nav className="hidden md:flex items-center gap-2">
+            <nav className="hidden md:flex items-center gap-1">
               {navItems.map((item) => (
                 <button
                   key={item.id}
                   onClick={() => onViewChange(item.id)}
-                  className={`flex items-center gap-3 px-6 py-2.5 text-[11px] font-black uppercase tracking-widest rounded-[20px] transition-all ${
+                  className={`flex items-center gap-2 px-4 py-2.5 text-[11px] font-black uppercase tracking-widest rounded-[20px] transition-all ${
                     activeView === item.id
                       ? 'bg-blue-600 text-white shadow-xl shadow-blue-500/20'
                       : 'text-slate-400 hover:text-slate-900 hover:bg-slate-50'
@@ -97,6 +99,18 @@ const Header: React.FC<HeaderProps> = ({ activeView, onViewChange, userAccount, 
                       className="w-full px-6 py-3 flex items-center gap-3 text-sm font-bold text-slate-700 hover:bg-slate-50 hover:text-blue-600 transition-all"
                     >
                       <Database className="w-4 h-4" /> Depot verwalten
+                    </button>
+                    <button
+                      onClick={() => { onViewChange('earnings'); setShowSettingsMenu(false); }}
+                      className="w-full px-6 py-3 flex items-center gap-3 text-sm font-bold text-slate-700 hover:bg-slate-50 hover:text-blue-600 transition-all"
+                    >
+                      <Calendar className="w-4 h-4" /> Earnings Calendar
+                    </button>
+                    <button
+                      onClick={() => { onViewChange('scenarios'); setShowSettingsMenu(false); }}
+                      className="w-full px-6 py-3 flex items-center gap-3 text-sm font-bold text-slate-700 hover:bg-slate-50 hover:text-blue-600 transition-all"
+                    >
+                      <FlaskConical className="w-4 h-4" /> Szenario-Analyse
                     </button>
                     <button
                       onClick={() => { onViewChange('settings'); setShowSettingsMenu(false); }}
