@@ -17,7 +17,7 @@ import { PortfolioAnalysisReport, PortfolioHealthReport, PortfolioSavingsReport,
 import { analyzePortfolio } from './services/geminiService';
 import { userService } from './services/userService';
 import { getSupabaseBrowser } from './lib/supabaseBrowser';
-import { Clock, AlertTriangle, ShieldCheck, BarChart3, Loader2, BookMarked } from 'lucide-react';
+import { Clock, AlertTriangle, ShieldCheck, BarChart3, Loader2, BookMarked, Database, Calendar, FlaskConical } from 'lucide-react';
 
 /** Erstellt ein UserAccount-Objekt aus einem Supabase-User */
 function userFromSupabase(sbUser: any): UserAccount {
@@ -451,6 +451,59 @@ const App: React.FC = () => {
                     </p>
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* ── Schnellzugriff auf Depot-Tools ────────────────────────── */}
+            {holdings.length > 0 && (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <button
+                  onClick={() => setActiveView('portfolio')}
+                  className={`flex items-center gap-4 p-5 rounded-[24px] border transition-all text-left group hover:shadow-md ${
+                    activeView === 'portfolio' ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-slate-200 hover:border-blue-300'
+                  }`}
+                >
+                  <div className={`p-3 rounded-[14px] ${activeView === 'portfolio' ? 'bg-white/20' : 'bg-blue-50 group-hover:bg-blue-100'}`}>
+                    <Database className={`w-5 h-5 ${activeView === 'portfolio' ? 'text-white' : 'text-blue-600'}`} />
+                  </div>
+                  <div>
+                    <p className={`text-[10px] font-black uppercase tracking-widest ${activeView === 'portfolio' ? 'text-blue-100' : 'text-slate-400'}`}>Verwalten</p>
+                    <p className={`text-sm font-black mt-0.5 ${activeView === 'portfolio' ? 'text-white' : 'text-slate-900'}`}>Depot verwalten</p>
+                    <p className={`text-[10px] font-medium mt-0.5 ${activeView === 'portfolio' ? 'text-blue-100' : 'text-slate-400'}`}>{holdings.length} Position{holdings.length !== 1 ? 'en' : ''}</p>
+                  </div>
+                </button>
+
+                <button
+                  onClick={() => setActiveView('earnings')}
+                  className={`flex items-center gap-4 p-5 rounded-[24px] border transition-all text-left group hover:shadow-md ${
+                    activeView === 'earnings' ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-slate-200 hover:border-blue-300'
+                  }`}
+                >
+                  <div className={`p-3 rounded-[14px] ${activeView === 'earnings' ? 'bg-white/20' : 'bg-emerald-50 group-hover:bg-emerald-100'}`}>
+                    <Calendar className={`w-5 h-5 ${activeView === 'earnings' ? 'text-white' : 'text-emerald-600'}`} />
+                  </div>
+                  <div>
+                    <p className={`text-[10px] font-black uppercase tracking-widest ${activeView === 'earnings' ? 'text-blue-100' : 'text-slate-400'}`}>Quartalszahlen</p>
+                    <p className={`text-sm font-black mt-0.5 ${activeView === 'earnings' ? 'text-white' : 'text-slate-900'}`}>Earnings Calendar</p>
+                    <p className={`text-[10px] font-medium mt-0.5 ${activeView === 'earnings' ? 'text-blue-100' : 'text-slate-400'}`}>Nächste Termine deiner Aktien</p>
+                  </div>
+                </button>
+
+                <button
+                  onClick={() => setActiveView('scenarios')}
+                  className={`flex items-center gap-4 p-5 rounded-[24px] border transition-all text-left group hover:shadow-md ${
+                    activeView === 'scenarios' ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-slate-200 hover:border-blue-300'
+                  }`}
+                >
+                  <div className={`p-3 rounded-[14px] ${activeView === 'scenarios' ? 'bg-white/20' : 'bg-purple-50 group-hover:bg-purple-100'}`}>
+                    <FlaskConical className={`w-5 h-5 ${activeView === 'scenarios' ? 'text-white' : 'text-purple-600'}`} />
+                  </div>
+                  <div>
+                    <p className={`text-[10px] font-black uppercase tracking-widest ${activeView === 'scenarios' ? 'text-blue-100' : 'text-slate-400'}`}>Simulation</p>
+                    <p className={`text-sm font-black mt-0.5 ${activeView === 'scenarios' ? 'text-white' : 'text-slate-900'}`}>Szenario-Analyse</p>
+                    <p className={`text-[10px] font-medium mt-0.5 ${activeView === 'scenarios' ? 'text-blue-100' : 'text-slate-400'}`}>Was wäre wenn? · KI-Simulation</p>
+                  </div>
+                </button>
               </div>
             )}
 
