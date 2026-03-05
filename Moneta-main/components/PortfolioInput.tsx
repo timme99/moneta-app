@@ -56,6 +56,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
   const [isSaving, setIsSaving]           = useState(false);
 
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Bulk-Import (Screenshot / Excel)
   const [importState, setImportState] = useState<{ loading: boolean; message: string; error: string }>({
@@ -68,25 +69,24 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
   const excelInputRef = useRef<HTMLInputElement>(null);
 
   // ── Auth ──────────────────────────────────────────────────────────────────
-  // Priorität: 1. Supabase-Session (getUser) 2. userAccount.id (aus App.tsx) 3. anon session
+  // Wenn userAccount.id gesetzt ist, hat App.tsx bereits die Supabase-Session geprüft.
+  // Wir vertrauen dieser ID direkt und setzen userId sofort.
+  // Falls keine userAccount vorhanden: eigene Session prüfen.
   useEffect(() => {
     if (!sb) { setAuthError(true); setIsLoadingH(false); return; }
 
-    sb.auth.getUser().then(async ({ data }) => {
-      if (data.user) {
-        // Echte Supabase-Session – immer bevorzugen
-        setUserId(data.user.id);
-      } else if (userAccount?.id) {
-        // userAccount.id kommt aus der App-Level-Session (zuverlässig)
-        // Versuche erst ob die Session nur kurz verzögert ist
-        const { data: session } = await sb.auth.getSession();
-        if (session.session?.user?.id) {
-          setUserId(session.session.user.id);
-        } else {
-          // Kein Session – authError setzen, Nutzer muss einloggen
-          setAuthError(true);
-          setIsLoadingH(false);
-        }
+    if (userAccount?.id) {
+      // App.tsx hat den User bereits authentifiziert – ID direkt übernehmen
+      setUserId(userAccount.id);
+      setAuthError(false);
+      return;
+    }
+
+    // Kein userAccount: direkt Supabase-Session prüfen
+    sb.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user?.id) {
+        setUserId(session.user.id);
+        setAuthError(false);
       } else {
         setAuthError(true);
         setIsLoadingH(false);
@@ -221,12 +221,13 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
   const handleAdd = async () => {
     if (!sb || !selected) return;
     setIsSaving(true);
+    setSaveError(null);
 
     // Aktuelle Session direkt abfragen für zuverlässige user_id
     const { data: sessionData } = await sb.auth.getSession();
     const effectiveUserId = sessionData?.session?.user?.id ?? userId;
     if (!effectiveUserId) {
-      console.error('[PortfolioInput] Kein eingeloggter Nutzer – Speichern nicht möglich.');
+      setSaveError('Bitte zuerst anmelden, um Positionen zu speichern.');
       setIsSaving(false);
       return;
     }
@@ -248,6 +249,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
     );
 
     if (!error) {
+      setSaveError(null);
       setQuery('');
       setSelected(null);
       setShares('');
@@ -258,6 +260,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
       await loadHoldings();
     } else {
       console.error('[PortfolioInput] upsert error:', error.message);
+      setSaveError(`Speichern fehlgeschlagen: ${error.message}`);
     }
     setIsSaving(false);
   };
@@ -265,8 +268,20 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
   // ── Löschen ───────────────────────────────────────────────────────────────
   const handleDelete = async (id: string) => {
     if (!sb) return;
-    await sb.from('holdings').delete().eq('id', id);
+    // Aktuelle Session abfragen für sichere user_id-Filterung (RLS-Fallback)
+    const { data: sessionData } = await sb.auth.getSession();
+    const uid = sessionData?.session?.user?.id ?? userId;
+    if (!uid) {
+      console.error('[PortfolioInput] Delete: keine gültige Session');
+      return;
+    }
+    const { error } = await sb.from('holdings').delete().eq('id', id).eq('user_id', uid);
+    if (error) {
+      console.error('[PortfolioInput] Delete error:', error.message);
+      return;
+    }
     setHoldings((prev) => prev.filter((h) => h.id !== id));
+    onHoldingsChange?.((holdings).filter((h) => h.id !== id));
     if (editingId === id) {
       setEditingId(null);
       setSelected(null);
@@ -671,6 +686,13 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
                 ? 'Felder leer → wird als Watchlist-Eintrag gespeichert (kein Bestand)'
                 : 'Stückzahl & Kaufpreis → vollständige Portfolio-Position'}
             </p>
+
+            {saveError && (
+              <div className="flex items-center gap-2 text-[10px] text-rose-600 font-bold bg-rose-50 px-4 py-3 rounded-[14px] border border-rose-100">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                {saveError}
+              </div>
+            )}
 
             <div className="flex gap-2">
               <button

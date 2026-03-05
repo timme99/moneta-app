@@ -496,7 +496,7 @@ const App: React.FC = () => {
             ) : activeView === 'scenarios' ? (
                <ScenarioAnalysis holdings={holdings} report={analysisReport} />
             ) : activeView === 'settings' ? (
-               <Settings account={userAccount} />
+               <Settings account={userAccount} onOpenAuth={() => setShowAuthModal(true)} />
             ) : activeView === 'portfolio' ? (
               <div className="space-y-6">
                 <div>
