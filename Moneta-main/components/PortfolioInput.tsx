@@ -19,7 +19,7 @@ import {
 import { getSupabaseBrowser } from '../lib/supabaseBrowser';
 import type { TickerEntry } from '../lib/supabase-types';
 import type { HoldingRow } from '../types';
-import { addHolding, addTickersByName, deleteHolding, loadUserHoldings } from '../services/holdingsService';
+import { addHolding, addTickersByName, deleteHolding, loadUserHoldings, addBrokerHoldings, type BrokerPosition } from '../services/holdingsService';
 
 interface PortfolioInputProps {
   onAnalyze: (portfolioText: string) => void;
@@ -67,9 +67,10 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
   });
 
   const debounceRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const dropRef      = useRef<HTMLDivElement>(null);
+  const dropRef       = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const excelInputRef = useRef<HTMLInputElement>(null);
+  const brokerInputRef = useRef<HTMLInputElement>(null);
 
   // ── Auth ──────────────────────────────────────────────────────────────────
   // Wenn userAccount.id gesetzt ist, hat App.tsx bereits die Supabase-Session geprüft.
@@ -400,6 +401,128 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
     return count;
   };
 
+  // ── Broker CSV-Import (Trade Republic, Scalable Capital, Comdirect) ─────
+  /**
+   * Erkennt, ob ein Tabellen-Datensatz ein Broker-Export mit vollständigen
+   * Transaktionsdaten ist (Stückzahl + Kurs vorhanden).
+   * Gibt die gruppierten Positionen zurück oder null wenn kein Broker-Format.
+   */
+  const parseBrokerData = (rows: any[]): BrokerPosition[] | null => {
+    if (!rows.length) return null;
+    const headers = Object.keys(rows[0]);
+    const lower = headers.map((h) => h.toLowerCase().trim());
+
+    // Spalten-Mapping: suche nach passenden Spaltennamen
+    const findCol = (...candidates: string[]) =>
+      headers.find((h) => candidates.includes(h.toLowerCase().trim()));
+
+    const sharesCol = findCol('stückzahl', 'stck', 'anzahl', 'menge', 'stück', 'shares', 'qty');
+    const priceCol  = findCol('kurs', 'preis', 'kurs (€)', 'kurs (eur)', 'preis (€)', 'preis (eur)',
+                              'ausführungskurs', 'price', 'kurs in eur', 'preis in eur');
+    const symbolCol = findCol('ticker', 'symbol', 'isin', 'wkn');
+    const nameCol   = findCol('name', 'unternehmen', 'bezeichnung', 'wertpapier', 'description');
+    const typeCol   = findCol('typ', 'art', 'transaktion', 'type', 'beschreibung', 'transaktionstyp');
+    const dateCol   = findCol('datum', 'date', 'buchungstag', 'ausführungsdatum', 'handelsdatum');
+
+    // Broker-Format: braucht mindestens symbol + shares + price
+    if (!sharesCol || !priceCol || !symbolCol) return null;
+
+    // Nur Kauf-Transaktionen (keine Dividenden, Gebühren, Verkäufe)
+    const BUY_TYPES = ['kauf', 'buy', 'purchase', 'sparplan', 'savings plan', 'einzahlung', 'wertpapierkauf'];
+    const SELL_TYPES = ['verkauf', 'sell', 'sale'];
+
+    const buys = rows.filter((r) => {
+      if (!typeCol) return true; // kein Typ-Spalte → alle nehmen
+      const t = String(r[typeCol] ?? '').toLowerCase().trim();
+      if (SELL_TYPES.some((s) => t.includes(s))) return false;
+      if (!t || BUY_TYPES.some((b) => t.includes(b))) return true;
+      return false; // unbekannter Typ → überspringen
+    });
+
+    if (!buys.length) return null;
+
+    // Transaktionen aggregieren (gewichteter Durchschnitt pro Symbol)
+    const bySymbol = new Map<string, { totalShares: number; totalCost: number; name?: string; date?: string }>();
+
+    for (const row of buys) {
+      const rawSym = String(row[symbolCol] ?? '').trim().replace(/\s/g, '');
+      if (!rawSym || rawSym.length < 1) continue;
+
+      const sharesRaw = String(row[sharesCol] ?? '').replace(',', '.').replace(/[^0-9.]/g, '');
+      const priceRaw  = String(row[priceCol]  ?? '').replace(',', '.').replace(/[^0-9.]/g, '');
+      const sharesNum = parseFloat(sharesRaw);
+      const priceNum  = parseFloat(priceRaw);
+      if (isNaN(sharesNum) || sharesNum <= 0 || isNaN(priceNum) || priceNum <= 0) continue;
+
+      const existing = bySymbol.get(rawSym) ?? { totalShares: 0, totalCost: 0 };
+      existing.totalShares += sharesNum;
+      existing.totalCost   += sharesNum * priceNum;
+      if (!existing.name && nameCol) existing.name = String(row[nameCol] ?? '').trim() || undefined;
+      if (!existing.date && dateCol) {
+        const rawDate = String(row[dateCol] ?? '').trim();
+        if (rawDate) existing.date = rawDate;
+      }
+      bySymbol.set(rawSym, existing);
+    }
+
+    if (!bySymbol.size) return null;
+
+    return Array.from(bySymbol.entries()).map(([rawSymbol, agg]) => ({
+      rawSymbol,
+      name:     agg.name,
+      shares:   Math.round(agg.totalShares * 100000) / 100000,
+      avgPrice: Math.round((agg.totalCost / agg.totalShares) * 10000) / 10000,
+      date:     agg.date,
+    }));
+  };
+
+  const handleBrokerImport = async (file: File) => {
+    setImportState({ loading: true, message: '', error: '' });
+    try {
+      const XLSX = await import('xlsx');
+      const buffer = await file.arrayBuffer();
+      const wb = XLSX.read(buffer, { type: 'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows: any[] = XLSX.utils.sheet_to_json(ws, { defval: '' });
+
+      if (!rows.length) {
+        setImportState({ loading: false, message: '', error: 'Keine Daten in der Datei gefunden.' });
+        return;
+      }
+
+      const positions = parseBrokerData(rows);
+
+      if (!positions) {
+        // Kein Broker-Format → regulären Excel-Import versuchen
+        await handleExcelImport(file);
+        return;
+      }
+
+      let effectiveUserId = userId;
+      if (sb) {
+        const { data: sessionData } = await sb.auth.getSession();
+        effectiveUserId = sessionData?.session?.user?.id ?? userId;
+      }
+      if (!effectiveUserId) throw new Error('Nicht eingeloggt – bitte zuerst anmelden.');
+
+      const { count, skipped, error } = await addBrokerHoldings(positions, effectiveUserId);
+
+      if (error) throw new Error(error);
+
+      setImportState({
+        loading: false,
+        message: `${count} Position${count !== 1 ? 'en' : ''} importiert${skipped > 0 ? ` (${skipped} übersprungen)` : ''}.`,
+        error: '',
+      });
+
+      if (effectiveUserId !== userId) setUserId(effectiveUserId);
+      await onRefresh?.();
+      await loadHoldings();
+    } catch (e: any) {
+      setImportState({ loading: false, message: '', error: e?.message ?? 'Fehler beim Broker-Import.' });
+    }
+  };
+
   // ── Screenshot-Import ────────────────────────────────────────────────────
   const handleImageImport = async (file: File) => {
     setImportState({ loading: true, message: '', error: '' });
@@ -696,7 +819,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
         )}
       </div>
 
-      {/* ── Schnell-Import (Screenshot / Excel) ──────────────────────── */}
+      {/* ── Schnell-Import (Screenshot / Excel / Broker) ─────────────────── */}
       <div className="bg-slate-50 border border-slate-200 rounded-[24px] p-4 space-y-3">
         <p className="text-[9px] font-black text-slate-500 uppercase tracking-[0.2em]">
           Schnell importieren
@@ -721,6 +844,20 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
             Excel / CSV
           </button>
         </div>
+        {/* Broker-Import-Button */}
+        <button
+          onClick={() => { setImportState({ loading: false, message: '', error: '' }); brokerInputRef.current?.click(); }}
+          disabled={importState.loading}
+          className="w-full flex items-center justify-between px-4 py-3 bg-blue-50 border border-blue-100 hover:bg-blue-100 rounded-[16px] text-[10px] font-black text-blue-700 uppercase tracking-widest transition-colors disabled:opacity-50"
+        >
+          <div className="flex items-center gap-2">
+            <FileSpreadsheet className="w-4 h-4" />
+            Broker-Transaktionshistorie importieren
+          </div>
+          <span className="text-[8px] font-black text-blue-400 normal-case tracking-normal">
+            Trade Republic · Scalable · Comdirect
+          </span>
+        </button>
 
         {/* Status */}
         {importState.loading && (
@@ -863,6 +1000,13 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
         accept=".xlsx,.xls,.csv"
         className="hidden"
         onChange={(e) => { const f = e.target.files?.[0]; if (f) handleExcelImport(f); e.target.value = ''; }}
+      />
+      <input
+        ref={brokerInputRef}
+        type="file"
+        accept=".xlsx,.xls,.csv"
+        className="hidden"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleBrokerImport(f); e.target.value = ''; }}
       />
     </div>
   );

@@ -281,6 +281,113 @@ export async function addTickersByName(
   return { count: 0, error: insertErr.message };
 }
 
+// ── Broker-Import: strukturierte Transaktionen speichern ─────────────────────
+
+/**
+ * Eine einzelne, bereits aufgelöste Broker-Transaktion.
+ * rawSymbol kann ein Börsensymbol (AAPL) ODER eine ISIN (US0378331005) sein.
+ * shares und avgPrice sind bereits als gewichteter Durchschnitt aller Käufe berechnet.
+ */
+export interface BrokerPosition {
+  rawSymbol: string;   // ISIN oder Ticker
+  name?: string;       // Firmenname (optional, für ticker_mapping)
+  shares: number;
+  avgPrice: number;
+  date?: string;       // frühestes Kaufdatum (ISO)
+}
+
+export interface AddBrokerResult {
+  count: number;
+  skipped: number;
+  error?: string;
+}
+
+/**
+ * Importiert vorverarbeitete Broker-Positionen in holdings.
+ *
+ * Ablauf:
+ *  1. ISINs → Ticker auflösen (via Gemini, falls Symbol kein gültiger Ticker)
+ *  2. Jede Position via addHolding speichern
+ */
+export async function addBrokerHoldings(
+  positions: BrokerPosition[],
+  userId: string
+): Promise<AddBrokerResult> {
+  if (!positions.length) return { count: 0, skipped: 0 };
+
+  const sb = getSupabaseBrowser();
+  if (!sb)     return { count: 0, skipped: 0, error: 'Supabase nicht konfiguriert.' };
+  if (!userId) return { count: 0, skipped: 0, error: 'Nicht eingeloggt.' };
+
+  const ISIN_RE = /^[A-Z]{2}[A-Z0-9]{10}$/i;
+  const TICKER_RE = /^[A-Z0-9.]{1,7}$/;
+
+  // Symbole klassifizieren
+  const isinPositions  = positions.filter((p) => ISIN_RE.test(p.rawSymbol.trim()));
+  const tickerPositions = positions.filter((p) => !ISIN_RE.test(p.rawSymbol.trim()));
+
+  // ISINs über Gemini auflösen
+  const resolvedMap = new Map<string, string>(); // ISIN → ticker
+
+  if (isinPositions.length > 0) {
+    try {
+      const resp = await fetch('/api/gemini', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type:    'resolve_ticker',
+          payload: { names: isinPositions.map((p) => p.rawSymbol) },
+          userId,
+        }),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        const tickers: Array<{ input?: string; ticker: string }> = data.tickers ?? [];
+        tickers.forEach((t, i) => {
+          const original = isinPositions[i]?.rawSymbol ?? t.input ?? '';
+          if (t.ticker && TICKER_RE.test(t.ticker.trim().toUpperCase())) {
+            resolvedMap.set(original.toUpperCase(), t.ticker.trim().toUpperCase());
+          }
+        });
+      }
+    } catch {
+      // Weiter ohne ISIN-Auflösung – Skip-Counter erhöhen
+    }
+  }
+
+  let count = 0;
+  let skipped = 0;
+
+  for (const pos of positions) {
+    const raw = pos.rawSymbol.trim().toUpperCase();
+    let symbol: string;
+
+    if (ISIN_RE.test(raw)) {
+      const resolved = resolvedMap.get(raw);
+      if (!resolved) { skipped++; continue; }
+      symbol = resolved;
+    } else if (TICKER_RE.test(raw)) {
+      symbol = raw;
+    } else {
+      skipped++;
+      continue;
+    }
+
+    const result = await addHolding({
+      userId,
+      symbol,
+      shares:   pos.shares,
+      buyPrice: pos.avgPrice,
+      buyDate:  pos.date ?? null,
+    });
+
+    if (result.success) count++;
+    else skipped++;
+  }
+
+  return { count, skipped };
+}
+
 // ── Holding löschen ───────────────────────────────────────────────────────────
 
 export async function deleteHolding(holdingId: string, userId: string): Promise<AddHoldingResult> {

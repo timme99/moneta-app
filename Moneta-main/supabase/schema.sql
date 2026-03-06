@@ -376,6 +376,80 @@ CREATE POLICY "news_cache_select_authenticated"
 
 
 -- ============================================================
+-- 7. PORTFOLIO SNAPSHOTS – Tägliche Depot-Wert-Historie
+-- ============================================================
+-- Ein Eintrag pro User und Tag (via Cron-Job).
+-- total_value    = Gesamtwert des Depots zu Schlusskursen
+-- total_invested = Summe aller Einstandswerte (Stückzahl × Kaufpreis)
+-- Differenz → Performance (absolut + %)
+CREATE TABLE IF NOT EXISTS public.portfolio_snapshots (
+  id             UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id        UUID        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  snapshot_date  DATE        NOT NULL,
+  total_value    NUMERIC(15, 2) NOT NULL,
+  total_invested NUMERIC(15, 2),
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (user_id, snapshot_date)
+);
+
+-- RLS: User sieht/ändert nur eigene Snapshots
+ALTER TABLE public.portfolio_snapshots ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "snapshots_select_own"
+  ON public.portfolio_snapshots FOR SELECT
+  USING (auth.uid() = user_id);
+
+CREATE POLICY "snapshots_insert_own"
+  ON public.portfolio_snapshots FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "snapshots_service_role"
+  ON public.portfolio_snapshots FOR ALL
+  TO service_role
+  USING (true)
+  WITH CHECK (true);
+
+
+-- ============================================================
+-- 8. SUBSCRIPTIONS – Premium-Pläne (Stripe)
+-- ============================================================
+-- plan: 'free' | 'premium' | 'pro'
+-- valid_until NULL = läuft nicht ab (z. B. Jahres-Abo via Stripe managed)
+-- stripe_customer_id + stripe_subscription_id für Webhook-Reconciliation
+CREATE TABLE IF NOT EXISTS public.subscriptions (
+  id                     UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id                UUID        NOT NULL UNIQUE REFERENCES auth.users(id) ON DELETE CASCADE,
+  plan                   TEXT        NOT NULL DEFAULT 'free'
+                           CHECK (plan IN ('free', 'premium', 'pro')),
+  stripe_customer_id     TEXT,
+  stripe_subscription_id TEXT,
+  valid_until            TIMESTAMPTZ,
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- updated_at-Trigger
+DROP TRIGGER IF EXISTS subscriptions_set_updated_at ON public.subscriptions;
+CREATE TRIGGER subscriptions_set_updated_at
+  BEFORE UPDATE ON public.subscriptions
+  FOR EACH ROW
+  EXECUTE FUNCTION public.set_updated_at();
+
+-- RLS: User liest eigene; Schreiben nur via Service-Role (Stripe Webhook)
+ALTER TABLE public.subscriptions ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "subscriptions_select_own"
+  ON public.subscriptions FOR SELECT
+  USING (auth.uid() = user_id);
+
+CREATE POLICY "subscriptions_service_role"
+  ON public.subscriptions FOR ALL
+  TO service_role
+  USING (true)
+  WITH CHECK (true);
+
+
+-- ============================================================
 -- INDEX-Optimierungen
 -- ============================================================
 CREATE INDEX IF NOT EXISTS idx_ticker_mapping_symbol       ON public.ticker_mapping (symbol);
@@ -385,3 +459,5 @@ CREATE INDEX IF NOT EXISTS idx_price_cache_ticker_id       ON public.price_cache
 CREATE INDEX IF NOT EXISTS idx_price_cache_last_updated    ON public.price_cache (last_updated);
 CREATE INDEX IF NOT EXISTS idx_news_cache_ticker           ON public.news_cache (ticker);
 CREATE INDEX IF NOT EXISTS idx_news_cache_cached_at        ON public.news_cache (cached_at);
+CREATE INDEX IF NOT EXISTS idx_snapshots_user_date         ON public.portfolio_snapshots (user_id, snapshot_date DESC);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_user          ON public.subscriptions (user_id);

@@ -13,6 +13,8 @@ import AuthModal from './components/AuthModal';
 import PortfolioInput from './components/PortfolioInput';
 import EarningsCalendar from './components/EarningsCalendar';
 import ScenarioAnalysis from './components/ScenarioAnalysis';
+import PerformanceChart from './components/PerformanceChart';
+import UpgradeModal from './components/UpgradeModal';
 import { PortfolioAnalysisReport, PortfolioHealthReport, PortfolioSavingsReport, UserAccount, HoldingRow } from './types';
 import { analyzePortfolio } from './services/geminiService';
 import { userService } from './services/userService';
@@ -47,6 +49,7 @@ const App: React.FC = () => {
   const [isGlobalLoading, setIsGlobalLoading] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<string | null>(null);
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [assistantSeed, setAssistantSeed] = useState<string | null>(null);
   const [legalModal, setLegalModal] = useState<{ isOpen: boolean, type: 'impressum' | 'disclaimer' | 'privacy' }>({
     isOpen: false,
@@ -436,6 +439,14 @@ const App: React.FC = () => {
               </div>
             )}
 
+            {/* ── Performance-Chart ──────────────────────────────────────── */}
+            {holdings.filter(h => !h.watchlist).length > 0 && (
+              <PerformanceChart
+                userId={userAccount?.id}
+                onUpgradeClick={() => setShowUpgradeModal(true)}
+              />
+            )}
+
             {/* ── Schnellzugriff auf Depot-Tools ────────────────────────── */}
             {holdings.length > 0 && (
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -638,6 +649,12 @@ const App: React.FC = () => {
         isOpen={showAuthModal}
         onClose={() => setShowAuthModal(false)}
         onLogin={() => { /* wird via onAuthStateChange in useEffect gehandelt */ }}
+      />
+
+      <UpgradeModal
+        isOpen={showUpgradeModal}
+        onClose={() => setShowUpgradeModal(false)}
+        userId={userAccount?.id}
       />
     </div>
   );
