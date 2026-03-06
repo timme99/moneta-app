@@ -11,6 +11,8 @@ import { getSupabaseBrowser } from '../lib/supabaseBrowser';
 interface SettingsProps {
   account: UserAccount | null;
   onOpenAuth?: () => void;
+  /** Called after a successful name save so App.tsx can re-sync displayName. */
+  onProfileRefresh?: (userId?: string) => Promise<void>;
 }
 
 type BoolPrefColumn =
@@ -46,7 +48,7 @@ function DeleteModal({ onCancel, onConfirm, isDeleting }: DeleteModalProps) {
 
   return (
     <div className="fixed inset-0 z-[400] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-white rounded-[32px] shadow-2xl w-full max-w-md p-8 space-y-6 animate-in zoom-in-95 duration-200">
+      <div className="bg-white rounded-2xl sm:rounded-[32px] shadow-2xl w-[95vw] max-w-md p-6 sm:p-8 space-y-6 animate-in zoom-in-95 duration-200">
         <div className="flex items-center justify-between">
           <div className="bg-rose-50 border border-rose-200 p-3 rounded-2xl">
             <Trash2 className="w-6 h-6 text-rose-600" />
@@ -74,7 +76,7 @@ function DeleteModal({ onCancel, onConfirm, isDeleting }: DeleteModalProps) {
             onChange={(e) => setInput(e.target.value)}
             placeholder="LÖSCHEN"
             autoFocus
-            className="w-full px-4 py-3 border border-slate-200 rounded-2xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-rose-500 focus:border-transparent transition-all"
+            className="w-full px-4 py-3 border border-slate-200 rounded-2xl text-base font-medium focus:outline-none focus:ring-2 focus:ring-rose-500 focus:border-transparent transition-all"
           />
         </div>
 
@@ -101,7 +103,7 @@ function DeleteModal({ onCancel, onConfirm, isDeleting }: DeleteModalProps) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-const Settings: React.FC<SettingsProps> = ({ account, onOpenAuth }) => {
+const Settings: React.FC<SettingsProps> = ({ account, onOpenAuth, onProfileRefresh }) => {
   const sb = getSupabaseBrowser();
 
   // ── Profile-edit state ────────────────────────────────────────────────────
@@ -178,6 +180,8 @@ const Settings: React.FC<SettingsProps> = ({ account, onOpenAuth }) => {
     setDisplayName(trimmed);
     setEditingName(false);
     flash('Name gespeichert ✓');
+    // Sync the new name up to App.tsx so Header avatar updates immediately
+    onProfileRefresh?.(session.user.id);
   };
 
   // ── Save email (Supabase sends confirmation to new address) ───────────────
@@ -251,7 +255,7 @@ const Settings: React.FC<SettingsProps> = ({ account, onOpenAuth }) => {
     icon: any; label: string; description: string;
     isActive: boolean; column: BoolPrefColumn; warningOff?: string;
   }) => (
-    <div className="flex items-start justify-between p-6 border-b border-slate-100 last:border-0">
+    <div className="flex items-start justify-between px-5 py-5 sm:p-6 border-b border-slate-100 last:border-0">
       <div className="flex items-start gap-4 min-w-0">
         <div className={`bg-white border p-3 rounded-2xl mt-0.5 transition-all shrink-0 ${isActive ? 'border-blue-300 bg-blue-50' : 'border-slate-200'}`}>
           <Icon className={`w-5 h-5 ${isActive ? 'text-blue-600' : 'text-slate-400'}`} />
@@ -269,7 +273,7 @@ const Settings: React.FC<SettingsProps> = ({ account, onOpenAuth }) => {
       <button
         onClick={() => updatePreference(column, !isActive)}
         disabled={saving === column || !account}
-        className="shrink-0 flex items-center gap-1.5 disabled:opacity-40 transition-opacity ml-4 mt-0.5"
+        className="shrink-0 flex items-center gap-1.5 disabled:opacity-40 transition-opacity ml-4 mt-0.5 min-h-[44px] min-w-[44px] justify-center"
         title={account ? (isActive ? 'Deaktivieren' : 'Aktivieren') : 'Bitte zuerst anmelden'}
       >
         {saving === column
@@ -335,7 +339,7 @@ const Settings: React.FC<SettingsProps> = ({ account, onOpenAuth }) => {
                         onChange={(e) => setNameInput(e.target.value)}
                         onKeyDown={(e) => { if (e.key === 'Enter') saveName(); if (e.key === 'Escape') setEditingName(false); }}
                         placeholder={displayName}
-                        className="text-sm border border-slate-300 rounded-xl px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium w-44"
+                        className="text-base border border-slate-300 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium w-44 min-h-[44px]"
                       />
                       <button onClick={saveName} disabled={saving === 'name' || !nameInput.trim()} className="text-blue-600 hover:text-blue-800 disabled:opacity-40 transition-colors">
                         {saving === 'name' ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
@@ -379,7 +383,7 @@ const Settings: React.FC<SettingsProps> = ({ account, onOpenAuth }) => {
                           onChange={(e) => setEmailInput(e.target.value)}
                           onKeyDown={(e) => { if (e.key === 'Enter') saveEmail(); if (e.key === 'Escape') setEditingEmail(false); }}
                           placeholder="neue@email.de"
-                          className="text-sm border border-slate-300 rounded-xl px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium w-44"
+                          className="text-base border border-slate-300 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium w-44 min-h-[44px]"
                         />
                         <button onClick={saveEmail} disabled={saving === 'email' || !emailInput.trim()} className="text-blue-600 hover:text-blue-800 disabled:opacity-40 transition-colors">
                           {saving === 'email' ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
