@@ -7,7 +7,9 @@
 -- 1. Add new canonical columns (idempotent)
 ALTER TABLE public.profiles
   ADD COLUMN IF NOT EXISTS weekly_digest_enabled   BOOLEAN NOT NULL DEFAULT false,
-  ADD COLUMN IF NOT EXISTS newsletter_subscribed   BOOLEAN NOT NULL DEFAULT false;
+  ADD COLUMN IF NOT EXISTS newsletter_subscribed   BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS cloud_sync_enabled      BOOLEAN NOT NULL DEFAULT true,
+  ADD COLUMN IF NOT EXISTS legal_updates_enabled   BOOLEAN NOT NULL DEFAULT true;
 
 -- 2. Migrate existing data from old columns (if they exist)
 DO $$
