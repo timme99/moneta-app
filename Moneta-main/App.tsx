@@ -42,6 +42,7 @@ type NewsItem = PortfolioAnalysisReport['news'] extends (infer T)[] ? T : never;
 const App: React.FC = () => {
   const [activeView, setActiveView] = useState('cockpit');
   const [userAccount, setUserAccount] = useState<UserAccount | null>(null);
+  const [displayName, setDisplayName] = useState<string>('');
   const [holdings, setHoldings] = useState<HoldingRow[]>([]);
   const [analysisReport, setAnalysisReport] = useState<PortfolioAnalysisReport | null>(null);
   const [healthReport, setHealthReport] = useState<PortfolioHealthReport | null>(null);
@@ -75,6 +76,24 @@ const App: React.FC = () => {
   const refreshHoldings = useCallback(async () => {
     if (userAccount?.id) await loadHoldingsForUser(userAccount.id);
   }, [userAccount?.id, loadHoldingsForUser]);
+
+  /**
+   * Holt den aktuellen Anzeigenamen aus der profiles-Tabelle und synchronisiert
+   * ihn in den globalen displayName-State (Header-Avatar + Begrüßung).
+   * Kann mit einer userId aufgerufen werden, bevor userAccount-State gesetzt ist.
+   */
+  const refreshProfile = useCallback(async (userId?: string) => {
+    const sb = getSupabaseBrowser();
+    if (!sb) return;
+    const uid = userId ?? userAccount?.id;
+    if (!uid) return;
+    const { data } = await sb
+      .from('profiles')
+      .select('full_name')
+      .eq('id', uid)
+      .single() as unknown as { data: { full_name: string | null } | null };
+    if (data?.full_name) setDisplayName(data.full_name);
+  }, [userAccount?.id]);
 
   /** Baut den Depot-Text für die KI-Analyse aus den aktuellen Holdings auf */
   const buildDepotTextFromHoldings = useCallback((holds: HoldingRow[]): string => {
@@ -195,9 +214,12 @@ const App: React.FC = () => {
 
     const applyUser = (account: UserAccount) => {
       setUserAccount(account);
+      // Sofortiger Fallback-Name (aus Auth-Metadata), wird dann durch DB-Wert überschrieben
+      setDisplayName(account.name);
       setShowAuthModal(false);
-      // Holdings aus Supabase laden (aktuellste Depot-Positionen)
       loadHoldingsForUser(account.id);
+      // profiles.full_name laden – überschreibt ggf. den Auth-Metadata-Namen
+      refreshProfile(account.id);
     };
 
     if (sb) {
@@ -314,9 +336,10 @@ const App: React.FC = () => {
         onViewChange={setActiveView}
         userAccount={userAccount}
         onLoginClick={() => setShowAuthModal(true)}
+        displayName={displayName}
       />
       
-      <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 w-full">
+      <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 md:py-10 pb-24 lg:pb-10 w-full">
         {activeView === 'cockpit' && (analysisReport || holdings.length > 0) ? (
           <div className="space-y-6">
             <div className="flex items-center justify-between mb-2">
@@ -376,9 +399,9 @@ const App: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="divide-y divide-slate-50">
+                <div className="divide-y divide-slate-50 overflow-x-auto">
                   {holdings.slice(0, 6).map((h) => (
-                    <div key={h.id} className="flex items-center gap-4 px-6 py-3 hover:bg-slate-50/50 transition-colors">
+                    <div key={h.id} className="flex items-center gap-4 px-4 sm:px-6 py-3 hover:bg-slate-50/50 transition-colors min-w-0">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-sm font-bold text-slate-900 truncate">
@@ -579,7 +602,7 @@ const App: React.FC = () => {
                 <ScenarioAnalysis holdings={holdings} report={analysisReport} />
               </div>
             ) : activeView === 'settings' ? (
-               <Settings account={userAccount} onOpenAuth={() => setShowAuthModal(true)} />
+               <Settings account={userAccount} onOpenAuth={() => setShowAuthModal(true)} onProfileRefresh={refreshProfile} />
             ) : activeView === 'portfolio' ? (
               <div className="space-y-6">
                 <div>

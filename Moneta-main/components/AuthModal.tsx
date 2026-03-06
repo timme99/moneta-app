@@ -106,7 +106,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
 
   return (
     <div className="fixed inset-0 z-[300] bg-slate-900/60 backdrop-blur-xl flex items-center justify-center p-4">
-      <div className="bg-white rounded-[40px] shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in duration-300 border border-white/20">
+      <div className="bg-white rounded-2xl sm:rounded-[40px] shadow-2xl w-[95vw] max-w-md overflow-hidden animate-in zoom-in duration-300 border border-white/20">
 
         {/* Header */}
         <div className="p-8 border-b border-slate-100 flex items-center justify-between">
@@ -219,7 +219,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
                     <input
                       type="email" required value={email} onChange={(e) => setEmail(e.target.value)}
                       placeholder="deine@email.de"
-                      className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-[20px] focus:outline-none focus:ring-2 focus:ring-blue-600 focus:bg-white text-sm font-medium transition-all"
+                      className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-[20px] focus:outline-none focus:ring-2 focus:ring-blue-600 focus:bg-white text-base font-medium transition-all"
                     />
                   </div>
                   {error && <ErrorBanner msg={error} />}
@@ -270,7 +270,7 @@ const EmailField = ({ value, onChange }: { value: string; onChange: (v: string) 
     <input
       type="email" required value={value} onChange={(e) => onChange(e.target.value)}
       placeholder="deine@email.de"
-      className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-[20px] focus:outline-none focus:ring-2 focus:ring-blue-600 focus:bg-white text-sm font-medium transition-all"
+      className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-[20px] focus:outline-none focus:ring-2 focus:ring-blue-600 focus:bg-white text-base font-medium transition-all"
     />
   </div>
 );
@@ -283,7 +283,7 @@ const PasswordField = ({
     <input
       type={show ? 'text' : 'password'} required value={value} onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
-      className="w-full pl-12 pr-12 py-4 bg-slate-50 border border-slate-200 rounded-[20px] focus:outline-none focus:ring-2 focus:ring-blue-600 focus:bg-white text-sm font-medium transition-all"
+      className="w-full pl-12 pr-12 py-4 bg-slate-50 border border-slate-200 rounded-[20px] focus:outline-none focus:ring-2 focus:ring-blue-600 focus:bg-white text-base font-medium transition-all"
     />
     <button type="button" onClick={onToggle} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
       {show ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
