@@ -24,7 +24,7 @@ export async function getSubscribersForDigest(): Promise<NewsletterSubscriber[]>
   const { data, error } = await supabase
     .from('profiles')
     .select('email, full_name')
-    .eq('newsletter_weekly_digest', true)
+    .eq('weekly_digest_enabled', true)
     .not('email', 'is', null);
 
   if (error) {
@@ -47,7 +47,7 @@ export async function getSubscribersForNewsletter(): Promise<NewsletterSubscribe
   const { data, error } = await supabase
     .from('profiles')
     .select('email, full_name')
-    .eq('newsletter_auto_updates', true)
+    .eq('newsletter_subscribed', true)
     .not('email', 'is', null);
 
   if (error) {

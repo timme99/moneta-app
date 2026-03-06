@@ -1,16 +1,17 @@
 
+import { getSupabaseBrowser } from '../lib/supabaseBrowser';
 import { UserAccount, PortfolioAnalysisReport, PortfolioHealthReport, PortfolioSavingsReport } from '../types';
 
-const DB_KEY = 'moneta_db_mock';
 const LIMIT_KEY = 'moneta_daily_limit';
 
 export const userService = {
+  // ── Daily credit system (rate-limiting only, lives in localStorage) ──────
+
   getDailyCredits(): number {
     const data = localStorage.getItem(LIMIT_KEY);
-    if (!data) return 3; // Standard: 3 Credits pro Tag
+    if (!data) return 3;
     const { date, credits } = JSON.parse(data);
-    const today = new Date().toDateString();
-    if (date !== today) return 3;
+    if (date !== new Date().toDateString()) return 3;
     return credits;
   },
 
@@ -20,43 +21,77 @@ export const userService = {
     credits -= 1;
     localStorage.setItem(LIMIT_KEY, JSON.stringify({
       date: new Date().toDateString(),
-      credits
+      credits,
     }));
     return true;
   },
 
-  async authenticate(email: string, name: string, supabaseId?: string | null): Promise<UserAccount> {
-    const mockUser: UserAccount = {
-      id: supabaseId || Math.random().toString(36).substr(2, 9),
+  // ── User profile (always from Supabase, never localStorage) ─────────────
+
+  /**
+   * Builds a UserAccount from a Supabase auth user + their profiles row.
+   * Called after sign-up or sign-in to get the canonical account object.
+   */
+  async authenticate(email: string, name: string, supabaseId: string): Promise<UserAccount> {
+    const sb = getSupabaseBrowser();
+
+    let weeklyDigest = false;
+    let autoNewsletter = false;
+
+    if (sb && supabaseId) {
+      const { data } = await sb
+        .from('profiles')
+        .select('weekly_digest_enabled, newsletter_subscribed')
+        .eq('id', supabaseId)
+        .single();
+      if (data) {
+        weeklyDigest   = (data as any).weekly_digest_enabled  ?? false;
+        autoNewsletter = (data as any).newsletter_subscribed  ?? false;
+      }
+    }
+
+    return {
+      id: supabaseId,
       email,
       name,
       isLoggedIn: true,
       settings: {
-        autoNewsletter: true,
-        weeklyDigest: true,
-        cloudSync: true
-      }
+        autoNewsletter,
+        weeklyDigest,
+        cloudSync: true,
+      },
     };
-    localStorage.setItem(DB_KEY, JSON.stringify(mockUser));
-    return mockUser;
   },
+
+  /**
+   * Returns the current user from the active Supabase session (no localStorage).
+   */
+  async fetchUserData(): Promise<UserAccount | null> {
+    const sb = getSupabaseBrowser();
+    if (!sb) return null;
+
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session?.user) return null;
+
+    const u = session.user;
+    const name =
+      u.user_metadata?.full_name ??
+      u.user_metadata?.name ??
+      u.email?.split('@')[0] ??
+      'Nutzer';
+
+    return this.authenticate(u.email ?? '', name, u.id);
+  },
+
+  // ── Portfolio persistence (no-op: holdings come from Supabase) ──────────
 
   async savePortfolio(
-    userId: string, 
-    report: PortfolioAnalysisReport | null,
-    health: PortfolioHealthReport | null,
-    savings: PortfolioSavingsReport | null
-  ) {
-    const userData = localStorage.getItem(DB_KEY);
-    if (userData) {
-      const user = JSON.parse(userData);
-      user.portfolioData = { report, health, savings };
-      localStorage.setItem(DB_KEY, JSON.stringify(user));
-    }
+    _userId: string,
+    _report: PortfolioAnalysisReport | null,
+    _health: PortfolioHealthReport | null,
+    _savings: PortfolioSavingsReport | null,
+  ): Promise<void> {
+    // Portfolio analysis is ephemeral; holdings are persisted in Supabase via holdingsService.
+    // No localStorage write needed.
   },
-
-  async fetchUserData(): Promise<UserAccount | null> {
-    const data = localStorage.getItem(DB_KEY);
-    return data ? JSON.parse(data) : null;
-  }
 };

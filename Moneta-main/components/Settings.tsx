@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { User, Shield, ChevronRight, Mail, LogOut, Target, Scale, Bell, CheckCircle2, Loader2, ToggleLeft, ToggleRight } from 'lucide-react';
+import { User, Shield, ChevronRight, Mail, LogOut, Target, Scale, Bell, Loader2, ToggleLeft, ToggleRight, CheckCircle2 } from 'lucide-react';
 import { UserAccount } from '../types';
 import { getSupabaseBrowser } from '../lib/supabaseBrowser';
 
@@ -9,51 +9,60 @@ interface SettingsProps {
   onOpenAuth?: () => void;
 }
 
+type PrefColumn = 'weekly_digest_enabled' | 'newsletter_subscribed';
+
 const Settings: React.FC<SettingsProps> = ({ account, onOpenAuth }) => {
   const sb = getSupabaseBrowser();
 
-  // Newsletter-Präferenzen aus Supabase profiles
-  const [weeklyDigest, setWeeklyDigest]   = useState(account?.settings?.weeklyDigest ?? false);
-  const [autoNewsletter, setAutoNewsletter] = useState(account?.settings?.autoNewsletter ?? false);
-  const [saving, setSaving]               = useState<string | null>(null); // welches Toggle gerade speichert
-  const [saveMsg, setSaveMsg]             = useState<string | null>(null);
+  // Always start false – real values are loaded from Supabase in the useEffect below.
+  const [weeklyDigest,   setWeeklyDigest]   = useState(false);
+  const [autoNewsletter, setAutoNewsletter] = useState(false);
+  const [saving,  setSaving]  = useState<PrefColumn | null>(null);
+  const [saveMsg, setSaveMsg] = useState<string | null>(null);
 
-  // Profil-Werte aus Supabase laden (überschreibt localStorage-Defaults)
+  // ── Unified fetch: pull both prefs from profiles table on mount ──────────
   useEffect(() => {
     if (!sb || !account) return;
     sb.auth.getSession().then(async ({ data: { session } }) => {
       if (!session?.user?.id) return;
       const { data } = await sb
         .from('profiles')
-        .select('newsletter_weekly_digest, newsletter_auto_updates')
+        .select('weekly_digest_enabled, newsletter_subscribed')
         .eq('id', session.user.id)
         .single();
       if (data) {
-        setWeeklyDigest(data.newsletter_weekly_digest ?? false);
-        setAutoNewsletter(data.newsletter_auto_updates ?? false);
+        setWeeklyDigest((data as any).weekly_digest_enabled  ?? false);
+        setAutoNewsletter((data as any).newsletter_subscribed ?? false);
       }
     });
   }, [account?.id]);
 
-  const toggleNewsletter = async (field: 'newsletter_weekly_digest' | 'newsletter_auto_updates', value: boolean) => {
+  // ── Unified update: one function for all boolean preference columns ───────
+  const updatePreference = async (column: PrefColumn, value: boolean) => {
     if (!sb || !account) return;
-    setSaving(field);
+    setSaving(column);
     setSaveMsg(null);
+
     const { data: { session } } = await sb.auth.getSession();
     if (!session?.user?.id) { setSaving(null); return; }
 
     const { error } = await sb
       .from('profiles')
-      .upsert({ id: session.user.id, [field]: value }, { onConflict: 'id' });
+      .update({ [column]: value })
+      .eq('id', session.user.id);
 
     if (!error) {
-      if (field === 'newsletter_weekly_digest') setWeeklyDigest(value);
+      if (column === 'weekly_digest_enabled') setWeeklyDigest(value);
       else setAutoNewsletter(value);
       setSaveMsg('Gespeichert ✓');
       setTimeout(() => setSaveMsg(null), 2000);
+    } else {
+      console.error('[Settings] updatePreference error:', error.message);
     }
     setSaving(null);
   };
+
+  // ── Sub-components ────────────────────────────────────────────────────────
 
   const SettingRow = ({ icon: Icon, label, value, isActive }: any) => (
     <div className="flex items-center justify-between p-6 border-b border-slate-100 last:border-0">
@@ -71,10 +80,9 @@ const Settings: React.FC<SettingsProps> = ({ account, onOpenAuth }) => {
   );
 
   const ToggleRow = ({
-    icon: Icon, label, value: description, isActive, onToggle, field,
+    icon: Icon, label, value: description, isActive, column,
   }: {
-    icon: any; label: string; value: string; isActive: boolean;
-    onToggle: (v: boolean) => void; field: string;
+    icon: any; label: string; value: string; isActive: boolean; column: PrefColumn;
   }) => (
     <div className="flex items-center justify-between p-6 border-b border-slate-100 last:border-0">
       <div className="flex items-center gap-6">
@@ -87,16 +95,16 @@ const Settings: React.FC<SettingsProps> = ({ account, onOpenAuth }) => {
         </div>
       </div>
       <button
-        onClick={() => onToggle(!isActive)}
-        disabled={saving === field || !account}
+        onClick={() => updatePreference(column, !isActive)}
+        disabled={saving === column || !account}
         className="shrink-0 flex items-center gap-1.5 disabled:opacity-40 transition-opacity"
         title={account ? (isActive ? 'Deaktivieren' : 'Aktivieren') : 'Bitte zuerst anmelden'}
       >
-        {saving === field
+        {saving === column
           ? <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
           : isActive
             ? <ToggleRight className="w-7 h-7 text-blue-600" />
-            : <ToggleLeft className="w-7 h-7 text-slate-300" />}
+            : <ToggleLeft  className="w-7 h-7 text-slate-300" />}
       </button>
     </div>
   );
@@ -136,14 +144,14 @@ const Settings: React.FC<SettingsProps> = ({ account, onOpenAuth }) => {
           />
         </div>
 
-        {/* Benachrichtigungen */}
+        {/* Newsletter & Benachrichtigungen */}
         <div className="bg-white rounded-[40px] border border-slate-200 overflow-hidden shadow-sm">
           <div className="px-8 py-4 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
             <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
               Newsletter & Benachrichtigungen
             </span>
             {saveMsg && (
-              <span className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">
+              <span className="text-[10px] font-black text-emerald-600 uppercase tracking-widest animate-in fade-in duration-300">
                 {saveMsg}
               </span>
             )}
@@ -162,16 +170,14 @@ const Settings: React.FC<SettingsProps> = ({ account, onOpenAuth }) => {
             label="KI-Wochenbericht"
             value="Automatische Depot-Analyse per Mail (jeden Montag)"
             isActive={weeklyDigest}
-            onToggle={(v) => toggleNewsletter('newsletter_weekly_digest', v)}
-            field="newsletter_weekly_digest"
+            column="weekly_digest_enabled"
           />
           <ToggleRow
             icon={Target}
             label="Markt-Updates"
             value="Sofortige Info bei wichtigen Kursänderungen"
             isActive={autoNewsletter}
-            onToggle={(v) => toggleNewsletter('newsletter_auto_updates', v)}
-            field="newsletter_auto_updates"
+            column="newsletter_subscribed"
           />
           <SettingRow icon={Scale} label="Rechtliche Updates" value="Aktiv" isActive={true} />
         </div>
@@ -181,7 +187,6 @@ const Settings: React.FC<SettingsProps> = ({ account, onOpenAuth }) => {
           <button
             onClick={async () => {
               if (sb) await sb.auth.signOut();
-              localStorage.clear();
               window.location.reload();
             }}
             className="w-full flex items-center justify-center gap-3 p-6 bg-rose-50 text-rose-600 rounded-[32px] font-black uppercase tracking-widest text-[10px] hover:bg-rose-100 transition-all"
