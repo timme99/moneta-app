@@ -13,8 +13,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Search, Plus, Trash2, Loader2, TrendingUp, BarChart3, BookMarked, Info,
-  TrendingDown, RefreshCw, Pencil, MessageSquare, Camera, FileSpreadsheet,
-  CheckCircle2, AlertCircle, Zap, FileText,
+  TrendingDown, RefreshCw, Pencil, MessageSquare, Camera, Upload,
+  CheckCircle2, AlertCircle, Zap,
 } from 'lucide-react';
 import { getSupabaseBrowser } from '../lib/supabaseBrowser';
 import type { TickerEntry } from '../lib/supabase-types';
@@ -65,12 +65,10 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
     loading: false, message: '', error: '',
   });
 
-  const debounceRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const dropRef       = useRef<HTMLDivElement>(null);
-  const imageInputRef = useRef<HTMLInputElement>(null);
-  const excelInputRef = useRef<HTMLInputElement>(null);
-  const brokerInputRef = useRef<HTMLInputElement>(null);
-  const pdfInputRef   = useRef<HTMLInputElement>(null);
+  const debounceRef     = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dropRef         = useRef<HTMLDivElement>(null);
+  const imageInputRef   = useRef<HTMLInputElement>(null);
+  const documentInputRef = useRef<HTMLInputElement>(null);
 
   // ── Auth ──────────────────────────────────────────────────────────────────
   // Wenn userAccount.id gesetzt ist, hat App.tsx bereits die Supabase-Session geprüft.
@@ -394,161 +392,49 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
     return count;
   };
 
-  // ── Broker CSV-Import (Trade Republic, Scalable Capital, Comdirect) ─────
-  /**
-   * Erkennt, ob ein Tabellen-Datensatz ein Broker-Export mit vollständigen
-   * Transaktionsdaten ist (Stückzahl + Kurs vorhanden).
-   * Gibt die gruppierten Positionen zurück oder null wenn kein Broker-Format.
-   */
-  const parseBrokerData = (rows: any[]): BrokerPosition[] | null => {
-    if (!rows.length) return null;
-    const headers = Object.keys(rows[0]);
-    const lower = headers.map((h) => h.toLowerCase().trim());
-
-    // Spalten-Mapping: suche nach passenden Spaltennamen
-    const findCol = (...candidates: string[]) =>
-      headers.find((h) => candidates.includes(h.toLowerCase().trim()));
-
-    const sharesCol = findCol('stückzahl', 'stck', 'anzahl', 'menge', 'stück', 'shares', 'qty');
-    const priceCol  = findCol('kurs', 'preis', 'kurs (€)', 'kurs (eur)', 'preis (€)', 'preis (eur)',
-                              'ausführungskurs', 'price', 'kurs in eur', 'preis in eur');
-    const symbolCol = findCol('ticker', 'symbol', 'isin', 'wkn');
-    const nameCol   = findCol('name', 'unternehmen', 'bezeichnung', 'wertpapier', 'description');
-    const typeCol   = findCol('typ', 'art', 'transaktion', 'type', 'beschreibung', 'transaktionstyp');
-    const dateCol   = findCol('datum', 'date', 'buchungstag', 'ausführungsdatum', 'handelsdatum');
-
-    // Broker-Format: braucht mindestens symbol + shares + price
-    if (!sharesCol || !priceCol || !symbolCol) return null;
-
-    // Nur Kauf-Transaktionen (keine Dividenden, Gebühren, Verkäufe)
-    const BUY_TYPES = ['kauf', 'buy', 'purchase', 'sparplan', 'savings plan', 'einzahlung', 'wertpapierkauf'];
-    const SELL_TYPES = ['verkauf', 'sell', 'sale'];
-
-    const buys = rows.filter((r) => {
-      if (!typeCol) return true; // kein Typ-Spalte → alle nehmen
-      const t = String(r[typeCol] ?? '').toLowerCase().trim();
-      if (SELL_TYPES.some((s) => t.includes(s))) return false;
-      if (!t || BUY_TYPES.some((b) => t.includes(b))) return true;
-      return false; // unbekannter Typ → überspringen
-    });
-
-    if (!buys.length) return null;
-
-    // Transaktionen aggregieren (gewichteter Durchschnitt pro Symbol)
-    const bySymbol = new Map<string, { totalShares: number; totalCost: number; name?: string; date?: string }>();
-
-    for (const row of buys) {
-      const rawSym = String(row[symbolCol] ?? '').trim().replace(/\s/g, '');
-      if (!rawSym || rawSym.length < 1) continue;
-
-      const sharesRaw = String(row[sharesCol] ?? '').replace(',', '.').replace(/[^0-9.]/g, '');
-      const priceRaw  = String(row[priceCol]  ?? '').replace(',', '.').replace(/[^0-9.]/g, '');
-      const sharesNum = parseFloat(sharesRaw);
-      const priceNum  = parseFloat(priceRaw);
-      if (isNaN(sharesNum) || sharesNum <= 0 || isNaN(priceNum) || priceNum <= 0) continue;
-
-      const existing = bySymbol.get(rawSym) ?? { totalShares: 0, totalCost: 0 };
-      existing.totalShares += sharesNum;
-      existing.totalCost   += sharesNum * priceNum;
-      if (!existing.name && nameCol) existing.name = String(row[nameCol] ?? '').trim() || undefined;
-      if (!existing.date && dateCol) {
-        const rawDate = String(row[dateCol] ?? '').trim();
-        if (rawDate) {
-          // DD.MM.YYYY oder DD.MM.YY → ISO YYYY-MM-DD (Supabase DATE-Spalte)
-          const parts = rawDate.split('.');
-          if (parts.length === 3 && parts[0].length <= 2) {
-            const [d, m, y] = parts;
-            const year = y.length === 2 ? `20${y}` : y;
-            existing.date = `${year}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
-          } else {
-            existing.date = rawDate;
-          }
-        }
-      }
-      bySymbol.set(rawSym, existing);
+  // ── Universal import helpers ──────────────────────────────────────────────
+  /** Read any file as base64. For images, resize first to cap payload. */
+  const fileToBase64 = async (file: File): Promise<{ data: string; mimeType: string }> => {
+    if (file.type.startsWith('image/')) {
+      const { base64, mimeType } = await resizeImage(file);
+      return { data: base64, mimeType };
     }
-
-    if (!bySymbol.size) return null;
-
-    return Array.from(bySymbol.entries()).map(([rawSymbol, agg]) => ({
-      rawSymbol,
-      name:     agg.name,
-      shares:   Math.round(agg.totalShares * 100000) / 100000,
-      avgPrice: Math.round((agg.totalCost / agg.totalShares) * 10000) / 10000,
-      date:     agg.date,
-    }));
+    const buffer = await file.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+    return { data: btoa(binary), mimeType: file.type || 'application/octet-stream' };
   };
 
-  const handleBrokerImport = async (file: File) => {
-    setImportState({ loading: true, message: '', error: '' });
-    try {
-      const XLSX = await import('xlsx');
-      let wb: ReturnType<typeof XLSX.read>;
-      if (file.name.toLowerCase().endsWith('.csv')) {
-        const text = await file.text();
-        const firstLine = text.split('\n')[0] ?? '';
-        const commas = (firstLine.match(/,/g) ?? []).length;
-        const semis  = (firstLine.match(/;/g) ?? []).length;
-        const delim  = semis > commas ? ';' : ',';
-        wb = XLSX.read(text, { type: 'string', FS: delim });
-      } else {
-        const buffer = await file.arrayBuffer();
-        wb = XLSX.read(buffer, { type: 'array' });
-      }
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const rows: any[] = XLSX.utils.sheet_to_json(ws, { defval: '' });
-
-      if (!rows.length) {
-        setImportState({ loading: false, message: '', error: 'Keine Daten in der Datei gefunden.' });
-        return;
-      }
-
-      const positions = parseBrokerData(rows);
-
-      if (!positions) {
-        // Kein Broker-Format → regulären Excel-Import versuchen
-        await handleExcelImport(file);
-        return;
-      }
-
-      let effectiveUserId = userId;
-      if (sb) {
-        const { data: sessionData } = await sb.auth.getSession();
-        effectiveUserId = sessionData?.session?.user?.id ?? userId;
-      }
-      if (!effectiveUserId) throw new Error('Nicht eingeloggt – bitte zuerst anmelden.');
-
-      const { count, skipped, error } = await addBrokerHoldings(positions, effectiveUserId);
-
-      if (error) throw new Error(error);
-
-      setImportState({
-        loading: false,
-        message: `${count} Position${count !== 1 ? 'en' : ''} importiert${skipped > 0 ? ` (${skipped} übersprungen)` : ''}.`,
-        error: '',
-      });
-
-      if (effectiveUserId !== userId) setUserId(effectiveUserId);
-      await onRefresh?.();
-    } catch (e: any) {
-      setImportState({ loading: false, message: '', error: e?.message ?? 'Fehler beim Broker-Import.' });
+  /** Get effective userId, refreshing from session if needed. */
+  const getEffectiveUserId = async (): Promise<string> => {
+    if (sb) {
+      const { data } = await sb.auth.getSession();
+      const id = data?.session?.user?.id ?? userId;
+      if (id && id !== userId) setUserId(id);
+      if (id) return id;
     }
+    if (userId) return userId;
+    throw new Error('Nicht eingeloggt – bitte zuerst anmelden.');
   };
 
-  // ── Screenshot-Import ────────────────────────────────────────────────────
+  // ── Screenshot import (image → /api/import/process → tickers → watchlist) ─
   const handleImageImport = async (file: File) => {
     setImportState({ loading: true, message: '', error: '' });
     try {
-      const { base64, mimeType } = await resizeImage(file);
-      const resp = await fetch('/api/extract-from-image', {
+      const { data, mimeType } = await fileToBase64(file);
+      const resp = await fetch('/api/import/process', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64: base64, mimeType }),
+        body: JSON.stringify({ data, mimeType, fileName: file.name }),
       });
-      if (!resp.ok) throw new Error('Bild-Analyse fehlgeschlagen');
-      const { tickers } = await resp.json();
-      if (!tickers || tickers.length === 0) {
-        setImportState({ loading: false, message: '', error: 'Keine Aktien erkannt. Bitte stelle sicher, dass der Screenshot gut lesbar ist und Aktien-/ETF-Positionen enthält.' });
+      if (!resp.ok) throw new Error(`Analyse fehlgeschlagen (${resp.status})`);
+      const json = await resp.json();
+      if (json.error) throw new Error(json.error);
+
+      const tickers: string[] = json.tickers ?? [];
+      if (tickers.length === 0) {
+        setImportState({ loading: false, message: '', error: 'Keine Aktien erkannt. Bitte stelle sicher, dass der Screenshot gut lesbar ist und Aktien- oder ETF-Positionen enthält.' });
         return;
       }
       const count = await bulkAddTickers(tickers);
@@ -558,143 +444,33 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
     }
   };
 
-  // ── PDF Broker-Import ────────────────────────────────────────────────────
-  const handlePdfImport = async (file: File) => {
+  // ── Document import (PDF / CSV / Excel → /api/import/process → positions) ─
+  const handleDocumentImport = async (file: File) => {
     setImportState({ loading: true, message: '', error: '' });
     try {
-      // Read PDF as base64
-      const buffer = await file.arrayBuffer();
-      const bytes = new Uint8Array(buffer);
-      let binary = '';
-      for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
-      const base64 = btoa(binary);
-
-      const resp = await fetch('/api/extract-from-image', {
+      const { data, mimeType } = await fileToBase64(file);
+      const resp = await fetch('/api/import/process', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64: base64, mimeType: 'application/pdf' }),
+        body: JSON.stringify({ data, mimeType, fileName: file.name }),
       });
-      if (!resp.ok) throw new Error('PDF-Analyse fehlgeschlagen');
-      const { positions } = await resp.json();
+      if (!resp.ok) throw new Error(`Analyse fehlgeschlagen (${resp.status})`);
+      const json = await resp.json();
+      if (json.error) throw new Error(json.error);
 
-      if (!positions || positions.length === 0) {
-        setImportState({
-          loading: false, message: '',
-          error: 'Keine Aktien erkannt. Bitte stelle sicher, dass das PDF ein Broker-Kontoauszug mit Wertpapierpositionen ist.',
-        });
-        return;
-      }
-
-      // Convert to BrokerPosition format
-      const brokerPositions = positions.map((p: any) => ({
-        rawSymbol: p.symbol,
-        name: p.name,
-        shares: p.shares,
-        avgPrice: p.price ?? 0,
-      }));
-
-      let effectiveUserId = userId;
-      if (sb) {
-        const { data: sessionData } = await sb.auth.getSession();
-        effectiveUserId = sessionData?.session?.user?.id ?? userId;
-      }
-      if (!effectiveUserId) throw new Error('Nicht eingeloggt – bitte zuerst anmelden.');
-
-      const { count, skipped, error } = await addBrokerHoldings(brokerPositions, effectiveUserId);
-      if (error) throw new Error(error);
-
-      setImportState({
-        loading: false,
-        message: `${count} Position${count !== 1 ? 'en' : ''} aus PDF importiert${skipped > 0 ? ` (${skipped} übersprungen)` : ''}.`,
-        error: '',
-      });
-      if (effectiveUserId !== userId) setUserId(effectiveUserId);
-      await onRefresh?.();
-    } catch (e: any) {
-      setImportState({ loading: false, message: '', error: e?.message ?? 'Fehler beim PDF-Import.' });
-    }
-  };
-
-  // ── Excel / CSV-Import ───────────────────────────────────────────────────
-  const handleExcelImport = async (file: File) => {
-    setImportState({ loading: true, message: '', error: '' });
-    try {
-      const XLSX = await import('xlsx');
-      let wb: ReturnType<typeof XLSX.read>;
-      if (file.name.toLowerCase().endsWith('.csv')) {
-        // Detect delimiter from first line (German exports often use semicolons)
-        const text = await file.text();
-        const firstLine = text.split('\n')[0] ?? '';
-        const commas = (firstLine.match(/,/g) ?? []).length;
-        const semis  = (firstLine.match(/;/g) ?? []).length;
-        const delim  = semis > commas ? ';' : ',';
-        wb = XLSX.read(text, { type: 'string', FS: delim });
-      } else {
-        const buffer = await file.arrayBuffer();
-        wb = XLSX.read(buffer, { type: 'array' });
-      }
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const rows: any[] = XLSX.utils.sheet_to_json(ws, { defval: '' });
-
-      if (rows.length === 0) {
-        setImportState({ loading: false, message: '', error: 'Keine Daten in der Datei gefunden.' });
-        return;
-      }
-
-      // Dynamic column mapping – find best matching header for symbol, shares, price
-      const headers = Object.keys(rows[0]);
-      const findCol = (...candidates: string[]) =>
-        headers.find((h) => candidates.includes(h.trim().toLowerCase()));
-
-      const symbolCol = findCol(
-        'ticker', 'symbol', 'isin', 'wkn', 'symbol/ticker',
-        'kürzel', 'wertpapier', 'name',
-      );
-      const sharesCol = findCol(
-        'stückzahl', 'stck', 'anzahl', 'shares', 'qty', 'menge', 'stück',
-      );
-      const priceCol = findCol(
-        'kurs', 'preis', 'price', 'kaufkurs', 'kauf', 'buy price',
-        'kurs (€)', 'preis (€)', 'kurs in eur', 'preis in eur',
-      );
-
-      if (!symbolCol) {
-        const found = headers.join(', ') || 'keine Spalten erkannt';
-        setImportState({
-          loading: false, message: '',
-          error: `Keine Ticker-Spalte gefunden. Erkannte Spalten: ${found}. Bitte benenne eine Spalte "Ticker", "Symbol" oder "ISIN".`,
-        });
-        return;
-      }
-
-      // If we have shares + price columns, treat as full broker positions
-      if (sharesCol && priceCol) {
-        const positions: BrokerPosition[] = rows
-          .map((r: any) => {
-            const sym = String(r[symbolCol] ?? '').trim().replace(/\s/g, '');
-            const sh  = parseFloat(String(r[sharesCol] ?? '').replace(',', '.').replace(/[^0-9.]/g, ''));
-            const pr  = parseFloat(String(r[priceCol]  ?? '').replace(',', '.').replace(/[^0-9.]/g, ''));
-            if (!sym || isNaN(sh) || sh <= 0 || isNaN(pr) || pr <= 0) return null;
-            return { rawSymbol: sym, shares: sh, avgPrice: pr } as BrokerPosition;
-          })
-          .filter((p): p is BrokerPosition => p !== null);
+      // If Gemini returned positions (PDF / structured data)
+      if (json.positions) {
+        const positions: BrokerPosition[] = (json.positions as any[])
+          .filter((p) => p.symbol && p.shares > 0)
+          .map((p) => ({ rawSymbol: p.symbol, name: p.name, shares: p.shares, avgPrice: p.price ?? 0 }));
 
         if (positions.length === 0) {
-          setImportState({ loading: false, message: '', error: 'Keine gültigen Positionen in der Datei gefunden.' });
+          setImportState({ loading: false, message: '', error: 'Keine Aktien erkannt. Bitte stelle sicher, dass das Dokument ein lesbarer Broker-Export mit Wertpapierpositionen ist.' });
           return;
         }
-
-        let effectiveUserId = userId;
-        if (sb) {
-          const { data: sessionData } = await sb.auth.getSession();
-          effectiveUserId = sessionData?.session?.user?.id ?? userId;
-        }
-        if (!effectiveUserId) throw new Error('Nicht eingeloggt – bitte zuerst anmelden.');
-
+        const effectiveUserId = await getEffectiveUserId();
         const { count, skipped, error } = await addBrokerHoldings(positions, effectiveUserId);
         if (error) throw new Error(error);
-
-        if (effectiveUserId !== userId) setUserId(effectiveUserId);
         await onRefresh?.();
         setImportState({
           loading: false,
@@ -704,22 +480,19 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
         return;
       }
 
-      // Ticker-only import (watchlist)
-      const values = rows
-        .map((r: any) => String(r[symbolCol] ?? '').trim())
-        .filter((v) => v.length >= 1);
-
-      if (values.length === 0) {
-        setImportState({ loading: false, message: '', error: 'Keine Aktien erkannt. Bitte stelle sicher, dass die Datei Ticker- oder ISIN-Symbole enthält.' });
+      // Fallback: ticker-only (watchlist)
+      const tickers: string[] = json.tickers ?? [];
+      if (tickers.length === 0) {
+        setImportState({ loading: false, message: '', error: 'Keine Aktien erkannt. Bitte stelle sicher, dass das Dokument ein lesbarer Broker-Export ist.' });
         return;
       }
-
-      const count = await bulkAddTickers(values);
-      setImportState({ loading: false, message: `${count} Ticker aus Datei importiert.`, error: '' });
+      const count = await bulkAddTickers(tickers);
+      setImportState({ loading: false, message: `${count} Ticker importiert.`, error: '' });
     } catch (e: any) {
-      setImportState({ loading: false, message: '', error: e?.message ?? 'Fehler beim Datei-Import.' });
+      setImportState({ loading: false, message: '', error: e?.message ?? 'Fehler beim Import.' });
     }
   };
+
 
   // Hilfswert: ist die Eingabe nur Watchlist?
   const isWatchlistAdd = !shares.trim() || !buyPrice.trim();
@@ -954,61 +727,37 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
         )}
       </div>
 
-      {/* ── Schnell-Import (Screenshot / PDF / Excel / Broker) ──────────── */}
+      {/* ── Universal Importer ────────────────────────────────────────── */}
       <div className="bg-slate-50 border border-slate-200 rounded-[24px] p-4 space-y-3">
         <p className="text-[9px] font-black text-slate-500 uppercase tracking-[0.2em]">
           Schnell importieren
         </p>
 
-        {/* Row 1: Screenshot + Excel/CSV */}
         <div className="flex gap-3">
+          {/* Photo / Screenshot */}
           <button
             onClick={() => { setImportState({ loading: false, message: '', error: '' }); imageInputRef.current?.click(); }}
             disabled={importState.loading}
-            className="flex-1 flex items-center justify-center gap-2 py-3 bg-purple-50 border border-purple-100 hover:bg-purple-100 rounded-[16px] text-[10px] font-black text-purple-700 uppercase tracking-widest transition-colors disabled:opacity-50 min-h-[44px]"
+            className="flex-1 flex flex-col items-center justify-center gap-1.5 py-4 bg-purple-50 border border-purple-100 hover:bg-purple-100 rounded-[16px] text-[10px] font-black text-purple-700 uppercase tracking-widest transition-colors disabled:opacity-50 min-h-[64px]"
           >
-            <Camera className="w-4 h-4" />
-            Screenshot
+            <Camera className="w-5 h-5" />
+            Foto / Screenshot
           </button>
+
+          {/* Document upload */}
           <button
-            onClick={() => { setImportState({ loading: false, message: '', error: '' }); excelInputRef.current?.click(); }}
+            onClick={() => { setImportState({ loading: false, message: '', error: '' }); documentInputRef.current?.click(); }}
             disabled={importState.loading}
-            className="flex-1 flex items-center justify-center gap-2 py-3 bg-emerald-50 border border-emerald-100 hover:bg-emerald-100 rounded-[16px] text-[10px] font-black text-emerald-700 uppercase tracking-widest transition-colors disabled:opacity-50 min-h-[44px]"
+            className="flex-1 flex flex-col items-center justify-center gap-1.5 py-4 bg-blue-50 border border-blue-100 hover:bg-blue-100 rounded-[16px] text-[10px] font-black text-blue-700 uppercase tracking-widest transition-colors disabled:opacity-50 min-h-[64px]"
           >
-            <FileSpreadsheet className="w-4 h-4" />
-            Excel / CSV
+            <Upload className="w-5 h-5" />
+            Dokument hochladen
           </button>
         </div>
 
-        {/* Row 2: PDF Broker statement */}
-        <button
-          onClick={() => { setImportState({ loading: false, message: '', error: '' }); pdfInputRef.current?.click(); }}
-          disabled={importState.loading}
-          className="w-full flex items-center justify-between px-4 py-3 bg-rose-50 border border-rose-100 hover:bg-rose-100 rounded-[16px] text-[10px] font-black text-rose-700 uppercase tracking-widest transition-colors disabled:opacity-50 min-h-[44px]"
-        >
-          <div className="flex items-center gap-2">
-            <FileText className="w-4 h-4" />
-            PDF Broker-Depot importieren
-          </div>
-          <span className="text-[8px] font-black text-rose-400 normal-case tracking-normal">
-            Trade Republic · Scalable · Comdirect
-          </span>
-        </button>
-
-        {/* Row 3: Broker transaction CSV/Excel */}
-        <button
-          onClick={() => { setImportState({ loading: false, message: '', error: '' }); brokerInputRef.current?.click(); }}
-          disabled={importState.loading}
-          className="w-full flex items-center justify-between px-4 py-3 bg-blue-50 border border-blue-100 hover:bg-blue-100 rounded-[16px] text-[10px] font-black text-blue-700 uppercase tracking-widest transition-colors disabled:opacity-50 min-h-[44px]"
-        >
-          <div className="flex items-center gap-2">
-            <FileSpreadsheet className="w-4 h-4" />
-            Transaktionshistorie importieren
-          </div>
-          <span className="text-[8px] font-black text-blue-400 normal-case tracking-normal">
-            CSV / Excel Export
-          </span>
-        </button>
+        <p className="text-[9px] text-slate-400 font-medium text-center">
+          PDF, CSV oder Excel · Trade Republic, Scalable, Comdirect & mehr
+        </p>
 
         {/* Status */}
         {importState.loading && (
@@ -1142,25 +891,11 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
         onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImageImport(f); e.target.value = ''; }}
       />
       <input
-        ref={excelInputRef}
+        ref={documentInputRef}
         type="file"
-        accept=".xlsx,.xls,.csv"
+        accept=".pdf,.xlsx,.xls,.csv"
         className="hidden"
-        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleExcelImport(f); e.target.value = ''; }}
-      />
-      <input
-        ref={brokerInputRef}
-        type="file"
-        accept=".xlsx,.xls,.csv"
-        className="hidden"
-        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleBrokerImport(f); e.target.value = ''; }}
-      />
-      <input
-        ref={pdfInputRef}
-        type="file"
-        accept=".pdf"
-        className="hidden"
-        onChange={(e) => { const f = e.target.files?.[0]; if (f) handlePdfImport(f); e.target.value = ''; }}
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleDocumentImport(f); e.target.value = ''; }}
       />
     </div>
   );
