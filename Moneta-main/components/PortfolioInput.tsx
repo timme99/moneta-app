@@ -19,19 +19,20 @@ import {
 import { getSupabaseBrowser } from '../lib/supabaseBrowser';
 import type { TickerEntry } from '../lib/supabase-types';
 import type { HoldingRow } from '../types';
-import { addHolding, addTickersByName, deleteHolding, loadUserHoldings, addBrokerHoldings, type BrokerPosition } from '../services/holdingsService';
+import { addHolding, addTickersByName, deleteHolding, addBrokerHoldings, type BrokerPosition } from '../services/holdingsService';
 
 interface PortfolioInputProps {
+  /** Holdings aus App.tsx – Single Source of Truth */
+  holdings: HoldingRow[];
   onAnalyze: (portfolioText: string) => void;
   isLoading?: boolean;
   userAccount?: { id: string; name: string } | null;
   onSendToAssistant?: (text: string) => void;
-  onHoldingsChange?: (holdings: HoldingRow[]) => void;
-  /** Globaler Refresh: wird nach jeder Änderung aufgerufen, um App.tsx-State zu synchronisieren */
+  /** Globaler Refresh: App.tsx lädt Holdings neu und aktualisiert alle Views */
   onRefresh?: () => Promise<void>;
 }
 
-const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, userAccount, onSendToAssistant, onHoldingsChange, onRefresh }) => {
+const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, isLoading, userAccount, onSendToAssistant, onRefresh }) => {
   const sb = getSupabaseBrowser();
 
   const [userId, setUserId]           = useState<string | null>(null);
@@ -53,9 +54,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
   const [currentPrice, setCurrentPrice]     = useState<number | null>(null);
   const [isPriceFetching, setIsPriceFetching] = useState(false);
 
-  // Depot-Liste
-  const [holdings, setHoldings]           = useState<HoldingRow[]>([]);
-  const [isLoadingHoldings, setIsLoadingH] = useState(true);
+  // Depot-Liste (kommt als Prop von App.tsx)
   const [isSaving, setIsSaving]           = useState(false);
 
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -97,27 +96,6 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
       }
     });
   }, [userAccount?.id]);
-
-  // ── Holdings laden ────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (userId) loadHoldings();
-  }, [userId]);
-
-  // Nutzt den zentralen holdingsService statt direkt sb aufzurufen
-  const loadHoldings = async () => {
-    let effectiveUserId = userId;
-    if (sb) {
-      const { data: sessionData } = await sb.auth.getSession();
-      effectiveUserId = sessionData?.session?.user?.id ?? userId;
-    }
-    if (!effectiveUserId) { setIsLoadingH(false); return; }
-    setIsLoadingH(true);
-
-    const newHoldings = await loadUserHoldings(effectiveUserId);
-    setHoldings(newHoldings);
-    onHoldingsChange?.(newHoldings);
-    setIsLoadingH(false);
-  };
 
   // ── Aktuellen Kurs fetchen wenn Ticker ausgewählt ─────────────────────────
   useEffect(() => {
@@ -261,9 +239,8 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
       setTotalValue('');
       setCurrentPrice(null);
       setEditingId(null);
-      // Zentralen App.tsx-State aktualisieren, dann lokalen State synchronisieren
+      // App.tsx lädt Holdings neu → Cockpit, EarningsCalendar, ScenarioAnalysis aktualisiert
       await onRefresh?.();
-      await loadHoldings();
     } else {
       console.error('[PortfolioInput] addHolding error:', result.error);
       setSaveError(`Speichern fehlgeschlagen: ${result.error}`);
@@ -287,9 +264,6 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
       console.error('[PortfolioInput] Delete error:', result.error);
       return;
     }
-    const updated = holdings.filter((h) => h.id !== id);
-    setHoldings(updated);
-    onHoldingsChange?.(updated);
     if (editingId === id) {
       setEditingId(null);
       setSelected(null);
@@ -298,7 +272,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
       setBuyPrice('');
       setTotalValue('');
     }
-    // Globalen State synchronisieren
+    // App.tsx lädt Holdings neu → alle Views aktualisiert
     await onRefresh?.();
   };
 
@@ -414,9 +388,8 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
     // userId-State korrigieren falls nötig
     if (effectiveUserId !== userId) setUserId(effectiveUserId);
 
-    // Lokalen State + globalen App.tsx-State aktualisieren
+    // App.tsx lädt Holdings neu → alle Views aktualisiert
     await onRefresh?.();
-    await loadHoldings();
     return count;
   };
 
@@ -546,7 +519,6 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
 
       if (effectiveUserId !== userId) setUserId(effectiveUserId);
       await onRefresh?.();
-      await loadHoldings();
     } catch (e: any) {
       setImportState({ loading: false, message: '', error: e?.message ?? 'Fehler beim Broker-Import.' });
     }
@@ -920,11 +892,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
           </span>
         </div>
 
-        {isLoadingHoldings ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="w-6 h-6 animate-spin text-slate-300" />
-          </div>
-        ) : holdings.length === 0 ? (
+        {holdings.length === 0 ? (
           <div className="py-12 text-center space-y-3">
             <TrendingUp className="w-8 h-8 text-slate-200 mx-auto" />
             <p className="text-sm text-slate-400 font-medium">
