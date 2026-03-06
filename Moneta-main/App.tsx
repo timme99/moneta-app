@@ -33,7 +33,7 @@ function userFromSupabase(sbUser: any): UserAccount {
                 ?? sbUser.email?.split('@')[0]
                 ?? 'Nutzer',
     isLoggedIn: true,
-    settings:   { autoNewsletter: true, weeklyDigest: true, cloudSync: true },
+    settings:   { autoNewsletter: false, weeklyDigest: false, cloudSync: true },
   };
 }
 
@@ -198,19 +198,6 @@ const App: React.FC = () => {
       setShowAuthModal(false);
       // Holdings aus Supabase laden (aktuellste Depot-Positionen)
       loadHoldingsForUser(account.id);
-      // Lade zuletzt gespeicherte Portfolio-Daten aus localStorage
-      const stored = localStorage.getItem('moneta_db_mock');
-      if (stored) {
-        try {
-          const parsed = JSON.parse(stored);
-          if (parsed.portfolioData) {
-            setAnalysisReport(parsed.portfolioData.report);
-            setHealthReport(parsed.portfolioData.health);
-            setSavingsReport(parsed.portfolioData.savings);
-            setLastUpdate(localStorage.getItem('moneta_last_update'));
-          }
-        } catch { /* ignore */ }
-      }
     };
 
     if (sb) {

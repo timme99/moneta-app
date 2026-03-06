@@ -1,8 +1,10 @@
 /**
  * E2E-Test für moneta-invest.de
  * Testet: Health → Stock-Quotes (US, DE, ETF/ISIN) → Rate-Limit-Handling
+ *         → Auth-Trigger (profiles table) → Resend test-digest
  *
  * Aufruf: node e2e-test.mjs
+ * Mit Cron-Secret: CRON_SECRET=<secret> node e2e-test.mjs
  */
 
 const BASE = 'https://www.moneta-invest.de';
@@ -17,7 +19,7 @@ const DIM    = (s) => `\x1b[2m${s}\x1b[0m`;
 
 let passed = 0, failed = 0, warned = 0;
 
-function ok(label, detail = '')  { passed++; console.log(`  ${GREEN} ${label}${detail ? DIM(' → ' + detail) : ''}`); }
+function ok(label, detail = '')   { passed++; console.log(`  ${GREEN} ${label}${detail ? DIM(' → ' + detail) : ''}`); }
 function fail(label, detail = '') { failed++; console.log(`  ${RED} ${label}${detail ? DIM(' → ' + detail) : ''}`); }
 function warn(label, detail = '') { warned++; console.log(`  ${YELLOW} ${label}${detail ? DIM(' → ' + detail) : ''}`); }
 
@@ -41,7 +43,6 @@ async function testHealth() {
   if (status === 200) ok('Endpoint erreichbar (HTTP 200)');
   else fail(`Endpoint nicht erreichbar: HTTP ${status}`);
 
-  // Env-Var-Checks aus dem Body auslesen
   for (const [key, val] of Object.entries(body?.checks ?? {})) {
     const v = val;
     if (v?.ok) ok(`${key}`, v.message);
@@ -82,18 +83,13 @@ async function testStockQuote(label, params, expectations = {}) {
 async function testStockQuotes() {
   section('2 · Aktien-Kurse (api/stocks)');
 
-  // US-Aktien
-  await testStockQuote('Apple   (AAPL)',      { symbol: 'AAPL' },      { currency: 'USD' });
-  await testStockQuote('Microsoft (MSFT)',    { symbol: 'MSFT' },      { currency: 'USD' });
-  await testStockQuote('NVIDIA (NVDA)',       { symbol: 'NVDA' },      { currency: 'USD' });
-
-  // Deutsche Aktien (XETRA)
-  await testStockQuote('SAP (SAP.DEX)',       { symbol: 'SAP.DEX' },   { currency: 'EUR' });
-  await testStockQuote('Siemens (SIE.DEX)',   { symbol: 'SIE.DEX' },   { currency: 'EUR' });
-
-  // ETFs via ISIN
-  await testStockQuote('MSCI World ISIN',     { isin: 'IE00B4L5Y983' }, { currency: 'USD' });
-  await testStockQuote('S&P500 ETF ISIN',     { isin: 'IE00B5BMR087' }, { currency: 'USD' });
+  await testStockQuote('Apple   (AAPL)',    { symbol: 'AAPL' },       { currency: 'USD' });
+  await testStockQuote('Microsoft (MSFT)', { symbol: 'MSFT' },       { currency: 'USD' });
+  await testStockQuote('NVIDIA (NVDA)',     { symbol: 'NVDA' },       { currency: 'USD' });
+  await testStockQuote('SAP (SAP.DEX)',     { symbol: 'SAP.DEX' },    { currency: 'EUR' });
+  await testStockQuote('Siemens (SIE.DEX)',{ symbol: 'SIE.DEX' },    { currency: 'EUR' });
+  await testStockQuote('MSCI World ISIN',  { isin: 'IE00B4L5Y983' }, { currency: 'USD' });
+  await testStockQuote('S&P500 ETF ISIN',  { isin: 'IE00B5BMR087' }, { currency: 'USD' });
 }
 
 async function testNewsMode() {
@@ -135,6 +131,99 @@ async function testCorsHeaders() {
   else fail('Access-Control-Allow-Origin fehlt oder falsch', res.headers.get('access-control-allow-origin'));
 }
 
+/**
+ * 6 · Auth-Trigger & Profiles-Table Check
+ *
+ * Calls /api/auth/verify-profile (protected by CRON_SECRET) to confirm:
+ *  - The on_auth_user_created trigger has created at least one profiles row.
+ *  - Any new signup results in a matching row in the profiles table.
+ *
+ * Requires CRON_SECRET env var to be set when running this script:
+ *   CRON_SECRET=<your-secret> node e2e-test.mjs
+ */
+async function testProfilesTrigger() {
+  section('6 · Auth-Trigger → profiles table (signup verification)');
+
+  const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret) {
+    warn('CRON_SECRET nicht gesetzt – überspringe profiles-Test', 'Setze: CRON_SECRET=<secret> node e2e-test.mjs');
+    return;
+  }
+
+  const { status, body } = await get('/api/auth/verify-profile', {
+    headers: { Authorization: `Bearer ${cronSecret}` },
+  });
+
+  if (status === 401) {
+    fail('Verify-Profile: Authentifizierung fehlgeschlagen', 'CRON_SECRET stimmt nicht überein');
+    return;
+  }
+
+  if (status !== 200) {
+    fail(`Verify-Profile: HTTP ${status}`, body.error ?? JSON.stringify(body).slice(0, 100));
+    return;
+  }
+
+  const count = body.profileCount ?? 0;
+  if (count === 0) {
+    fail(
+      'profiles-Tabelle ist leer',
+      'Der on_auth_user_created Trigger hat keine Zeilen erstellt. ' +
+      'Prüfe: Supabase SQL → SELECT * FROM profiles LIMIT 5',
+    );
+  } else {
+    ok(`profiles-Tabelle enthält ${count} Eintrag${count !== 1 ? 'e' : ''}`, 'Trigger funktioniert ✓');
+  }
+
+  if (body.triggerWorking) {
+    ok('on_auth_user_created Trigger aktiv', 'Neue Anmeldungen → profiles-Zeile wird erstellt');
+  }
+
+  if (body.latestProfile) {
+    const p = body.latestProfile;
+    ok(
+      'Letztes Profil gefunden',
+      `id=${p.id?.slice(0, 8)}…  weekly_digest_enabled=${p.weekly_digest_enabled}  newsletter_subscribed=${p.newsletter_subscribed}`,
+    );
+  }
+}
+
+/**
+ * 7 · Resend Test-Digest (optional)
+ *
+ * Sends a test digest to the first user in the profiles table.
+ * Requires CRON_SECRET. Only runs if TEST_DIGEST=1 is set.
+ *
+ *   CRON_SECRET=<secret> TEST_DIGEST=1 node e2e-test.mjs
+ */
+async function testResendDigest() {
+  section('7 · Resend Test-Digest (erster Profil-User)');
+
+  const cronSecret = process.env.CRON_SECRET;
+  const runTest    = process.env.TEST_DIGEST === '1';
+
+  if (!cronSecret || !runTest) {
+    warn(
+      'Resend-Test übersprungen',
+      'Setze CRON_SECRET=<secret> TEST_DIGEST=1 um den Test-Versand auszulösen',
+    );
+    return;
+  }
+
+  const { status, body } = await get('/api/cron/test-digest', {
+    headers: { Authorization: `Bearer ${cronSecret}` },
+  });
+
+  if (status === 401) { fail('Test-Digest: Unauthorized', 'CRON_SECRET stimmt nicht überein'); return; }
+  if (status === 404) { fail('Test-Digest: Kein Profil-User', body.message ?? ''); return; }
+  if (status !== 200) { fail(`Test-Digest: HTTP ${status}`, body.error ?? ''); return; }
+
+  ok(`Test-E-Mail gesendet an: ${body.sentTo}`, `messageId=${body.messageId}`);
+  if (!body.weeklyDigestEnabled) {
+    warn('weekly_digest ist für diesen User deaktiviert – er hätte regulär keine Mail erhalten');
+  }
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -147,12 +236,13 @@ async function main() {
     await testNewsMode();
     await testFinancialDataNoAuth();
     await testCorsHeaders();
+    await testProfilesTrigger();
+    await testResendDigest();
   } catch (e) {
     console.error(`\n${RED} Unerwarteter Fehler:`, e.message);
     failed++;
   }
 
-  // ── Zusammenfassung ──────────────────────────────────────────────────────
   console.log(`\n${BOLD('══ Ergebnis ══')}`);
   console.log(`  ${GREEN} Bestanden : ${passed}`);
   console.log(`  ${RED} Fehlge.   : ${failed}`);

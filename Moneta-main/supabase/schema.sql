@@ -23,11 +23,13 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
-  INSERT INTO public.profiles (id, email, full_name)
+  INSERT INTO public.profiles (id, email, full_name, weekly_digest_enabled, newsletter_subscribed)
   VALUES (
     NEW.id,
     NEW.email,
-    COALESCE(NEW.raw_user_meta_data->>'full_name', NEW.raw_user_meta_data->>'name', '')
+    COALESCE(NEW.raw_user_meta_data->>'full_name', NEW.raw_user_meta_data->>'name', ''),
+    false,
+    false
   )
   ON CONFLICT (id) DO NOTHING;
   RETURN NEW;
@@ -57,10 +59,11 @@ CREATE POLICY "profiles_update_own"
 -- ============================================================
 -- 1b. NEWSLETTER-PRÄFERENZEN – Erweiterung der profiles-Tabelle
 -- ============================================================
--- Spalten für Newsletter-Einstellungen (werden nach initialem CREATE TABLE ergänzt)
+-- Canonical column names used throughout the codebase.
+-- Run migration-profile-prefs.sql to migrate data from old column names.
 ALTER TABLE public.profiles
-  ADD COLUMN IF NOT EXISTS newsletter_weekly_digest  BOOLEAN NOT NULL DEFAULT false,
-  ADD COLUMN IF NOT EXISTS newsletter_auto_updates   BOOLEAN NOT NULL DEFAULT false;
+  ADD COLUMN IF NOT EXISTS weekly_digest_enabled  BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS newsletter_subscribed  BOOLEAN NOT NULL DEFAULT false;
 
 
 -- ============================================================
