@@ -1,213 +1,241 @@
+/**
+ * DashboardSummary – Kennzahlen + KI-Markteinschätzungen
+ *
+ * Ausschließlich echte, daten-getriebene Metriken:
+ *  1. Gesundheits-Score   (healthReport.health_score oder report.score)
+ *  2. Diversifikation     (report.diversification_score + Sektoren/Regionen)
+ *  3. Risiko-Profil       (report.risk_level → lesbare Bezeichnung)
+ *  4. Sparpotenzial       (savingsReport, nur wenn > 0€)
+ */
+
 import React, { useState, useEffect } from 'react';
-import { TrendingUp, Percent, ShieldCheck, Info, CheckCircle2, Sparkles, Loader2, RefreshCcw, AlertTriangle } from 'lucide-react';
-import { PortfolioAnalysisReport, PortfolioHealthReport, DashboardSummaryInsight, PortfolioSavingsReport, HoldingRow } from '../types';
+import {
+  ShieldCheck, PieChart, AlertTriangle, Sparkles,
+  RefreshCcw, Loader2, TrendingUp, TrendingDown, Minus,
+} from 'lucide-react';
+import type {
+  PortfolioAnalysisReport, PortfolioHealthReport,
+  PortfolioSavingsReport, HoldingRow,
+} from '../types';
 import { generateHoldingTheses } from '../services/geminiService';
 
-const SummaryCard = ({ title, value, subtext, icon: Icon, color, explanation }: any) => (
-  <div className="bg-white p-6 rounded-[28px] shadow-sm border border-slate-200 flex items-start gap-4 relative group hover:shadow-md transition-all">
-    <div className={`p-4 rounded-2xl bg-${color}-50`}>
-      <Icon className={`w-6 h-6 text-${color}-600`} />
+interface Props {
+  report:        PortfolioAnalysisReport | null;
+  healthReport:  PortfolioHealthReport   | null;
+  savingsReport: PortfolioSavingsReport  | null;
+  insight:       null;
+  holdings?:     HoldingRow[];
+}
+
+// ── Hilfsfunktionen ───────────────────────────────────────────────────────────
+
+const scoreColor = (s: number) =>
+  s >= 7 ? 'text-emerald-700' : s >= 5 ? 'text-amber-700' : 'text-rose-600';
+const scoreBg = (s: number) =>
+  s >= 7 ? 'bg-emerald-50' : s >= 5 ? 'bg-amber-50' : 'bg-rose-50';
+const scoreBorder = (s: number) =>
+  s >= 7 ? 'border-emerald-200' : s >= 5 ? 'border-amber-200' : 'border-rose-200';
+
+const RISK: Record<string, { label: string; sub: string; color: string; bg: string }> = {
+  low:    { label: 'Konservativ', sub: 'Kapitalerhalt im Fokus',  color: 'text-emerald-700', bg: 'bg-emerald-50' },
+  medium: { label: 'Ausgewogen',  sub: 'Rendite & Sicherheit',    color: 'text-amber-700',   bg: 'bg-amber-50'   },
+  high:   { label: 'Wachstum',    sub: 'Maximales Wachstum',      color: 'text-rose-700',    bg: 'bg-rose-50'    },
+};
+
+// ── Metric-Karte ──────────────────────────────────────────────────────────────
+
+const Metric: React.FC<{
+  icon: React.ElementType; label: string; value: string;
+  sub: string; color: string; bg: string; border: string;
+}> = ({ icon: Icon, label, value, sub, color, bg, border }) => (
+  <div className={`bg-white rounded-[22px] border ${border} p-5 flex items-center gap-4`}>
+    <div className={`${bg} p-3 rounded-2xl shrink-0`}>
+      <Icon className={`w-5 h-5 ${color}`} />
     </div>
-    <div className="flex-1">
-      <div className="flex items-center gap-1.5 mb-1">
-        <h4 className="text-slate-400 text-[10px] font-black uppercase tracking-[0.2em]">{title}</h4>
-        <div className="group/info relative">
-          <Info className="w-3 h-3 text-slate-300 cursor-help" />
-          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2 bg-slate-900 text-white text-[9px] rounded-xl opacity-0 group-hover/info:opacity-100 transition-opacity pointer-events-none z-50">
-            {explanation}
-          </div>
-        </div>
-      </div>
-      <p className="text-2xl font-black text-slate-900 tracking-tight">{value}</p>
-      <p className="text-[11px] text-slate-500 font-medium mt-1">{subtext}</p>
+    <div className="min-w-0">
+      <p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.16em] mb-1">{label}</p>
+      <p className={`text-xl font-black leading-none ${color}`}>{value}</p>
+      <p className="text-[10px] text-slate-400 font-medium mt-1 truncate">{sub}</p>
     </div>
   </div>
 );
 
-interface Props {
-  report: PortfolioAnalysisReport | null;
-  healthReport: PortfolioHealthReport | null;
-  savingsReport: PortfolioSavingsReport | null;
-  insight: DashboardSummaryInsight | null;
-  holdings?: HoldingRow[];
-}
+// ── Sentiment-Chip ────────────────────────────────────────────────────────────
+
+const Sentiment: React.FC<{ s: string }> = ({ s }) => {
+  const cfg = s === 'Positiv'
+    ? { cls: 'bg-emerald-50 text-emerald-700', Icon: TrendingUp }
+    : s === 'Negativ'
+    ? { cls: 'bg-rose-50 text-rose-600',       Icon: TrendingDown }
+    : { cls: 'bg-slate-100 text-slate-500',    Icon: Minus };
+  const { cls, Icon } = cfg;
+  return (
+    <span className={`flex items-center gap-1 text-[9px] font-black px-2 py-0.5 rounded-full ${cls}`}>
+      <Icon className="w-3 h-3" />
+      {s}
+    </span>
+  );
+};
+
+// ── Hauptkomponente ───────────────────────────────────────────────────────────
 
 const DashboardSummary: React.FC<Props> = ({ report, healthReport, savingsReport, holdings }) => {
-  const score = healthReport ? `${healthReport.health_score}/10` : (report ? `${report.score}/10` : "...");
-  const savings = savingsReport?.potential_savings || "0€";
 
-  const [theses, setTheses] = useState<{ ticker: string; thesis: string }[]>([]);
-  const [thesesLoading, setThesesLoading] = useState(false);
-  const [thesesLoaded, setThesesLoaded] = useState(false);
+  // Metriken
+  const score    = healthReport?.health_score ?? report?.score ?? null;
+  const divScore = report?.diversification_score ?? null;
+  const riskKey  = report?.risk_level ?? 'medium';
+  const risk     = RISK[riskKey] ?? RISK.medium;
+  const sectors  = report?.sectors?.length ?? 0;
+  const regions  = report?.regions?.length ?? 0;
+  const savings  = savingsReport?.potential_savings ?? '';
+  const hasSavings = savings && savings !== '0€' && savings !== '0' && !savings.startsWith('0');
 
-  // Holding-Daten normalisieren (aus Report oder direkt aus Holdings)
-  const holdingInputs: { name: string; ticker: string; shares: number | null; buyPrice: number | null }[] =
-    report?.holdings?.length
-      ? report.holdings.map(h => ({
-          name: h.name,
-          ticker: h.ticker ?? h.name,
-          shares: null,
-          buyPrice: null,
-        }))
-      : (holdings ?? []).filter(h => !h.watchlist).map(h => ({
-          name: h.ticker.company_name,
-          ticker: h.ticker.symbol,
-          shares: h.shares,
-          buyPrice: h.buy_price,
-        }));
+  // KI-Einschätzungen
+  const inputs = (holdings ?? []).filter(h => !h.watchlist).map(h => ({
+    name:     h.ticker?.company_name ?? h.symbol,
+    ticker:   h.symbol,
+    shares:   h.shares,
+    buyPrice: h.buy_price,
+  }));
+
+  const [theses,  setTheses]  = useState<{ ticker: string; thesis: string }[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [loaded,  setLoaded]  = useState(false);
 
   useEffect(() => {
-    if (holdingInputs.length > 0 && !thesesLoaded) {
-      loadTheses();
-    }
+    if (inputs.length > 0 && !loaded) load();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [report?.holdings?.length, holdings?.length]);
+  }, [holdings?.length]);
 
-  const loadTheses = async () => {
-    if (holdingInputs.length === 0) return;
-    setThesesLoading(true);
+  const load = async () => {
+    if (!inputs.length) return;
+    setLoading(true);
     try {
-      const result = await generateHoldingTheses(holdingInputs.slice(0, 8));
-      setTheses(result);
-      setThesesLoaded(true);
-    } catch {
-      // Thesen sind optional – bei Fehler still
-    } finally {
-      setThesesLoading(false);
-    }
-  };
-
-  const handleRefresh = () => {
-    setThesesLoaded(false);
-    loadTheses();
+      setTheses(await generateHoldingTheses(inputs.slice(0, 8)));
+      setLoaded(true);
+    } catch { /* silent */ } finally { setLoading(false); }
   };
 
   return (
-    <div className="space-y-6">
-      {/* ── Kennzahlen-Karten ──────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <SummaryCard
-          title="Sicherheit"
-          value={score}
-          subtext={healthReport?.status || "Check..."}
-          icon={ShieldCheck}
-          color="emerald"
-          explanation="Dein Risiko-Mix aus Aktien und Anleihen."
+    <div className="space-y-5">
+
+      {/* ── Metriken ───────────────────────────────────────────────────────── */}
+      <div className={`grid gap-4 ${hasSavings ? 'grid-cols-2 lg:grid-cols-4' : 'grid-cols-1 sm:grid-cols-3'}`}>
+        {score != null && (
+          <Metric
+            icon={ShieldCheck}
+            label="Gesundheits-Score"
+            value={`${score}/10`}
+            sub={healthReport?.status ?? (score >= 7 ? 'Solide aufgestellt' : score >= 5 ? 'Verbesserungsbedarf' : 'Handlungsbedarf')}
+            color={scoreColor(score)} bg={scoreBg(score)} border={scoreBorder(score)}
+          />
+        )}
+        {divScore != null && (
+          <Metric
+            icon={PieChart}
+            label="Diversifikation"
+            value={`${divScore}/10`}
+            sub={`${sectors} Sektor${sectors !== 1 ? 'en' : ''} · ${regions} Region${regions !== 1 ? 'en' : ''}`}
+            color={scoreColor(divScore)} bg={scoreBg(divScore)} border={scoreBorder(divScore)}
+          />
+        )}
+        <Metric
+          icon={AlertTriangle}
+          label="Risiko-Profil"
+          value={risk.label}
+          sub={risk.sub}
+          color={risk.color} bg={risk.bg} border="border-slate-200"
         />
-        <SummaryCard
-          title="Markt-Trend"
-          value="Neutral"
-          subtext="Weltmarkt heute"
-          icon={TrendingUp}
-          color="blue"
-          explanation="Aktuelle globale Wirtschaftslage basierend auf Index-Daten."
-        />
-        <SummaryCard
-          title="Ersparnis"
-          value={savings}
-          subtext="Pro Jahr möglich"
-          icon={Percent}
-          color="amber"
-          explanation="Potenzial durch Wechsel auf kostengünstigere Anlageklassen."
-        />
-        <SummaryCard
-          title="Analysetiefe"
-          value="Vollständig"
-          subtext="Präzise Prüfung"
-          icon={CheckCircle2}
-          color="purple"
-          explanation="Ihr Depot wurde anhand von über 15 Metriken validiert."
-        />
+        {hasSavings && (
+          <Metric
+            icon={TrendingUp}
+            label="Sparpotenzial p.a."
+            value={savings}
+            sub={savingsReport?.savings_percentage ? `${savingsReport.savings_percentage} durch ETF-Wechsel` : 'Durch günstigere ETFs'}
+            color="text-blue-700" bg="bg-blue-50" border="border-blue-200"
+          />
+        )}
       </div>
 
-      {/* ── KI-Markteinschätzungen (Ghostwriter) ─────────────────────── */}
-      {holdingInputs.length > 0 && (
-        <div className="bg-white border border-slate-200 rounded-[32px] overflow-hidden shadow-sm">
+      {/* ── KI-Einschätzungen ──────────────────────────────────────────────── */}
+      {inputs.length > 0 && (
+        <div className="bg-white border border-slate-200 rounded-[28px] overflow-hidden">
           <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-blue-600" />
-              <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-[0.2em]">
-                KI-Markteinschätzungen
+              <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-[0.18em]">
+                KI-Einschätzungen
               </h3>
-              <span className="text-[9px] font-black text-blue-600 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-full uppercase tracking-widest">
-                Bildungsinformation
-              </span>
             </div>
             <button
-              onClick={handleRefresh}
-              disabled={thesesLoading}
-              className="flex items-center gap-1.5 text-[9px] font-black text-blue-600 uppercase tracking-widest hover:text-slate-900 transition-colors disabled:opacity-40"
+              onClick={() => { setLoaded(false); load(); }}
+              disabled={loading}
+              className="flex items-center gap-1.5 text-[9px] font-black text-slate-400 hover:text-blue-600 uppercase tracking-widest transition-colors disabled:opacity-40"
             >
-              <RefreshCcw className={`w-3 h-3 ${thesesLoading ? 'animate-spin' : ''}`} />
-              Neu laden
+              <RefreshCcw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
+              Aktualisieren
             </button>
           </div>
 
-          {thesesLoading && (
-            <div className="flex items-center justify-center gap-3 py-10">
-              <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
-              <span className="text-xs font-black text-slate-500 uppercase tracking-widest">
-                KI erstellt Markteinschätzungen...
+          {loading && (
+            <div className="flex items-center justify-center gap-3 py-8">
+              <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                KI analysiert Positionen…
               </span>
             </div>
           )}
 
-          {!thesesLoading && theses.length === 0 && thesesLoaded && (
-            <div className="px-6 py-8 text-center">
-              <Sparkles className="w-8 h-8 text-slate-200 mx-auto mb-3" />
-              <p className="text-[11px] text-slate-400 font-medium">
-                Keine Einschätzungen verfügbar. Bitte erneut versuchen.
-              </p>
-            </div>
-          )}
-
-          {!thesesLoading && theses.length > 0 && (
+          {!loading && theses.length > 0 && (
             <div className="divide-y divide-slate-50">
               {theses.map((t, i) => {
-                const meta = holdingInputs.find(h => h.ticker === t.ticker);
+                const inp = inputs.find(x => x.ticker === t.ticker);
+                const rep = report?.holdings?.find(x => x.ticker === t.ticker || x.name === (inp?.name ?? ''));
                 return (
-                  <div key={i} className="px-6 py-4 hover:bg-slate-50/50 transition-colors">
-                    <div className="flex items-start gap-3">
-                      <div className="shrink-0 w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center">
-                        <span className="text-[9px] font-black text-blue-600 font-mono leading-none text-center">
-                          {t.ticker.slice(0, 4)}
+                  <div key={i} className="px-6 py-4 flex items-start gap-4 hover:bg-slate-50/60 transition-colors">
+                    <div className="shrink-0 w-10 h-10 bg-slate-100 rounded-2xl flex items-center justify-center">
+                      <span className="text-[8px] font-black text-slate-600 font-mono">
+                        {t.ticker.slice(0, 4)}
+                      </span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
+                        <span className="text-sm font-bold text-slate-900 truncate">
+                          {inp?.name ?? t.ticker}
                         </span>
+                        <span className="text-[9px] font-mono text-slate-400">{t.ticker}</span>
+                        {rep?.sentiment && <Sentiment s={rep.sentiment} />}
+                        {inp?.shares != null && (
+                          <span className="text-[9px] text-slate-400 font-medium">{inp.shares} Stk.</span>
+                        )}
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1 flex-wrap">
-                          <span className="text-sm font-black text-slate-900">
-                            {meta?.name ?? t.ticker}
-                          </span>
-                          <span className="text-[9px] font-mono text-slate-400">{t.ticker}</span>
-                          {meta?.shares && (
-                            <span className="text-[9px] font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
-                              {meta.shares} Stk.
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-[12px] text-slate-600 leading-relaxed font-medium">
-                          {t.thesis}
-                        </p>
-                        <p className="text-[9px] text-slate-400 mt-1.5 italic">
-                          KI-generierte Information · keine Anlageberatung · {new Date().toLocaleDateString('de-DE')}
-                        </p>
-                      </div>
+                      <p className="text-[12px] text-slate-600 leading-relaxed">{t.thesis}</p>
                     </div>
                   </div>
                 );
               })}
             </div>
           )}
+
+          {!loading && theses.length === 0 && loaded && (
+            <p className="px-6 py-8 text-center text-[11px] text-slate-400">
+              Keine Einschätzungen verfügbar.
+            </p>
+          )}
+
+          <div className="px-6 py-3 border-t border-slate-50 bg-slate-50/50">
+            <p className="text-[9px] text-slate-400">
+              KI-generiert · keine Anlageberatung · {new Date().toLocaleDateString('de-DE')}
+            </p>
+          </div>
         </div>
       )}
 
-      {/* ── Permanenter Compliance-Hinweis ─────────────────────────────── */}
-      <div className="flex items-start gap-3 bg-slate-50 border border-slate-200 px-5 py-4 rounded-[20px]">
-        <AlertTriangle className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
-        <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
-          Alle Analysen basieren auf aktuellen Marktdaten und KI-Modellen und ersetzen keine professionelle Beratung durch einen zugelassenen Finanzberater. Kein Anlageberatungsangebot gemäß KWG/WpIG.
-        </p>
-      </div>
+      {/* ── Compliance – einzeilig ─────────────────────────────────────────── */}
+      <p className="text-[9px] text-slate-400 font-medium text-center px-4">
+        Alle Analysen sind informativ und ersetzen keine Beratung durch einen zugelassenen Finanzberater · Kein Anlageberatungsangebot gemäß KWG/WpIG
+      </p>
     </div>
   );
 };

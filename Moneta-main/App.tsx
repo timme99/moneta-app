@@ -20,7 +20,8 @@ import { analyzePortfolio } from './services/geminiService';
 import { userService } from './services/userService';
 import { getSupabaseBrowser } from './lib/supabaseBrowser';
 import { loadUserHoldings, addTickersByName } from './services/holdingsService';
-import { Clock, AlertTriangle, ShieldCheck, BarChart3, Loader2, BookMarked, Database, Calendar, FlaskConical } from 'lucide-react';
+import { useSubscription, PLAN_LIMITS } from './lib/useSubscription';
+import { Clock, AlertTriangle, ShieldCheck, BarChart3, Loader2, BookMarked, Database, Calendar, FlaskConical, Lock } from 'lucide-react';
 
 /** Erstellt ein UserAccount-Objekt aus einem Supabase-User */
 function userFromSupabase(sbUser: any): UserAccount {
@@ -50,6 +51,7 @@ const App: React.FC = () => {
   const [lastUpdate, setLastUpdate] = useState<string | null>(null);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const subscription = useSubscription(userAccount?.id);
   const [assistantSeed, setAssistantSeed] = useState<string | null>(null);
   const [legalModal, setLegalModal] = useState<{ isOpen: boolean, type: 'impressum' | 'disclaimer' | 'privacy' }>({
     isOpen: false,
@@ -330,18 +332,25 @@ const App: React.FC = () => {
       <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 w-full">
         {activeView === 'cockpit' && (analysisReport || holdings.length > 0) ? (
           <div className="space-y-6">
-            <div className="flex justify-between items-end mb-4">
+            <div className="flex items-center justify-between mb-2">
               <div>
-                <div className="flex items-center gap-2 mb-1">
-                  <h1 className="text-4xl font-black text-slate-900 tracking-tighter">Cockpit</h1>
-                  <span className="bg-slate-200 text-slate-600 text-[9px] font-black px-2 py-0.5 rounded-md uppercase tracking-widest">Beta</span>
-                </div>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Informative Depot-Übersicht · Keine Anlageberatung</p>
+                <h1 className="text-2xl font-black text-slate-900 tracking-tight">Mein Cockpit</h1>
+                {lastUpdate && analysisReport && (
+                  <p className="text-[10px] text-slate-400 font-medium mt-0.5">
+                    Analysiert {lastUpdate}
+                  </p>
+                )}
               </div>
-              {lastUpdate && analysisReport && (
-                <div className="flex items-center gap-2 text-slate-400 bg-white px-4 py-2 rounded-2xl border border-slate-100 shadow-sm">
-                  <Clock className="w-3 h-3" />
-                  <span className="text-[10px] font-bold uppercase">Stand: {lastUpdate}</span>
+              {analysisReport && (
+                <div className="flex items-center gap-2">
+                  <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest ${
+                    analysisReport.score >= 7 ? 'bg-emerald-50 text-emerald-700' :
+                    analysisReport.score >= 5 ? 'bg-amber-50 text-amber-700' :
+                    'bg-rose-50 text-rose-700'
+                  }`}>
+                    <ShieldCheck className="w-3 h-3" />
+                    Score {analysisReport.score}/10
+                  </div>
                 </div>
               )}
             </div>
@@ -357,12 +366,27 @@ const App: React.FC = () => {
                       {holdings.filter(h => h.watchlist).length > 0 && ` · ${holdings.filter(h => h.watchlist).length} Watchlist`}
                     </p>
                   </div>
-                  <button
-                    onClick={() => setActiveView('portfolio')}
-                    className="text-[9px] font-black text-blue-600 uppercase tracking-widest hover:text-slate-900 transition-colors"
-                  >
-                    Verwalten →
-                  </button>
+                  <div className="flex items-center gap-3">
+                    {(() => {
+                      const totalInvested = holdings
+                        .filter(h => !h.watchlist && h.shares != null && h.buy_price != null)
+                        .reduce((sum, h) => sum + (h.shares! * h.buy_price!), 0);
+                      return totalInvested > 0 ? (
+                        <div className="text-right">
+                          <p className="text-[9px] text-slate-400 font-medium uppercase tracking-widest">Einstand</p>
+                          <p className="text-sm font-black text-slate-700">
+                            {totalInvested.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €
+                          </p>
+                        </div>
+                      ) : null;
+                    })()}
+                    <button
+                      onClick={() => setActiveView('portfolio')}
+                      className="text-[9px] font-black text-blue-600 uppercase tracking-widest hover:text-slate-900 transition-colors"
+                    >
+                      Verwalten →
+                    </button>
+                  </div>
                 </div>
 
                 <div className="divide-y divide-slate-50">
@@ -385,14 +409,7 @@ const App: React.FC = () => {
                         </div>
                       </div>
                       {!h.watchlist && h.shares != null && (
-                        <div className="text-right shrink-0">
-                          <span className="text-sm font-bold text-slate-700">{h.shares} Stk.</span>
-                          {h.buy_price != null && (
-                            <p className="text-[10px] text-blue-500 font-bold">
-                              {(h.shares * h.buy_price).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} € Einstand
-                            </p>
-                          )}
-                        </div>
+                        <span className="text-sm font-bold text-slate-500 shrink-0">{h.shares} Stk.</span>
                       )}
                     </div>
                   ))}
@@ -436,6 +453,27 @@ const App: React.FC = () => {
                     </p>
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* ── Freemium-Gate ───────────────────────────────────────────── */}
+            {!subscription.isPremium && holdings.length >= PLAN_LIMITS.free.maxHoldings && (
+              <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-[24px] p-5 flex items-center gap-4">
+                <div className="bg-blue-100 p-3 rounded-2xl shrink-0">
+                  <Lock className="w-5 h-5 text-blue-600" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-black text-slate-900">Limit erreicht: {PLAN_LIMITS.free.maxHoldings} Positionen</p>
+                  <p className="text-[10px] text-slate-500 font-medium mt-0.5">
+                    Mit Premium unbegrenzte Positionen, 365 Tage Performance-Historie und Kurs-Alerts.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowUpgradeModal(true)}
+                  className="shrink-0 bg-blue-600 text-white text-[9px] font-black uppercase tracking-widest px-4 py-2.5 rounded-xl hover:bg-blue-700 transition-colors whitespace-nowrap"
+                >
+                  Upgrade
+                </button>
               </div>
             )}
 
