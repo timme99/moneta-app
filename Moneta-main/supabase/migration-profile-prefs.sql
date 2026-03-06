@@ -35,7 +35,10 @@ BEGIN
   END IF;
 END $$;
 
--- 3. Update the on_auth_user_created trigger to initialise new columns
+-- 3. Rewrite on_auth_user_created to be silent on failure.
+--    Only id + email are inserted so a missing column never crashes auth.
+--    EXCEPTION block ensures the Magic Link / signUp flow succeeds even if
+--    the profiles schema is temporarily out of sync.
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -43,15 +46,12 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
-  INSERT INTO public.profiles (id, email, full_name, weekly_digest_enabled, newsletter_subscribed)
-  VALUES (
-    NEW.id,
-    NEW.email,
-    COALESCE(NEW.raw_user_meta_data->>'full_name', NEW.raw_user_meta_data->>'name', ''),
-    false,
-    false
-  )
+  INSERT INTO public.profiles (id, email)
+  VALUES (NEW.id, NEW.email)
   ON CONFLICT (id) DO NOTHING;
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING '[handle_new_user] profile insert failed for %: %', NEW.id, SQLERRM;
   RETURN NEW;
 END;
 $$;

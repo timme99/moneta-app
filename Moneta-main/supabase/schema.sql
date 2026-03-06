@@ -23,15 +23,16 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
-  INSERT INTO public.profiles (id, email, full_name, weekly_digest_enabled, newsletter_subscribed)
-  VALUES (
-    NEW.id,
-    NEW.email,
-    COALESCE(NEW.raw_user_meta_data->>'full_name', NEW.raw_user_meta_data->>'name', ''),
-    false,
-    false
-  )
+  -- Only insert the two guaranteed columns so a schema mismatch never
+  -- crashes this trigger and blocks the Magic Link / sign-up flow.
+  INSERT INTO public.profiles (id, email)
+  VALUES (NEW.id, NEW.email)
   ON CONFLICT (id) DO NOTHING;
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  -- Silent failure: log but never let a profiles insert error propagate
+  -- to the auth layer and cause a 500 on Magic Link / signUp.
+  RAISE WARNING '[handle_new_user] profile insert failed for %: %', NEW.id, SQLERRM;
   RETURN NEW;
 END;
 $$;
