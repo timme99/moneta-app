@@ -2,8 +2,14 @@
  * holdingsService.ts
  *
  * Zentraler Service für alle Depot-Operationen mit Supabase.
- * Kapselt das Lesen und Schreiben von Holdings und Ticker-Mapping,
- * damit App.tsx und PortfolioInput.tsx dieselbe Logik nutzen.
+ *
+ * Schema der holdings-Tabelle:
+ *   id UUID, user_id UUID, symbol TEXT, shares NUMERIC, buy_price NUMERIC,
+ *   buy_date DATE, notes TEXT, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ
+ *   UNIQUE (user_id, symbol)
+ *
+ * Watchlist-Einträge: shares = null und buy_price = null
+ * Echte Positionen:   shares > 0 und buy_price > 0
  */
 
 import { getSupabaseBrowser } from '../lib/supabaseBrowser';
@@ -13,16 +19,18 @@ import type { TickerEntry } from '../lib/supabase-types';
 // ── Holdings laden ────────────────────────────────────────────────────────────
 
 /**
- * Lädt alle Holdings eines Users aus Supabase und gibt sie als HoldingRow-Array zurück.
- * Gibt ein leeres Array zurück wenn kein Client oder kein User vorhanden.
+ * Lädt alle Holdings eines Users aus Supabase.
+ * Führt anschließend einen Lookup in ticker_mapping (per symbol) durch,
+ * um Metadaten (Firmenname, Sektor, …) zu ergänzen.
  */
 export async function loadUserHoldings(userId: string): Promise<HoldingRow[]> {
   const sb = getSupabaseBrowser();
   if (!sb || !userId) return [];
 
-  const { data, error } = await sb
+  // Schritt 1: Holdings laden
+  const { data: holdingsData, error } = await sb
     .from('holdings')
-    .select('id, shares, buy_price, watchlist, ticker_mapping(*)')
+    .select('id, symbol, shares, buy_price, buy_date, notes')
     .eq('user_id', userId)
     .order('created_at', { ascending: false });
 
@@ -30,27 +38,40 @@ export async function loadUserHoldings(userId: string): Promise<HoldingRow[]> {
     console.error('[holdingsService] loadUserHoldings error:', error.message);
     return [];
   }
+  if (!holdingsData || holdingsData.length === 0) return [];
 
-  return (data ?? []).map((row: any) => ({
-    id:        row.id,
-    ticker:    row.ticker_mapping as TickerEntry,
-    shares:    row.shares,
-    buy_price: row.buy_price,
-    watchlist: row.watchlist,
+  // Schritt 2: Ticker-Metadaten für alle Symbole laden
+  const symbols = (holdingsData as any[]).map((h) => h.symbol as string);
+  const { data: tickerData } = await sb
+    .from('ticker_mapping')
+    .select('*')
+    .in('symbol', symbols);
+
+  const tickerMap = new Map<string, TickerEntry>();
+  (tickerData ?? []).forEach((t: any) => tickerMap.set(t.symbol, t as TickerEntry));
+
+  // Schritt 3: Daten zusammenführen
+  return (holdingsData as any[]).map((row) => ({
+    id:        row.id as string,
+    symbol:    row.symbol as string,
+    ticker:    tickerMap.get(row.symbol) ?? null,
+    shares:    row.shares as number | null,
+    buy_price: row.buy_price as number | null,
+    buy_date:  row.buy_date as string | null,
+    notes:     row.notes as string | null,
+    watchlist: row.shares == null || row.buy_price == null,
   }));
 }
 
-// ── Ticker via Gemini + Supabase auflösen und als Holding speichern ───────────
+// ── Einzelne Holding speichern ────────────────────────────────────────────────
 
 export interface AddHoldingOptions {
-  /** User-ID des eingeloggten Users */
-  userId: string;
-  /** ID des Eintrags in ticker_mapping */
-  tickerId: number;
-  /** Stückzahl (null = Watchlist-Eintrag) */
-  shares?: number | null;
-  /** Kaufpreis pro Stück (null = Watchlist-Eintrag) */
+  userId:   string;
+  symbol:   string;
+  shares?:  number | null;
   buyPrice?: number | null;
+  buyDate?: string | null;
+  notes?:   string | null;
 }
 
 export interface AddHoldingResult {
@@ -59,39 +80,108 @@ export interface AddHoldingResult {
 }
 
 /**
- * Fügt eine Holding in Supabase ein oder aktualisiert sie (upsert).
- * Gibt { success: true } bei Erfolg, { success: false, error } bei Fehler zurück.
+ * Speichert oder aktualisiert eine Holding in Supabase.
+ *
+ * Strategie (robust gegen verschiedene DB-Zustände):
+ *  1. Optimistisch: upsert mit onConflict:'user_id,symbol' (benötigt UNIQUE-Constraint)
+ *  2. Fallback:     SELECT → UPDATE oder INSERT (falls UNIQUE-Constraint noch fehlt)
+ *
+ * Tipp: Führe die Migration in supabase/schema.sql aus, um den UNIQUE-Constraint
+ * anzulegen – dann ist nur Schritt 1 nötig und der DB-Roundtrip entfällt.
  */
 export async function addHolding(opts: AddHoldingOptions): Promise<AddHoldingResult> {
   const sb = getSupabaseBrowser();
-  if (!sb) return { success: false, error: 'Supabase nicht konfiguriert.' };
+  if (!sb)          return { success: false, error: 'Supabase nicht konfiguriert.' };
   if (!opts.userId) return { success: false, error: 'Kein User eingeloggt.' };
+  if (!opts.symbol) return { success: false, error: 'Kein Ticker-Symbol angegeben.' };
 
-  const isWatchlist = opts.shares == null || opts.buyPrice == null;
+  const symbol = opts.symbol.trim().toUpperCase();
+  const row = {
+    user_id:   opts.userId,
+    symbol,
+    shares:    opts.shares   ?? null,
+    buy_price: opts.buyPrice ?? null,
+    buy_date:  opts.buyDate  ?? null,
+    notes:     opts.notes    ?? null,
+  };
 
-  const { error } = await sb.from('holdings').upsert(
-    {
-      user_id:   opts.userId,
-      ticker_id: opts.tickerId,
-      watchlist: isWatchlist,
-      shares:    isWatchlist ? null : opts.shares,
-      buy_price: isWatchlist ? null : opts.buyPrice,
-    },
-    { onConflict: 'user_id,ticker_id' }
-  );
+  // ── 1. Optimistischer Upsert (schnell, benötigt UNIQUE-Constraint) ──────────
+  const { error: upsertErr } = await sb
+    .from('holdings')
+    .upsert(row, { onConflict: 'user_id,symbol' });
 
-  if (error) {
-    console.error('[holdingsService] addHolding error:', error.message);
-    return { success: false, error: error.message };
+  if (!upsertErr) return { success: true };
+
+  // ── 2. Fallback: manuelles Upsert ohne UNIQUE-Constraint ────────────────────
+  // Tritt auf wenn die Migration noch nicht ausgeführt wurde.
+  const needsFallback =
+    upsertErr.message.includes('no unique or exclusion constraint') ||
+    upsertErr.message.includes('PGRST116') ||
+    (upsertErr as any).code === '42P10';
+
+  if (needsFallback) {
+    console.warn('[holdingsService] UNIQUE-Constraint fehlt – nutze SELECT+INSERT/UPDATE Fallback. Bitte Migration ausführen.');
+
+    const { data: existing, error: selectErr } = await sb
+      .from('holdings')
+      .select('id')
+      .eq('user_id', opts.userId)
+      .eq('symbol', symbol)
+      .maybeSingle();
+
+    if (selectErr) {
+      return { success: false, error: selectErr.message };
+    }
+
+    if (existing) {
+      const { error: updateErr } = await sb
+        .from('holdings')
+        .update({
+          shares:    row.shares,
+          buy_price: row.buy_price,
+          buy_date:  row.buy_date,
+          notes:     row.notes,
+        })
+        .eq('id', (existing as any).id)
+        .eq('user_id', opts.userId);
+      if (updateErr) return { success: false, error: updateErr.message };
+    } else {
+      const { error: insertErr } = await sb
+        .from('holdings')
+        .insert(row);
+      if (insertErr) return { success: false, error: insertErr.message };
+    }
+    return { success: true };
   }
 
-  return { success: true };
+  // ── 3. Anderer Fehler: Klare Fehlermeldung ────────────────────────────────
+  console.error('[holdingsService] addHolding error:', upsertErr.message);
+
+  // Schema-Problem: Migration noch nicht ausgeführt
+  if (
+    upsertErr.message.includes('"symbol"') ||
+    upsertErr.message.includes("'symbol'") ||
+    upsertErr.message.includes('"ticker"') ||
+    upsertErr.message.includes("'ticker'") ||
+    upsertErr.message.includes('column') ||
+    upsertErr.message.includes('schema cache')
+  ) {
+    return {
+      success: false,
+      error:
+        'Datenbank-Schema veraltet: Bitte die Migration in supabase/schema.sql im Supabase SQL-Editor ausführen.',
+    };
+  }
+
+  return { success: false, error: upsertErr.message };
 }
+
+// ── Bulk-Add: Namen → Gemini → ticker_mapping → holdings ────────────────────
 
 /**
  * Löst eine Liste von Ticker-Namen/Symbolen über Gemini auf,
- * speichert sie in ticker_mapping (server-seitig via API) und
- * legt Watchlist-Einträge in holdings an.
+ * speichert sie in ticker_mapping (via Server-API) und legt
+ * Watchlist-Einträge in holdings an.
  *
  * Gibt die Anzahl der erfolgreich hinzugefügten Holdings zurück.
  */
@@ -102,17 +192,17 @@ export async function addTickersByName(
   if (names.length === 0) return { count: 0 };
 
   const sb = getSupabaseBrowser();
-  if (!sb) return { count: 0, error: 'Supabase nicht konfiguriert.' };
+  if (!sb)     return { count: 0, error: 'Supabase nicht konfiguriert.' };
   if (!userId) return { count: 0, error: 'Nicht eingeloggt – bitte zuerst anmelden.' };
 
-  // Schritt 1: Gemini löst Namen auf und speichert sie in ticker_mapping (awaited)
+  // Schritt 1: Gemini löst Namen → Symbole auf und schreibt in ticker_mapping (server-seitig)
   let resolved: Array<{ ticker: string }> = [];
   try {
     const resp = await fetch('/api/gemini', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        type: 'resolve_ticker',
+        type:    'resolve_ticker',
         payload: { names },
         userId,
       }),
@@ -129,52 +219,177 @@ export async function addTickersByName(
 
   if (resolved.length === 0) return { count: 0 };
 
-  // Schritt 2: Gültige Symbole aus der Antwort filtern (keine Leerzeichen = kein Klarname)
+  // Schritt 2: Gültige Börsensymbole filtern (kein Leerzeichen = kein Firmenname)
   const symbols = resolved
-    .map((t) => t.ticker?.trim())
+    .map((t) => t.ticker?.trim().toUpperCase())
     .filter((s): s is string => !!s && !s.includes(' '));
 
   if (symbols.length === 0) return { count: 0 };
 
-  // Schritt 3: IDs aus ticker_mapping holen (browser client, RLS: authenticated)
-  const { data: mapped, error: mapErr } = await sb
-    .from('ticker_mapping')
-    .select('id, symbol')
-    .in('symbol', symbols);
-
-  if (mapErr) {
-    console.error('[holdingsService] ticker_mapping SELECT error:', mapErr.message);
-    return { count: 0, error: mapErr.message };
-  }
-
-  if (!mapped || mapped.length === 0) {
-    return { count: 0, error: 'Keine passenden Ticker in der Datenbank gefunden.' };
-  }
-
-  // Schritt 4: Holdings als Watchlist-Einträge anlegen
-  const rows = (mapped as Array<{ id: number; symbol: string }>).map((t) => ({
+  // Schritt 3: Direkt als Watchlist-Einträge in holdings speichern
+  const rows = symbols.map((symbol) => ({
     user_id:   userId,
-    ticker_id: t.id,
-    watchlist: true,
-    shares:    null,
-    buy_price: null,
+    symbol,
+    shares:    null as null,
+    buy_price: null as null,
   }));
 
+  // Optimistisch: Upsert mit UNIQUE-Constraint
   const { error: insertErr } = await sb
     .from('holdings')
-    .upsert(rows, { onConflict: 'user_id,ticker_id' });
+    .upsert(rows, { onConflict: 'user_id,symbol' });
 
-  if (insertErr) {
-    console.error('[holdingsService] holdings upsert error:', insertErr.message);
-    return { count: 0, error: insertErr.message };
+  if (!insertErr) return { count: symbols.length };
+
+  // Fallback: kein UNIQUE-Constraint → einzeln insert
+  const needsFallback =
+    insertErr.message.includes('no unique or exclusion constraint') ||
+    insertErr.message.includes('PGRST116') ||
+    (insertErr as any).code === '42P10';
+
+  if (needsFallback) {
+    console.warn('[holdingsService] Bulk-Upsert Fallback: UNIQUE-Constraint fehlt.');
+    let inserted = 0;
+    for (const r of rows) {
+      const { data: ex } = await sb.from('holdings').select('id').eq('user_id', userId).eq('symbol', r.symbol).maybeSingle();
+      if (!ex) {
+        const { error: e2 } = await sb.from('holdings').insert(r);
+        if (!e2) inserted++;
+      } else {
+        inserted++;
+      }
+    }
+    return { count: inserted };
   }
 
-  return { count: mapped.length };
+  console.error('[holdingsService] holdings upsert error:', insertErr.message);
+
+  if (
+    insertErr.message.includes('"symbol"') ||
+    insertErr.message.includes("'symbol'") ||
+    insertErr.message.includes('"ticker"') ||
+    insertErr.message.includes("'ticker'") ||
+    insertErr.message.includes('column') ||
+    insertErr.message.includes('schema cache')
+  ) {
+    return {
+      count: 0,
+      error: 'Datenbank-Schema veraltet: Bitte die Migration in supabase/schema.sql im Supabase SQL-Editor ausführen.',
+    };
+  }
+
+  return { count: 0, error: insertErr.message };
+}
+
+// ── Broker-Import: strukturierte Transaktionen speichern ─────────────────────
+
+/**
+ * Eine einzelne, bereits aufgelöste Broker-Transaktion.
+ * rawSymbol kann ein Börsensymbol (AAPL) ODER eine ISIN (US0378331005) sein.
+ * shares und avgPrice sind bereits als gewichteter Durchschnitt aller Käufe berechnet.
+ */
+export interface BrokerPosition {
+  rawSymbol: string;   // ISIN oder Ticker
+  name?: string;       // Firmenname (optional, für ticker_mapping)
+  shares: number;
+  avgPrice: number;
+  date?: string;       // frühestes Kaufdatum (ISO)
+}
+
+export interface AddBrokerResult {
+  count: number;
+  skipped: number;
+  error?: string;
 }
 
 /**
- * Löscht eine einzelne Holding aus Supabase.
+ * Importiert vorverarbeitete Broker-Positionen in holdings.
+ *
+ * Ablauf:
+ *  1. ISINs → Ticker auflösen (via Gemini, falls Symbol kein gültiger Ticker)
+ *  2. Jede Position via addHolding speichern
  */
+export async function addBrokerHoldings(
+  positions: BrokerPosition[],
+  userId: string
+): Promise<AddBrokerResult> {
+  if (!positions.length) return { count: 0, skipped: 0 };
+
+  const sb = getSupabaseBrowser();
+  if (!sb)     return { count: 0, skipped: 0, error: 'Supabase nicht konfiguriert.' };
+  if (!userId) return { count: 0, skipped: 0, error: 'Nicht eingeloggt.' };
+
+  const ISIN_RE = /^[A-Z]{2}[A-Z0-9]{10}$/i;
+  const TICKER_RE = /^[A-Z0-9.]{1,7}$/;
+
+  // Symbole klassifizieren
+  const isinPositions  = positions.filter((p) => ISIN_RE.test(p.rawSymbol.trim()));
+  const tickerPositions = positions.filter((p) => !ISIN_RE.test(p.rawSymbol.trim()));
+
+  // ISINs über Gemini auflösen
+  const resolvedMap = new Map<string, string>(); // ISIN → ticker
+
+  if (isinPositions.length > 0) {
+    try {
+      const resp = await fetch('/api/gemini', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type:    'resolve_ticker',
+          payload: { names: isinPositions.map((p) => p.rawSymbol) },
+          userId,
+        }),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        const tickers: Array<{ input?: string; ticker: string }> = data.tickers ?? [];
+        tickers.forEach((t, i) => {
+          const original = isinPositions[i]?.rawSymbol ?? t.input ?? '';
+          if (t.ticker && TICKER_RE.test(t.ticker.trim().toUpperCase())) {
+            resolvedMap.set(original.toUpperCase(), t.ticker.trim().toUpperCase());
+          }
+        });
+      }
+    } catch {
+      // Weiter ohne ISIN-Auflösung – Skip-Counter erhöhen
+    }
+  }
+
+  let count = 0;
+  let skipped = 0;
+
+  for (const pos of positions) {
+    const raw = pos.rawSymbol.trim().toUpperCase();
+    let symbol: string;
+
+    if (ISIN_RE.test(raw)) {
+      const resolved = resolvedMap.get(raw);
+      if (!resolved) { skipped++; continue; }
+      symbol = resolved;
+    } else if (TICKER_RE.test(raw)) {
+      symbol = raw;
+    } else {
+      skipped++;
+      continue;
+    }
+
+    const result = await addHolding({
+      userId,
+      symbol,
+      shares:   pos.shares,
+      buyPrice: pos.avgPrice,
+      buyDate:  pos.date ?? null,
+    });
+
+    if (result.success) count++;
+    else skipped++;
+  }
+
+  return { count, skipped };
+}
+
+// ── Holding löschen ───────────────────────────────────────────────────────────
+
 export async function deleteHolding(holdingId: string, userId: string): Promise<AddHoldingResult> {
   const sb = getSupabaseBrowser();
   if (!sb) return { success: false, error: 'Supabase nicht konfiguriert.' };
@@ -189,6 +404,5 @@ export async function deleteHolding(holdingId: string, userId: string): Promise<
     console.error('[holdingsService] deleteHolding error:', error.message);
     return { success: false, error: error.message };
   }
-
   return { success: true };
 }

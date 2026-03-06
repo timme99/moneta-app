@@ -97,31 +97,36 @@ export interface Database {
       };
 
       // ── holdings ──────────────────────────────────────────────────────────
+      // Watchlist-Einträge haben shares = null und buy_price = null.
+      // Echte Positionen haben shares > 0 und buy_price > 0.
       holdings: {
         Row: {
           id: string;
           user_id: string;
-          ticker_id: number;
-          watchlist: boolean;
+          symbol: string;
           shares: number | null;
           buy_price: number | null;
+          buy_date: string | null;
+          notes: string | null;
           created_at: string;
           updated_at: string;
         };
         Insert: {
           id?: string;
           user_id: string;
-          ticker_id: number;
-          watchlist?: boolean;
+          symbol: string;
           shares?: number | null;
           buy_price?: number | null;
+          buy_date?: string | null;
+          notes?: string | null;
           created_at?: string;
           updated_at?: string;
         };
         Update: {
-          watchlist?: boolean;
           shares?: number | null;
           buy_price?: number | null;
+          buy_date?: string | null;
+          notes?: string | null;
           updated_at?: string;
         };
         Relationships: [];
@@ -175,6 +180,68 @@ export interface Database {
           weekly_digest?: boolean;
           auto_newsletter?: boolean;
           confirmed?: boolean;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+
+      // ── portfolio_snapshots ───────────────────────────────────────────────
+      // Tägliche Depot-Wert-Snapshots für historische Performance.
+      // total_value    = Depotwert zu Tagesschlusskursen
+      // total_invested = Summe aller Einstandswerte
+      portfolio_snapshots: {
+        Row: {
+          id: string;
+          user_id: string;
+          snapshot_date: string;  // DATE als ISO-String 'YYYY-MM-DD'
+          total_value: number;
+          total_invested: number | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          snapshot_date: string;
+          total_value: number;
+          total_invested?: number | null;
+          created_at?: string;
+        };
+        Update: {
+          total_value?: number;
+          total_invested?: number | null;
+        };
+        Relationships: [];
+      };
+
+      // ── subscriptions ─────────────────────────────────────────────────────
+      // Premium-Pläne; wird via Stripe-Webhook befüllt.
+      // plan: 'free' | 'premium' | 'pro'
+      subscriptions: {
+        Row: {
+          id: string;
+          user_id: string;
+          plan: 'free' | 'premium' | 'pro';
+          stripe_customer_id: string | null;
+          stripe_subscription_id: string | null;
+          valid_until: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          plan?: 'free' | 'premium' | 'pro';
+          stripe_customer_id?: string | null;
+          stripe_subscription_id?: string | null;
+          valid_until?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          plan?: 'free' | 'premium' | 'pro';
+          stripe_customer_id?: string | null;
+          stripe_subscription_id?: string | null;
+          valid_until?: string | null;
           updated_at?: string;
         };
         Relationships: [];

@@ -13,6 +13,8 @@ import AuthModal from './components/AuthModal';
 import PortfolioInput from './components/PortfolioInput';
 import EarningsCalendar from './components/EarningsCalendar';
 import ScenarioAnalysis from './components/ScenarioAnalysis';
+import PerformanceChart from './components/PerformanceChart';
+import UpgradeModal from './components/UpgradeModal';
 import { PortfolioAnalysisReport, PortfolioHealthReport, PortfolioSavingsReport, UserAccount, HoldingRow } from './types';
 import { analyzePortfolio } from './services/geminiService';
 import { userService } from './services/userService';
@@ -47,6 +49,7 @@ const App: React.FC = () => {
   const [isGlobalLoading, setIsGlobalLoading] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<string | null>(null);
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [assistantSeed, setAssistantSeed] = useState<string | null>(null);
   const [legalModal, setLegalModal] = useState<{ isOpen: boolean, type: 'impressum' | 'disclaimer' | 'privacy' }>({
     isOpen: false,
@@ -76,19 +79,21 @@ const App: React.FC = () => {
     if (holds.length === 0) return '';
     const lines = holds.map((h, i) => {
       const t = h.ticker;
+      const displayName = t?.company_name ?? h.symbol;
       const pos = h.watchlist
         ? 'Watchlist'
         : `${h.shares} Stück | Kaufpreis: ${h.buy_price?.toFixed(2)} €`;
-      const meta = [
+      const meta = t ? [
         t.sector      ? `Sektor: ${t.sector}`           : null,
         t.industry    ? `Industrie: ${t.industry}`       : null,
         t.competitors ? `Wettbewerber: ${t.competitors}` : null,
         t.pe_ratio_static != null ? `KGV: ${t.pe_ratio_static}` : null,
-      ].filter(Boolean).join(' | ');
-      const desc = t.description_static
+      ].filter(Boolean).join(' | ') : '';
+      const desc = t?.description_static
         ? `\n   Beschreibung: ${t.description_static}`
         : '';
-      return `${i + 1}. ${t.company_name} (${t.symbol}) | ${pos}${meta ? ` | ${meta}` : ''}${desc}`;
+      const notesLine = h.notes ? `\n   Investment-These: ${h.notes}` : '';
+      return `${i + 1}. ${displayName} (${h.symbol}) | ${pos}${meta ? ` | ${meta}` : ''}${desc}${notesLine}`;
     });
     return [
       'Depot-Analyse:',
@@ -365,14 +370,16 @@ const App: React.FC = () => {
                     <div key={h.id} className="flex items-center gap-4 px-6 py-3 hover:bg-slate-50/50 transition-colors">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-sm font-bold text-slate-900 truncate">{h.ticker.company_name}</span>
-                          <span className="text-[10px] text-slate-400 font-mono">{h.ticker.symbol}</span>
+                          <span className="text-sm font-bold text-slate-900 truncate">
+                            {h.ticker?.company_name ?? h.symbol}
+                          </span>
+                          <span className="text-[10px] text-slate-400 font-mono">{h.symbol}</span>
                           {h.watchlist && (
                             <span className="text-[9px] font-black text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded-full uppercase tracking-widest">
                               Watchlist
                             </span>
                           )}
-                          {h.ticker.sector && (
+                          {h.ticker?.sector && (
                             <span className="text-[9px] text-slate-400 font-medium">{h.ticker.sector}</span>
                           )}
                         </div>
@@ -430,6 +437,14 @@ const App: React.FC = () => {
                   </div>
                 )}
               </div>
+            )}
+
+            {/* ── Performance-Chart ──────────────────────────────────────── */}
+            {holdings.filter(h => !h.watchlist).length > 0 && (
+              <PerformanceChart
+                userId={userAccount?.id}
+                onUpgradeClick={() => setShowUpgradeModal(true)}
+              />
             )}
 
             {/* ── Schnellzugriff auf Depot-Tools ────────────────────────── */}
@@ -634,6 +649,12 @@ const App: React.FC = () => {
         isOpen={showAuthModal}
         onClose={() => setShowAuthModal(false)}
         onLogin={() => { /* wird via onAuthStateChange in useEffect gehandelt */ }}
+      />
+
+      <UpgradeModal
+        isOpen={showUpgradeModal}
+        onClose={() => setShowUpgradeModal(false)}
+        userId={userAccount?.id}
       />
     </div>
   );

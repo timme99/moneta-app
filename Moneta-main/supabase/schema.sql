@@ -159,38 +159,127 @@ ON CONFLICT (symbol) DO NOTHING;
 
 
 -- ============================================================
--- 3. HOLDINGS – User-Portfolio mit RLS (inkl. Watchlist-Support)
+-- 3. HOLDINGS – User-Portfolio (symbol-basiert, kein ticker_id FK)
 -- ============================================================
+-- Watchlist-Einträge: shares und buy_price sind NULL
+-- Echte Positionen:   shares und buy_price gesetzt
 CREATE TABLE IF NOT EXISTS public.holdings (
   id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id     UUID        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  ticker_id   INTEGER     NOT NULL REFERENCES public.ticker_mapping(id) ON DELETE RESTRICT,
-  watchlist   BOOLEAN     NOT NULL DEFAULT false,            -- true = Watchlist-Eintrag ohne Kaufdaten
-  shares      NUMERIC(15, 6) CHECK (watchlist = true OR (shares IS NOT NULL AND shares > 0)),
-  buy_price   NUMERIC(15, 4) CHECK (watchlist = true OR (buy_price IS NOT NULL AND buy_price > 0)),
+  symbol      TEXT        NOT NULL,                          -- Börsensymbol, z. B. "AAPL", "SAP.DE"
+  shares      NUMERIC(15, 6),                               -- NULL = Watchlist-Eintrag
+  buy_price   NUMERIC(15, 4),                               -- NULL = Watchlist-Eintrag
+  buy_date    DATE,                                         -- optionales Kaufdatum
+  notes       TEXT,                                         -- Investment-These / Notizen
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (user_id, ticker_id)  -- Pro User nur eine Zeile je Ticker
+  UNIQUE (user_id, symbol)                                  -- Pro User nur eine Zeile je Symbol
 );
 
--- Watchlist-Spalte und angepasste Constraints für bestehende Installationen
-ALTER TABLE public.holdings
-  ADD COLUMN IF NOT EXISTS watchlist BOOLEAN NOT NULL DEFAULT false;
--- Alte strikte Constraints entfernen (falls vorhanden) und durch watchlist-kompatible ersetzen
+-- ── Migration für bestehende Installationen ───────────────────────────────────
+-- Behandelt alle bekannten Vorgänger-Schemata:
+--   a) Spalte 'ticker' TEXT (direkte Ticker-Speicherung) → umbenennen
+--   b) Spalte 'ticker_id' INTEGER (FK auf ticker_mapping)  → nullable machen
+--   c) Spalte 'symbol' fehlt noch                          → hinzufügen
+--   d) UNIQUE-Constraint auf (user_id, symbol) fehlt       → hinzufügen
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- a) 'ticker' TEXT → 'symbol' umbenennen (wenn symbol noch nicht existiert)
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'holdings'
+      AND column_name = 'ticker'
+      AND data_type IN ('text', 'character varying')
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'holdings'
+      AND column_name = 'symbol'
+  ) THEN
+    ALTER TABLE public.holdings RENAME COLUMN ticker TO symbol;
+    RAISE NOTICE 'holdings: Spalte ticker → symbol umbenannt';
+  END IF;
+END $$;
+
+-- b) 'ticker_id' INTEGER → nullable + 'symbol' als Text-Spalte ergänzen
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'holdings'
+      AND column_name = 'ticker_id'
+  ) THEN
+    ALTER TABLE public.holdings ALTER COLUMN ticker_id DROP NOT NULL;
+    RAISE NOTICE 'holdings: ticker_id nullable gemacht';
+  END IF;
+END $$;
+
+-- c) 'symbol' hinzufügen falls noch nicht vorhanden
+ALTER TABLE public.holdings ADD COLUMN IF NOT EXISTS symbol TEXT;
+
+-- c2) 'watchlist' boolean-Spalte entfernen falls vorhanden (jetzt UI-computed)
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'holdings'
+      AND column_name = 'watchlist'
+  ) THEN
+    -- symbol aus watchlist ableiten falls leer (Fallback: id)
+    UPDATE public.holdings SET symbol = COALESCE(symbol, id::text) WHERE symbol IS NULL;
+    ALTER TABLE public.holdings DROP COLUMN IF EXISTS watchlist;
+    RAISE NOTICE 'holdings: watchlist-Spalte entfernt';
+  END IF;
+END $$;
+
+-- c3) symbol-Werte füllen (Fallback: UUID als Platzhalter, damit NOT NULL möglich)
+UPDATE public.holdings SET symbol = COALESCE(symbol, id::text) WHERE symbol IS NULL;
+
+-- c4) symbol NOT NULL setzen
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'holdings'
+      AND column_name = 'symbol' AND is_nullable = 'YES'
+  ) THEN
+    ALTER TABLE public.holdings ALTER COLUMN symbol SET NOT NULL;
+  END IF;
+END $$;
+
+-- d) Optionale Spalten ergänzen
+ALTER TABLE public.holdings ADD COLUMN IF NOT EXISTS buy_date DATE;
+ALTER TABLE public.holdings ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE public.holdings ALTER COLUMN shares DROP NOT NULL;
+ALTER TABLE public.holdings ALTER COLUMN buy_price DROP NOT NULL;
+
+-- e) Alte Check-Constraints entfernen (falls vorhanden)
 ALTER TABLE public.holdings
   DROP CONSTRAINT IF EXISTS holdings_shares_check,
-  DROP CONSTRAINT IF EXISTS holdings_buy_price_check;
-ALTER TABLE public.holdings
-  ALTER COLUMN shares DROP NOT NULL,
-  ALTER COLUMN buy_price DROP NOT NULL;
-ALTER TABLE public.holdings
+  DROP CONSTRAINT IF EXISTS holdings_buy_price_check,
   DROP CONSTRAINT IF EXISTS holdings_shares_watchlist_check,
   DROP CONSTRAINT IF EXISTS holdings_buy_price_watchlist_check;
-ALTER TABLE public.holdings
-  ADD CONSTRAINT holdings_shares_watchlist_check
-    CHECK (watchlist = true OR (shares IS NOT NULL AND shares > 0)),
-  ADD CONSTRAINT holdings_buy_price_watchlist_check
-    CHECK (watchlist = true OR (buy_price IS NOT NULL AND buy_price > 0));
+
+-- f) UNIQUE-Constraint auf (user_id, symbol) hinzufügen falls nicht vorhanden
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint c
+    JOIN pg_class t ON c.conrelid = t.oid
+    JOIN pg_namespace n ON t.relnamespace = n.oid
+    WHERE n.nspname = 'public' AND t.relname = 'holdings'
+      AND c.contype = 'u'
+      AND array_to_string(
+            ARRAY(SELECT a.attname FROM pg_attribute a
+                  WHERE a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+                  ORDER BY a.attnum), ',')
+          = 'user_id,symbol'
+  ) THEN
+    ALTER TABLE public.holdings ADD CONSTRAINT holdings_user_symbol_unique UNIQUE (user_id, symbol);
+    RAISE NOTICE 'holdings: UNIQUE(user_id, symbol) hinzugefügt';
+  END IF;
+END $$;
 
 -- Automatisches updated_at
 CREATE OR REPLACE FUNCTION public.set_updated_at()
@@ -287,6 +376,80 @@ CREATE POLICY "news_cache_select_authenticated"
 
 
 -- ============================================================
+-- 7. PORTFOLIO SNAPSHOTS – Tägliche Depot-Wert-Historie
+-- ============================================================
+-- Ein Eintrag pro User und Tag (via Cron-Job).
+-- total_value    = Gesamtwert des Depots zu Schlusskursen
+-- total_invested = Summe aller Einstandswerte (Stückzahl × Kaufpreis)
+-- Differenz → Performance (absolut + %)
+CREATE TABLE IF NOT EXISTS public.portfolio_snapshots (
+  id             UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id        UUID        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  snapshot_date  DATE        NOT NULL,
+  total_value    NUMERIC(15, 2) NOT NULL,
+  total_invested NUMERIC(15, 2),
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (user_id, snapshot_date)
+);
+
+-- RLS: User sieht/ändert nur eigene Snapshots
+ALTER TABLE public.portfolio_snapshots ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "snapshots_select_own"
+  ON public.portfolio_snapshots FOR SELECT
+  USING (auth.uid() = user_id);
+
+CREATE POLICY "snapshots_insert_own"
+  ON public.portfolio_snapshots FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "snapshots_service_role"
+  ON public.portfolio_snapshots FOR ALL
+  TO service_role
+  USING (true)
+  WITH CHECK (true);
+
+
+-- ============================================================
+-- 8. SUBSCRIPTIONS – Premium-Pläne (Stripe)
+-- ============================================================
+-- plan: 'free' | 'premium' | 'pro'
+-- valid_until NULL = läuft nicht ab (z. B. Jahres-Abo via Stripe managed)
+-- stripe_customer_id + stripe_subscription_id für Webhook-Reconciliation
+CREATE TABLE IF NOT EXISTS public.subscriptions (
+  id                     UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id                UUID        NOT NULL UNIQUE REFERENCES auth.users(id) ON DELETE CASCADE,
+  plan                   TEXT        NOT NULL DEFAULT 'free'
+                           CHECK (plan IN ('free', 'premium', 'pro')),
+  stripe_customer_id     TEXT,
+  stripe_subscription_id TEXT,
+  valid_until            TIMESTAMPTZ,
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- updated_at-Trigger
+DROP TRIGGER IF EXISTS subscriptions_set_updated_at ON public.subscriptions;
+CREATE TRIGGER subscriptions_set_updated_at
+  BEFORE UPDATE ON public.subscriptions
+  FOR EACH ROW
+  EXECUTE FUNCTION public.set_updated_at();
+
+-- RLS: User liest eigene; Schreiben nur via Service-Role (Stripe Webhook)
+ALTER TABLE public.subscriptions ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "subscriptions_select_own"
+  ON public.subscriptions FOR SELECT
+  USING (auth.uid() = user_id);
+
+CREATE POLICY "subscriptions_service_role"
+  ON public.subscriptions FOR ALL
+  TO service_role
+  USING (true)
+  WITH CHECK (true);
+
+
+-- ============================================================
 -- INDEX-Optimierungen
 -- ============================================================
 CREATE INDEX IF NOT EXISTS idx_ticker_mapping_symbol       ON public.ticker_mapping (symbol);
@@ -296,3 +459,5 @@ CREATE INDEX IF NOT EXISTS idx_price_cache_ticker_id       ON public.price_cache
 CREATE INDEX IF NOT EXISTS idx_price_cache_last_updated    ON public.price_cache (last_updated);
 CREATE INDEX IF NOT EXISTS idx_news_cache_ticker           ON public.news_cache (ticker);
 CREATE INDEX IF NOT EXISTS idx_news_cache_cached_at        ON public.news_cache (cached_at);
+CREATE INDEX IF NOT EXISTS idx_snapshots_user_date         ON public.portfolio_snapshots (user_id, snapshot_date DESC);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_user          ON public.subscriptions (user_id);

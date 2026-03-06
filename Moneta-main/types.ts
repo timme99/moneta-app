@@ -1,11 +1,19 @@
 import type { TickerEntry } from './lib/supabase-types';
 
-/** Eine Position im Depot (echte Position oder Watchlist-Eintrag) */
+/** Eine Position im Depot (echte Position oder Watchlist-Eintrag).
+ *  Watchlist-Einträge: shares === null oder buy_price === null.
+ *  ticker kommt aus ticker_mapping (Lookup per symbol) – kann null sein. */
 export interface HoldingRow {
   id: string;
-  ticker: TickerEntry;
+  /** Börsensymbol, z. B. "AAPL", "SAP.DE" – direkt in holdings gespeichert */
+  symbol: string;
+  /** Metadaten aus ticker_mapping (Name, Sektor, …) – null wenn nicht in DB */
+  ticker: TickerEntry | null;
   shares: number | null;
   buy_price: number | null;
+  buy_date?: string | null;
+  notes?: string | null;
+  /** UI-Hilfswert: true wenn shares oder buy_price null → Watchlist-Eintrag */
   watchlist: boolean;
 }
 
