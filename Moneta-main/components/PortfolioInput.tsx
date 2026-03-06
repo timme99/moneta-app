@@ -234,6 +234,17 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
     const sharesNum = shares.trim()   ? parseFloat(shares.replace(',', '.'))   : null;
     const priceNum  = buyPrice.trim() ? parseFloat(buyPrice.replace(',', '.')) : null;
 
+    if (sharesNum !== null && (isNaN(sharesNum) || sharesNum <= 0)) {
+      setSaveError('Stückzahl muss größer als 0 sein.');
+      setIsSaving(false);
+      return;
+    }
+    if (priceNum !== null && (isNaN(priceNum) || priceNum <= 0)) {
+      setSaveError('Kaufpreis muss größer als 0 sein.');
+      setIsSaving(false);
+      return;
+    }
+
     const result = await addHolding({
       userId:    effectiveUserId,
       symbol:    selected.symbol,
@@ -294,7 +305,15 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
   // ── Bearbeiten ────────────────────────────────────────────────────────────
   const handleEdit = (h: HoldingRow) => {
     setEditingId(h.id);
-    setSelected(h.ticker ?? null);
+    // Falls kein ticker_mapping-Eintrag vorhanden, minimales Objekt erstellen
+    // damit handleAdd() nicht durch `if (!selected) return` blockiert wird
+    const tickerOrStub = h.ticker ?? ({
+      id: 0, symbol: h.symbol, company_name: h.symbol,
+      sector: null, industry: null, description_static: null,
+      pe_ratio_static: null, competitors: null,
+      created_at: '', updated_at: '',
+    } as TickerEntry);
+    setSelected(tickerOrStub);
     setQuery(h.ticker ? `${h.ticker.company_name} (${h.ticker.symbol})` : h.symbol);
     setShares(h.shares != null ? String(h.shares) : '');
     setBuyPrice(h.buy_price != null ? String(h.buy_price) : '');
@@ -460,7 +479,17 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ onAnalyze, isLoading, u
       if (!existing.name && nameCol) existing.name = String(row[nameCol] ?? '').trim() || undefined;
       if (!existing.date && dateCol) {
         const rawDate = String(row[dateCol] ?? '').trim();
-        if (rawDate) existing.date = rawDate;
+        if (rawDate) {
+          // DD.MM.YYYY oder DD.MM.YY → ISO YYYY-MM-DD (Supabase DATE-Spalte)
+          const parts = rawDate.split('.');
+          if (parts.length === 3 && parts[0].length <= 2) {
+            const [d, m, y] = parts;
+            const year = y.length === 2 ? `20${y}` : y;
+            existing.date = `${year}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+          } else {
+            existing.date = rawDate;
+          }
+        }
       }
       bySymbol.set(rawSym, existing);
     }
