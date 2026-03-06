@@ -609,10 +609,10 @@ const App: React.FC = () => {
                   </p>
                 </div>
                 <PortfolioInput
+                  holdings={holdings}
                   onAnalyze={handlePortfolioAnalysis}
                   isLoading={isGlobalLoading}
                   userAccount={userAccount}
-                  onHoldingsChange={setHoldings}
                   onRefresh={refreshHoldings}
                   onSendToAssistant={(text) => {
                     setAssistantSeed(text);
