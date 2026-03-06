@@ -150,17 +150,17 @@ async function testProfilesTrigger() {
     return;
   }
 
-  const { status, body } = await get('/api/auth/verify-profile', {
+  const { status, body } = await get('/api/admin/system-check?task=verify-db', {
     headers: { Authorization: `Bearer ${cronSecret}` },
   });
 
   if (status === 401) {
-    fail('Verify-Profile: Authentifizierung fehlgeschlagen', 'CRON_SECRET stimmt nicht überein');
+    fail('Verify-DB: Authentifizierung fehlgeschlagen', 'CRON_SECRET stimmt nicht überein');
     return;
   }
 
   if (status !== 200) {
-    fail(`Verify-Profile: HTTP ${status}`, body.error ?? JSON.stringify(body).slice(0, 100));
+    fail(`Verify-DB: HTTP ${status}`, body.error ?? JSON.stringify(body).slice(0, 100));
     return;
   }
 
@@ -210,7 +210,7 @@ async function testResendDigest() {
     return;
   }
 
-  const { status, body } = await get('/api/cron/test-digest', {
+  const { status, body } = await get('/api/admin/system-check?task=test-email', {
     headers: { Authorization: `Bearer ${cronSecret}` },
   });
 
