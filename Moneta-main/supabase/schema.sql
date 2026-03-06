@@ -64,7 +64,9 @@ CREATE POLICY "profiles_update_own"
 -- Run migration-profile-prefs.sql to migrate data from old column names.
 ALTER TABLE public.profiles
   ADD COLUMN IF NOT EXISTS weekly_digest_enabled  BOOLEAN NOT NULL DEFAULT false,
-  ADD COLUMN IF NOT EXISTS newsletter_subscribed  BOOLEAN NOT NULL DEFAULT false;
+  ADD COLUMN IF NOT EXISTS newsletter_subscribed  BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS cloud_sync_enabled     BOOLEAN NOT NULL DEFAULT true,
+  ADD COLUMN IF NOT EXISTS legal_updates_enabled  BOOLEAN NOT NULL DEFAULT true;
 
 
 -- ============================================================
