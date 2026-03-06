@@ -34,13 +34,19 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
     e.preventDefault();
     if (!sb || !email.trim()) return;
     setLoading(true); setError(null);
+    // Hardcoded redirect – do NOT use window.location.origin; it can differ from
+    // the Supabase Site URL and cause a 500 on the auth server.
     const { error: err } = await sb.auth.signInWithOtp({
       email: email.trim(),
-      options: { emailRedirectTo: window.location.origin },
+      options: { emailRedirectTo: 'https://www.moneta-invest.de/' },
     });
     setLoading(false);
-    if (err) setError(err.message);
-    else setSent(true);
+    if (err) {
+      console.error('Magic Link Error:', err.message, (err as any).status, err);
+      setError(err.message);
+    } else {
+      setSent(true);
+    }
   };
 
   // ── Email + Password sign-in ───────────────────────────────────────────────
@@ -53,8 +59,12 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
       password,
     });
     setLoading(false);
-    if (err) setError(err.message);
-    else onClose(); // onAuthStateChange in App.tsx übernimmt den Rest
+    if (err) {
+      console.error('SignIn Error:', err.message, (err as any).status, err);
+      setError(err.message);
+    } else {
+      onClose(); // onAuthStateChange in App.tsx übernimmt den Rest
+    }
   };
 
   // ── Email + Password sign-up ───────────────────────────────────────────────
@@ -66,11 +76,15 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
     const { error: err } = await sb.auth.signUp({
       email: email.trim(),
       password,
-      options: { emailRedirectTo: window.location.origin },
+      options: { emailRedirectTo: 'https://www.moneta-invest.de/' },
     });
     setLoading(false);
-    if (err) setError(err.message);
-    else setSuccessMsg('Konto erstellt! Bitte bestätige deine E-Mail-Adresse.');
+    if (err) {
+      console.error('SignUp Error:', err.message, (err as any).status, err);
+      setError(err.message);
+    } else {
+      setSuccessMsg('Konto erstellt! Bitte bestätige deine E-Mail-Adresse.');
+    }
   };
 
   // ── Google OAuth ───────────────────────────────────────────────────────────
