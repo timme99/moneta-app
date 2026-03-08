@@ -21,7 +21,7 @@ import { userService } from './services/userService';
 import { getSupabaseBrowser } from './lib/supabaseBrowser';
 import { loadUserHoldings, addTickersByName } from './services/holdingsService';
 import { useSubscription, PLAN_LIMITS } from './lib/useSubscription';
-import { Clock, AlertTriangle, ShieldCheck, BarChart3, Loader2, BookMarked, Database, Calendar, FlaskConical, Lock } from 'lucide-react';
+import { Clock, AlertTriangle, ShieldCheck, BarChart3, Loader2, BookMarked, Database, Calendar, FlaskConical, Lock, Plus, X } from 'lucide-react';
 
 /** Erstellt ein UserAccount-Objekt aus einem Supabase-User */
 function userFromSupabase(sbUser: any): UserAccount {
@@ -58,6 +58,7 @@ const App: React.FC = () => {
     isOpen: false,
     type: 'disclaimer'
   });
+  const [showDepotDrawer, setShowDepotDrawer] = useState(false);
 
   // ── Cockpit-Import (Screenshot / Excel – für EmptyState-Buttons) ──────────
   const [cockpitImportState, setCockpitImportState] = useState<{ loading: boolean; message: string; error: string }>({
@@ -391,10 +392,11 @@ const App: React.FC = () => {
                       ) : null;
                     })()}
                     <button
-                      onClick={() => setActiveView('portfolio')}
-                      className="text-[9px] font-black text-blue-600 uppercase tracking-widest hover:text-slate-900 transition-colors"
+                      onClick={() => setShowDepotDrawer(true)}
+                      className="flex items-center gap-1 text-[9px] font-black text-blue-600 uppercase tracking-widest hover:text-slate-900 transition-colors"
                     >
-                      Verwalten →
+                      <Plus className="w-3 h-3" />
+                      Aktie hinzufügen
                     </button>
                   </div>
                 </div>
@@ -499,18 +501,18 @@ const App: React.FC = () => {
             {holdings.length > 0 && (
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <button
-                  onClick={() => setActiveView('portfolio')}
+                  onClick={() => setShowDepotDrawer(true)}
                   className={`flex items-center gap-4 p-5 rounded-[24px] border transition-all text-left group hover:shadow-md ${
-                    activeView === 'portfolio' ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-slate-200 hover:border-blue-300'
+                    showDepotDrawer ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-slate-200 hover:border-blue-300'
                   }`}
                 >
-                  <div className={`p-3 rounded-[14px] ${activeView === 'portfolio' ? 'bg-white/20' : 'bg-blue-50 group-hover:bg-blue-100'}`}>
-                    <Database className={`w-5 h-5 ${activeView === 'portfolio' ? 'text-white' : 'text-blue-600'}`} />
+                  <div className={`p-3 rounded-[14px] ${showDepotDrawer ? 'bg-white/20' : 'bg-blue-50 group-hover:bg-blue-100'}`}>
+                    <Database className={`w-5 h-5 ${showDepotDrawer ? 'text-white' : 'text-blue-600'}`} />
                   </div>
                   <div>
-                    <p className={`text-[10px] font-black uppercase tracking-widest ${activeView === 'portfolio' ? 'text-blue-100' : 'text-slate-400'}`}>Verwalten</p>
-                    <p className={`text-sm font-black mt-0.5 ${activeView === 'portfolio' ? 'text-white' : 'text-slate-900'}`}>Depot verwalten</p>
-                    <p className={`text-[10px] font-medium mt-0.5 ${activeView === 'portfolio' ? 'text-blue-100' : 'text-slate-400'}`}>{holdings.length} Position{holdings.length !== 1 ? 'en' : ''}</p>
+                    <p className={`text-[10px] font-black uppercase tracking-widest ${showDepotDrawer ? 'text-blue-100' : 'text-slate-400'}`}>Verwalten</p>
+                    <p className={`text-sm font-black mt-0.5 ${showDepotDrawer ? 'text-white' : 'text-slate-900'}`}>Depot verwalten</p>
+                    <p className={`text-[10px] font-medium mt-0.5 ${showDepotDrawer ? 'text-blue-100' : 'text-slate-400'}`}>{holdings.length} Position{holdings.length !== 1 ? 'en' : ''}</p>
                   </div>
                 </button>
 
@@ -692,6 +694,56 @@ const App: React.FC = () => {
       </footer>
 
       <Legal isOpen={legalModal.isOpen} onClose={() => setLegalModal({ ...legalModal, isOpen: false })} type={legalModal.type} />
+
+      {/* ── Depot-Drawer (seitliches Panel) ─────────────────────────────── */}
+      {showDepotDrawer && (
+        <>
+          {/* Overlay */}
+          <div
+            className="fixed inset-0 bg-black/50 z-40 backdrop-blur-sm"
+            onClick={() => setShowDepotDrawer(false)}
+          />
+          {/* Drawer Panel */}
+          <div className="fixed top-0 right-0 h-full w-full max-w-xl bg-white z-50 overflow-y-auto shadow-2xl border-l border-slate-200 flex flex-col">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 sticky top-0 bg-white z-10 shrink-0">
+              <div>
+                <h2 className="text-sm font-black text-slate-900 uppercase tracking-widest">Depot verwalten</h2>
+                <p className="text-[9px] text-slate-400 font-medium mt-0.5">Aktien & ETFs hinzufügen · Watchlist pflegen · KI-Analyse starten</p>
+              </div>
+              <button
+                onClick={() => setShowDepotDrawer(false)}
+                className="text-slate-400 hover:text-slate-900 transition-colors p-2 rounded-xl hover:bg-slate-100"
+                aria-label="Drawer schließen"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 flex-1 overflow-y-auto">
+              <div className="flex items-center gap-2 bg-amber-50 border border-amber-100 rounded-2xl px-5 py-3 mb-4">
+                <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
+                <p className="text-[10px] text-amber-700 font-bold">
+                  Keine Anlageberatung. KI-generierte Informationen dienen ausschließlich Bildungszwecken.
+                </p>
+              </div>
+              <PortfolioInput
+                holdings={holdings}
+                onAnalyze={(text) => {
+                  setShowDepotDrawer(false);
+                  handlePortfolioAnalysis(text);
+                }}
+                isLoading={isGlobalLoading}
+                userAccount={userAccount}
+                onRefresh={refreshHoldings}
+                onSendToAssistant={(text) => {
+                  setShowDepotDrawer(false);
+                  setAssistantSeed(text);
+                  setActiveView('assistant');
+                }}
+              />
+            </div>
+          </div>
+        </>
+      )}
 
       <AuthModal
         isOpen={showAuthModal}
