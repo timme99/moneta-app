@@ -224,32 +224,27 @@ const App: React.FC = () => {
       refreshProfile(account.id);
     };
 
-    if (sb) {
-      // 1. Aktuelle Session prüfen (OAuth-Callback, Magic Link, persistierte Session)
-      sb.auth.getSession().then(({ data: { session } }) => {
-        if (session?.user) {
-          applyUser(userFromSupabase(session.user));
-        } else {
-          // Kein Supabase-Login → localStorage-Fallback (alte Mock-User)
-          userService.fetchUserData().then(u => { if (u) applyUser(u); });
-        }
-      });
+    if (!sb) return; // Supabase nicht konfiguriert → Login-Aufforderung anzeigen
 
-      // 2. Auth-State-Changes (Login nach Magic Link oder OAuth-Redirect)
-      const { data: { subscription } } = sb.auth.onAuthStateChange((event, session) => {
-        if (event === 'SIGNED_IN' && session?.user) {
-          applyUser(userFromSupabase(session.user));
-        } else if (event === 'SIGNED_OUT') {
-          setUserAccount(null);
-          setHoldings([]);
-        }
-      });
+    // 1. Bestehende Session prüfen (OAuth-Callback, Magic Link, persistierte Session)
+    sb.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        applyUser(userFromSupabase(session.user));
+      }
+      // Kein aktiver Login → userAccount bleibt null → Login-Aufforderung sichtbar
+    });
 
-      return () => subscription.unsubscribe();
-    } else {
-      // Supabase nicht konfiguriert → localStorage-Fallback
-      userService.fetchUserData().then(u => { if (u) applyUser(u); });
-    }
+    // 2. Auth-State-Änderungen (Login nach Magic Link oder OAuth-Redirect)
+    const { data: { subscription } } = sb.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_IN' && session?.user) {
+        applyUser(userFromSupabase(session.user));
+      } else if (event === 'SIGNED_OUT') {
+        setUserAccount(null);
+        setHoldings([]);
+      }
+    });
+
+    return () => subscription.unsubscribe();
   }, [loadHoldingsForUser]);
 
   // ── Supabase Realtime: Holdings-Änderungen live empfangen ────────────────
