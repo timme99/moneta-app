@@ -402,22 +402,37 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
   const parseBrokerData = (rows: any[]): BrokerPosition[] | null => {
     if (!rows.length) return null;
     const headers = Object.keys(rows[0]);
-    const lower = headers.map((h) => h.toLowerCase().trim());
 
-    // Spalten-Mapping: suche nach passenden Spaltennamen
+    // Bidirektionales Substring-Matching: "Wertpapierbezeichnung" matcht Kandidat "bezeichnung"
+    // und "Stück" matcht Kandidat "stückzahl"
     const findCol = (...candidates: string[]) =>
-      headers.find((h) => candidates.includes(h.toLowerCase().trim()));
+      headers.find((h) => {
+        const hl = h.toLowerCase().trim();
+        return candidates.some((c) => {
+          const cl = c.toLowerCase().trim();
+          return hl === cl || hl.includes(cl) || cl.includes(hl);
+        });
+      });
 
-    const sharesCol = findCol('stückzahl', 'stck', 'anzahl', 'menge', 'stück', 'shares', 'qty');
-    const priceCol  = findCol('kurs', 'preis', 'kurs (€)', 'kurs (eur)', 'preis (€)', 'preis (eur)',
-                              'ausführungskurs', 'price', 'kurs in eur', 'preis in eur');
-    const symbolCol = findCol('ticker', 'symbol', 'isin', 'wkn');
-    const nameCol   = findCol('name', 'unternehmen', 'bezeichnung', 'wertpapier', 'description');
+    const sharesCol = findCol(
+      'stückzahl', 'stck', 'anzahl', 'menge', 'stück', 'shares', 'qty',
+      'nominale', 'stk', 'nominals', 'bestand', 'stk. / nominale', 'quantity',
+    );
+    const priceCol  = findCol(
+      'kurs', 'preis', 'kurs (€)', 'kurs (eur)', 'preis (€)', 'preis (eur)',
+      'ausführungskurs', 'price', 'kurs in eur', 'preis in eur',
+      'kurs pro stück', 'kurs/stück', 'kaufkurs',
+    );
+    const symbolCol = findCol('ticker', 'symbol', 'isin', 'wkn', 'kennung', 'wertpapierkennung');
+    const nameCol   = findCol(
+      'name', 'unternehmen', 'bezeichnung', 'wertpapier', 'description',
+      'wertpapierbezeichnung', 'titel', 'papier',
+    );
     const typeCol   = findCol('typ', 'art', 'transaktion', 'type', 'beschreibung', 'transaktionstyp');
     const dateCol   = findCol('datum', 'date', 'buchungstag', 'ausführungsdatum', 'handelsdatum');
 
-    // Broker-Format: braucht mindestens symbol + shares + price
-    if (!sharesCol || !priceCol || !symbolCol) return null;
+    // Broker-Format: braucht mindestens (symbol ODER name) + shares + price
+    if (!sharesCol || !priceCol || (!symbolCol && !nameCol)) return null;
 
     // Nur Kauf-Transaktionen (keine Dividenden, Gebühren, Verkäufe)
     const BUY_TYPES = ['kauf', 'buy', 'purchase', 'sparplan', 'savings plan', 'einzahlung', 'wertpapierkauf'];
@@ -437,7 +452,10 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
     const bySymbol = new Map<string, { totalShares: number; totalCost: number; name?: string; date?: string }>();
 
     for (const row of buys) {
-      const rawSym = String(row[symbolCol] ?? '').trim().replace(/\s/g, '');
+      // Bevorzuge ISIN/Ticker-Spalte; falls nicht vorhanden, Firmenname als Schlüssel nutzen
+      const rawSym = symbolCol
+        ? String(row[symbolCol] ?? '').trim().replace(/\s/g, '')
+        : (nameCol ? String(row[nameCol] ?? '').trim() : '');
       if (!rawSym || rawSym.length < 1) continue;
 
       const sharesRaw = String(row[sharesCol] ?? '').replace(',', '.').replace(/[^0-9.]/g, '');
@@ -545,13 +563,16 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
         body: JSON.stringify({ imageBase64: base64, mimeType }),
       });
       if (!resp.ok) throw new Error('Bild-Analyse fehlgeschlagen');
-      const { tickers } = await resp.json();
-      if (!tickers || tickers.length === 0) {
+      // API gibt { tickers: [], names: [] } zurück – beide kombinieren
+      // tickers = bereits bekannte Börsenkürzel, names = Firmennamen für Gemini-Auflösung
+      const { tickers = [], names = [] } = await resp.json();
+      const allIdentifiers: string[] = [...tickers, ...names];
+      if (allIdentifiers.length === 0) {
         setImportState({ loading: false, message: '', error: 'Keine Aktien erkannt. Bitte stelle sicher, dass der Screenshot gut lesbar ist und Aktien-/ETF-Positionen enthält.' });
         return;
       }
-      const count = await bulkAddTickers(tickers);
-      setImportState({ loading: false, message: `${count} Ticker aus Screenshot importiert.`, error: '' });
+      const count = await bulkAddTickers(allIdentifiers);
+      setImportState({ loading: false, message: `${count} Position${count !== 1 ? 'en' : ''} aus Screenshot importiert.`, error: '' });
     } catch (e: any) {
       setImportState({ loading: false, message: '', error: e?.message ?? 'Fehler beim Bild-Import.' });
     }
@@ -584,13 +605,19 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
         return;
       }
 
+      // Zahlen normalisieren: Gemini kann deutsche Dezimalschreibweise zurückgeben
+      const toNum = (v: unknown): number => {
+        if (typeof v === 'number') return v;
+        return parseFloat(String(v ?? '0').replace(',', '.').replace(/[^0-9.-]/g, '')) || 0;
+      };
+
       // Convert to BrokerPosition format
       const brokerPositions = positions.map((p: any) => ({
-        rawSymbol: p.symbol,
-        name: p.name,
-        shares: p.shares,
-        avgPrice: p.price ?? 0,
-      }));
+        rawSymbol: String(p.symbol ?? '').trim(),
+        name: p.name ? String(p.name).trim() : undefined,
+        shares:   toNum(p.shares),
+        avgPrice: toNum(p.price),
+      })).filter((p: BrokerPosition) => p.rawSymbol.length > 0 && p.shares > 0);
 
       let effectiveUserId = userId;
       if (sb) {
@@ -640,41 +667,71 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
         return;
       }
 
-      // Dynamic column mapping – find best matching header for symbol, shares, price
+      // Dynamic column mapping – bidirektionales Substring-Matching
       const headers = Object.keys(rows[0]);
       const findCol = (...candidates: string[]) =>
-        headers.find((h) => candidates.includes(h.trim().toLowerCase()));
+        headers.find((h) => {
+          const hl = h.toLowerCase().trim();
+          return candidates.some((c) => {
+            const cl = c.toLowerCase().trim();
+            return hl === cl || hl.includes(cl) || cl.includes(hl);
+          });
+        });
 
       const symbolCol = findCol(
-        'ticker', 'symbol', 'isin', 'wkn', 'symbol/ticker',
-        'kürzel', 'wertpapier', 'name',
+        'ticker', 'symbol', 'isin', 'wkn', 'symbol/ticker', 'kürzel', 'kennung', 'wertpapierkennung',
+      );
+      const nameCol = findCol(
+        'name', 'unternehmen', 'bezeichnung', 'wertpapier',
+        'wertpapierbezeichnung', 'titel', 'description',
       );
       const sharesCol = findCol(
         'stückzahl', 'stck', 'anzahl', 'shares', 'qty', 'menge', 'stück',
+        'nominale', 'stk', 'bestand', 'stk. / nominale', 'quantity',
       );
       const priceCol = findCol(
         'kurs', 'preis', 'price', 'kaufkurs', 'kauf', 'buy price',
         'kurs (€)', 'preis (€)', 'kurs in eur', 'preis in eur',
+        'kurs pro stück', 'ausführungskurs',
       );
 
-      if (!symbolCol) {
+      // Weder Symbol noch Name gefunden → klare Fehlermeldung
+      if (!symbolCol && !nameCol) {
         const found = headers.join(', ') || 'keine Spalten erkannt';
         setImportState({
           loading: false, message: '',
-          error: `Keine Ticker-Spalte gefunden. Erkannte Spalten: ${found}. Bitte benenne eine Spalte "Ticker", "Symbol" oder "ISIN".`,
+          error: `Keine Wertpapier-Spalte gefunden. Erkannte Spalten: ${found}. Bitte benenne eine Spalte "Ticker", "Symbol", "ISIN" oder "Name".`,
         });
         return;
       }
+
+      // Nur Namen-Spalte vorhanden (kein ISIN/Ticker) → Gemini löst Namen auf
+      if (!symbolCol && nameCol && !(sharesCol && priceCol)) {
+        const names = rows
+          .map((r: any) => String(r[nameCol] ?? '').trim())
+          .filter((n) => n.length > 1);
+        if (names.length === 0) {
+          setImportState({ loading: false, message: '', error: 'Keine Aktiennamen erkannt.' });
+          return;
+        }
+        const count = await bulkAddTickers(names);
+        setImportState({ loading: false, message: `${count} Positionen aus Namen importiert.`, error: '' });
+        return;
+      }
+
+      // Effektive Symbolspalte: Ticker/ISIN bevorzugen, sonst Name
+      const effectiveSymCol = symbolCol ?? nameCol!;
 
       // If we have shares + price columns, treat as full broker positions
       if (sharesCol && priceCol) {
         const positions: BrokerPosition[] = rows
           .map((r: any) => {
-            const sym = String(r[symbolCol] ?? '').trim().replace(/\s/g, '');
+            const sym = String(r[effectiveSymCol] ?? '').trim().replace(/\s/g, '');
             const sh  = parseFloat(String(r[sharesCol] ?? '').replace(',', '.').replace(/[^0-9.]/g, ''));
             const pr  = parseFloat(String(r[priceCol]  ?? '').replace(',', '.').replace(/[^0-9.]/g, ''));
+            const nm  = nameCol ? String(r[nameCol] ?? '').trim() : undefined;
             if (!sym || isNaN(sh) || sh <= 0 || isNaN(pr) || pr <= 0) return null;
-            return { rawSymbol: sym, shares: sh, avgPrice: pr } as BrokerPosition;
+            return { rawSymbol: sym, shares: sh, avgPrice: pr, name: nm } as BrokerPosition;
           })
           .filter((p): p is BrokerPosition => p !== null);
 
@@ -703,9 +760,9 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
         return;
       }
 
-      // Ticker-only import (watchlist)
+      // Ticker-only import (watchlist) – Symbole oder Namen übergeben, Gemini löst auf
       const values = rows
-        .map((r: any) => String(r[symbolCol] ?? '').trim())
+        .map((r: any) => String(r[effectiveSymCol] ?? '').trim())
         .filter((v) => v.length >= 1);
 
       if (values.length === 0) {

@@ -44,37 +44,57 @@ export default async function handler(req: any, res: any) {
 
     const isPdf = mimeType === 'application/pdf';
 
-    const imagePrompt = `Du bist ein Börsen-Experte für Ticker-Symbole. Deine einzige Aufgabe: Extrahiere alle Aktien, ETFs und Fonds aus diesem Bild und gib AUSSCHLIESSLICH die offiziellen Börsenkürzel zurück.
+    const imagePrompt = `Du bist ein Finanz-Experte. Analysiere dieses Bild und extrahiere alle sichtbaren Aktien, ETFs und Fonds.
 
-KRITISCH: NIEMALS Firmennamen oder Wörter zurückgeben – nur Börsensymbole!
-Übersetze Namen ZWINGEND in Kürzel:
-  "Allianz" → "ALV.DE"
-  "Mercedes", "Daimler" → "MBG.DE"
-  "Volkswagen", "VW" → "VOW3.DE"
-  "Apple" → "AAPL"
-  "Microsoft" → "MSFT"
-  "MSCI World" → "EUNL"
-  "Vanguard All-World" → "VWRL"
-  "S&P 500 ETF" → "SXR8"
+Antworte NUR mit einem JSON-Array. Für jede Position ein Objekt:
+- Falls du das Börsenkürzel sicher kennst: { "ticker": "AAPL" }
+- Falls nur der Name sichtbar ist:         { "name": "RTL Group" }
 
-Antworte NUR mit einem JSON-Array der Börsenkürzel – kein anderer Text:
-["AAPL","ALV.DE","EUNL"]
+Bekannte Kürzel (Pflichtliste):
+Allianz→ALV.DE, Mercedes/Daimler→MBG.DE, VW/Volkswagen→VOW3.DE, SAP→SAP.DE,
+Deutsche Bank→DBK.DE, Deutsche Telekom→DTE.DE, Siemens→SIE.DE, BASF→BAS.DE,
+BMW→BMW.DE, Bayer→BAYN.DE, Münchener Rück→MUV2.DE, Infineon→IFX.DE,
+Beiersdorf→BEI.DE, Puma→PUM.DE, RTL Group→RRTL.DE,
+Apple→AAPL, Microsoft→MSFT, Amazon→AMZN, Google/Alphabet→GOOGL, Tesla→TSLA,
+Barrick Gold→GOLD, Deutsche Bank→DBK.DE,
+iShares Core MSCI World/EUNL→EUNL, iShares Core S&P 500→SXR8,
+Vanguard FTSE All-World→VWRL, MSCI World ETF→EUNL,
+Core MSCI EM IMI→IS3N.DE, iShares MSCI EM IMI→IS3N.DE,
+Russell 2000→ZPRR.DE oder IWM, MSCI Robotics→2B76.DE
 
-Falls nichts Erkennbares im Bild: []`;
+Beispiel-Output:
+[{ "ticker": "AAPL" }, { "ticker": "ALV.DE" }, { "name": "Core MSCI EM IMI USD" }]
 
-    const pdfPrompt = `Du bist ein Finanz-Experte. Analysiere diesen Broker-Kontoauszug oder Depot-PDF (Trade Republic, Scalable Capital, Comdirect, DKB oder ähnliche).
+Falls nichts erkennbar: []
+Kein anderer Text außer dem JSON-Array.`;
 
-Extrahiere ALLE Wertpapier-Positionen und gib AUSSCHLIESSLICH ein JSON-Array zurück:
-[{"symbol":"AAPL","shares":10,"price":150.25,"name":"Apple Inc."},{"symbol":"DE0008404005","shares":5,"price":220.00}]
+    const pdfPrompt = `Du bist ein Finanz-Experte. Analysiere diesen Broker-Depotauszug oder Kontoauszug (Trade Republic, Scalable Capital, Comdirect, DKB, ING oder ähnliche).
+
+Extrahiere ALLE Wertpapier-Positionen und gib AUSSCHLIESSLICH ein JSON-Array zurück.
+
+KRITISCH – Zahlenformat:
+- Alle Zahlen MÜSSEN mit Punkt als Dezimaltrennzeichen angegeben werden (JSON-Standard)
+- FALSCH: "shares": "0,784621" oder 0,784621
+- RICHTIG: "shares": 0.784621
+- Deutsche Komma-Schreibweise (z.B. "82,12" oder "0,784621") in Punkt umrechnen!
+
+Format jeder Position:
+{"symbol":"ISIN_ODER_KÜRZEL","shares":0.784621,"price":82.12,"name":"Firmenname"}
 
 Regeln:
-- symbol: Börsenkürzel (z.B. "AAPL", "ALV.DE") ODER ISIN (z.B. "DE0008404005") – bevorzuge Börsenkürzel
-- shares: Stückzahl als Zahl (Pflicht)
-- price: Kaufpreis PRO STÜCK in EUR als Zahl (falls Gesamtbetrag: Betrag ÷ Stückzahl)
-- name: Firmenname (optional)
-- Nur tatsächliche Positionen/Käufe – keine Verkäufe, Dividenden oder Gebühren
-- Falls kein Preis erkennbar: "price": null setzen
+- symbol: ISIN (z.B. "DE0005200000") WENN kein Ticker bekannt, sonst Börsenkürzel (z.B. "BEI.DE")
+- shares: Stückzahl/Nominale als Dezimalzahl MIT PUNKT (Pflicht, > 0)
+- price: Kurs pro Stück als Dezimalzahl MIT PUNKT (Spalte "Kurs pro Stück" oder "Kurs")
+  Falls nur Gesamtwert bekannt: Gesamtwert ÷ Stückzahl rechnen
+- name: Wertpapierbezeichnung (optional aber hilfreich)
+- Alle aktuellen Depot-Positionen einschließen
 - Falls keine Positionen erkennbar: []
+
+Beispiel Trade Republic:
+[
+  {"symbol":"DE0005200000","shares":0.784621,"price":82.12,"name":"Beiersdorf AG"},
+  {"symbol":"IE00B4L5Y983","shares":13.612357,"price":113.00,"name":"iShares Core MSCI World"}
+]
 
 Antworte NUR mit dem JSON-Array – kein anderer Text!`;
 
@@ -97,19 +117,30 @@ Antworte NUR mit dem JSON-Array – kein anderer Text!`;
 
     if (isPdf) {
       // Parse broker positions from PDF
+      // Normalise a raw value that may be a German-decimal string ("0,784621") or a number
+      const toNum = (v: unknown): number => {
+        if (typeof v === 'number') return v;
+        const s = String(v ?? '').replace(',', '.').replace(/[^0-9.-]/g, '');
+        return parseFloat(s) || 0;
+      };
+
       let positions: Array<{ symbol: string; shares: number; price: number | null; name?: string }> = [];
       try {
         const parsed = JSON.parse(stripJsonFences(response.text ?? '[]'));
         positions = Array.isArray(parsed)
-          ? parsed.filter((p: any) =>
-              p && typeof p.symbol === 'string' && p.symbol.trim().length > 0 &&
-              typeof p.shares === 'number' && p.shares > 0
-            ).map((p: any) => ({
-              symbol: String(p.symbol).trim(),
-              shares: Number(p.shares),
-              price: (typeof p.price === 'number' && p.price > 0) ? Number(p.price) : null,
-              name: p.name ? String(p.name).trim() : undefined,
-            }))
+          ? parsed
+              .filter((p: any) => p && typeof p.symbol === 'string' && p.symbol.trim().length > 0)
+              .map((p: any) => {
+                const shares = toNum(p.shares);
+                const price  = p.price != null ? toNum(p.price) : null;
+                return {
+                  symbol: String(p.symbol).trim(),
+                  shares,
+                  price:  price && price > 0 ? price : null,
+                  name:   p.name ? String(p.name).trim() : undefined,
+                };
+              })
+              .filter((p: any) => p.shares > 0)
           : [];
       } catch {
         positions = [];
@@ -117,17 +148,30 @@ Antworte NUR mit dem JSON-Array – kein anderer Text!`;
       return res.status(200).json({ positions });
     }
 
+    // Image: new format returns [{ ticker }, { name }] mixed array
     let tickers: string[] = [];
+    let names: string[] = [];
     try {
       const parsed = JSON.parse(stripJsonFences(response.text ?? '[]'));
-      tickers = Array.isArray(parsed)
-        ? parsed.filter((t: any) => typeof t === 'string' && t.trim().length > 0)
-        : [];
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) {
+          if (typeof item === 'string') {
+            // Legacy: plain string array
+            const t = item.trim();
+            if (t) tickers.push(t);
+          } else if (item && typeof item === 'object') {
+            const ticker = item.ticker?.trim();
+            const name   = item.name?.trim();
+            if (ticker) tickers.push(ticker);
+            else if (name) names.push(name);
+          }
+        }
+      }
     } catch {
-      tickers = [];
+      tickers = []; names = [];
     }
 
-    return res.status(200).json({ tickers });
+    return res.status(200).json({ tickers, names });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[extract-from-image]', msg);
