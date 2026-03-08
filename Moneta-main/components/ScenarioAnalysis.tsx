@@ -81,12 +81,13 @@ const ScenarioAnalysis: React.FC<ScenarioAnalysisProps> = ({ holdings, report })
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const activeHoldings = holdings
-    .filter(h => !h.watchlist && h.ticker?.symbol)
+  // Alle Positionen mit Ticker-Daten einschließen – auch Watchlist-Einträge
+  const allWithTicker = holdings.filter(h => h.ticker?.symbol);
+  const activeHoldings = allWithTicker
     .map(h => ({
-      name: h.ticker.company_name,
-      ticker: h.ticker.symbol,
-      weight: report?.holdings?.find(rh => rh.ticker === h.ticker.symbol)?.weight ?? Math.round(100 / holdings.filter(x => !x.watchlist).length),
+      name: h.ticker!.company_name ?? h.symbol,
+      ticker: h.ticker!.symbol,
+      weight: report?.holdings?.find(rh => rh.ticker === h.ticker!.symbol)?.weight ?? Math.round(100 / allWithTicker.length),
     }));
 
   const runScenario = async (scenario: PredefinedScenario) => {
@@ -139,7 +140,7 @@ const ScenarioAnalysis: React.FC<ScenarioAnalysisProps> = ({ holdings, report })
       {activeHoldings.length === 0 && (
         <div className="bg-white border border-slate-200 rounded-[28px] p-12 text-center shadow-sm">
           <FlaskConical className="w-12 h-12 text-slate-300 mx-auto mb-4" />
-          <p className="text-slate-500 font-medium">Füge Depot-Positionen hinzu, um Szenarien zu analysieren.</p>
+          <p className="text-slate-500 font-medium">Füge Aktien oder Watchlist-Positionen hinzu, um Szenarien zu analysieren.</p>
         </div>
       )}
 

@@ -72,9 +72,8 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
   const [isDivLoading, setIsDivLoading] = useState(false);
   const [divError, setDivError] = useState<string | null>(null);
 
-  // Nur echte Depot-Positionen (keine Watchlist)
+  // Alle Positionen inkl. Watchlist – die KI braucht nur das Symbol für Earnings-Termine
   const tickers = holdings
-    .filter(h => !h.watchlist)
     .map(h => h.ticker?.symbol ?? h.symbol)
     .filter(Boolean)
     .slice(0, 12);
@@ -352,7 +351,7 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
       {tickers.length === 0 && (
         <div className="bg-white border border-slate-200 rounded-[28px] p-12 text-center shadow-sm">
           <Calendar className="w-12 h-12 text-slate-300 mx-auto mb-4" />
-          <p className="text-slate-500 font-medium">Füge Depot-Positionen hinzu, um deren Earnings-Termine anzuzeigen.</p>
+          <p className="text-slate-500 font-medium">Füge Aktien oder Watchlist-Positionen hinzu, um deren Earnings-Termine anzuzeigen.</p>
         </div>
       )}
 
@@ -375,8 +374,13 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
       {isLoading && (
         <div className="flex justify-center py-16">
           <div className="bg-white px-6 py-4 rounded-2xl shadow-xl border border-slate-100 flex items-center gap-3">
-            <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
-            <span className="text-xs font-black text-slate-900 uppercase tracking-widest">KI analysiert Earnings-Kalender…</span>
+            <Loader2 className="w-5 h-5 animate-spin text-blue-600 shrink-0" />
+            <div>
+              <span className="text-xs font-black text-slate-900 uppercase tracking-widest block">KI analysiert Earnings-Kalender…</span>
+              <span className="text-[10px] text-slate-400 font-mono mt-0.5 block">
+                Analysiere {tickers.join(', ')}
+              </span>
+            </div>
           </div>
         </div>
       )}
@@ -466,10 +470,18 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
         </div>
       )}
 
-      {!isLoading && events.length === 0 && tickers.length > 0 && !error && lastFetch && (
+      {events.length === 0 && tickers.length > 0 && !error && (
         <div className="bg-white border border-slate-200 rounded-[28px] p-12 text-center shadow-sm">
           <Info className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-          <p className="text-slate-500 font-medium text-sm">Keine Earnings-Daten verfügbar. Bitte erneut versuchen.</p>
+          {isLoading ? (
+            <p className="text-slate-500 font-medium text-sm">
+              Analysiere {tickers.map(t => <span key={t} className="font-mono font-bold text-blue-600">{t}</span>).reduce<React.ReactNode[]>((acc, el, i) => i === 0 ? [el] : [...acc, ', ', el], [])}…
+            </p>
+          ) : (
+            <p className="text-slate-500 font-medium text-sm">
+              {lastFetch ? 'Keine Earnings-Daten gefunden. Bitte erneut versuchen.' : 'Lade Earnings-Daten…'}
+            </p>
+          )}
         </div>
       )}
     </div>
