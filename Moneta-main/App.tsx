@@ -73,8 +73,9 @@ const App: React.FC = () => {
     setHoldings(rows);
   }, []);
 
-  /** Globaler Refresh: lädt Holdings aus Supabase und aktualisiert den zentralen State. */
-  const refreshHoldings = useCallback(async () => {
+  /** Lädt Holdings aus Supabase und aktualisiert den zentralen State (Single Source of Truth).
+   *  Wird nach jedem Add/Delete/Import sowie vom Supabase-Realtime-Channel aufgerufen. */
+  const fetchHoldings = useCallback(async () => {
     if (userAccount?.id) await loadHoldingsForUser(userAccount.id);
   }, [userAccount?.id, loadHoldingsForUser]);
 
@@ -250,6 +251,30 @@ const App: React.FC = () => {
       userService.fetchUserData().then(u => { if (u) applyUser(u); });
     }
   }, [loadHoldingsForUser]);
+
+  // ── Supabase Realtime: Holdings-Änderungen live empfangen ────────────────
+  // Reagiert auf INSERT/UPDATE/DELETE in der holdings-Tabelle des eingeloggten Nutzers.
+  // Funktioniert auch geräteübergreifend (Cross-Device-Sync).
+  useEffect(() => {
+    const sb = getSupabaseBrowser();
+    if (!sb || !userAccount?.id) return;
+
+    const channel = sb
+      .channel(`holdings-realtime-${userAccount.id}`)
+      .on(
+        'postgres_changes' as any,
+        {
+          event: '*',
+          schema: 'public',
+          table: 'holdings',
+          filter: `user_id=eq.${userAccount.id}`,
+        },
+        () => { fetchHoldings(); }
+      )
+      .subscribe();
+
+    return () => { sb.removeChannel(channel); };
+  }, [userAccount?.id, fetchHoldings]);
 
   const processMasterData = useCallback((masterData: any) => {
     if (!masterData || Object.keys(masterData).length === 0) return;
@@ -625,7 +650,7 @@ const App: React.FC = () => {
                   onAnalyze={handlePortfolioAnalysis}
                   isLoading={isGlobalLoading}
                   userAccount={userAccount}
-                  onRefresh={refreshHoldings}
+                  onRefresh={fetchHoldings}
                   onSendToAssistant={(text) => {
                     setAssistantSeed(text);
                     setActiveView('assistant');
@@ -733,7 +758,7 @@ const App: React.FC = () => {
                 }}
                 isLoading={isGlobalLoading}
                 userAccount={userAccount}
-                onRefresh={refreshHoldings}
+                onRefresh={fetchHoldings}
                 onSendToAssistant={(text) => {
                   setShowDepotDrawer(false);
                   setAssistantSeed(text);

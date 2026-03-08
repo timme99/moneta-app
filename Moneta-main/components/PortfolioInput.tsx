@@ -77,7 +77,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
   // Wir vertrauen dieser ID direkt und setzen userId sofort.
   // Falls keine userAccount vorhanden: eigene Session prüfen.
   useEffect(() => {
-    if (!sb) { setAuthError(true); setIsLoadingH(false); return; }
+    if (!sb) { setAuthError(true); return; }
 
     if (userAccount?.id) {
       // App.tsx hat den User bereits authentifiziert – ID direkt übernehmen
@@ -93,7 +93,6 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
         setAuthError(false);
       } else {
         setAuthError(true);
-        setIsLoadingH(false);
       }
     });
   }, [userAccount?.id]);

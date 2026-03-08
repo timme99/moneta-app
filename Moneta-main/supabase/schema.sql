@@ -467,3 +467,10 @@ CREATE INDEX IF NOT EXISTS idx_news_cache_ticker           ON public.news_cache 
 CREATE INDEX IF NOT EXISTS idx_news_cache_cached_at        ON public.news_cache (cached_at);
 CREATE INDEX IF NOT EXISTS idx_snapshots_user_date         ON public.portfolio_snapshots (user_id, snapshot_date DESC);
 CREATE INDEX IF NOT EXISTS idx_subscriptions_user          ON public.subscriptions (user_id);
+
+-- ============================================================
+-- SUPABASE REALTIME
+-- Aktiviert Echtzeit-Benachrichtigungen für die holdings-Tabelle.
+-- Ermöglicht Cross-Device-Sync: Änderungen erscheinen sofort in allen Tabs.
+-- ============================================================
+ALTER PUBLICATION supabase_realtime ADD TABLE public.holdings;
