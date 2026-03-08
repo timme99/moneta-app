@@ -28,6 +28,8 @@ export interface DividendInfo {
   price: number;
   /** true wenn kein Dividenden-Datum oder DividendPerShare = 0 */
   noData: boolean;
+  /** true wenn Daten aus Gemini-Fallback (KI-Schätzung) statt Alpha Vantage */
+  isEstimated?: boolean;
 }
 
 // ── Haupt-Handler ─────────────────────────────────────────────────────────────
