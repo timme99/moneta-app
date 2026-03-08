@@ -99,14 +99,22 @@ const DashboardSummary: React.FC<Props> = ({ report, healthReport, savingsReport
     buyPrice: h.buy_price,
   }));
 
+  // Stabiler Schlüssel aus den tatsächlichen Symbolen – erkennt Änderungen auch bei
+  // gleichbleibender Anzahl (z.B. Aktie gelöscht & neue hinzugefügt).
+  const holdingsKey = (holdings ?? [])
+    .filter(h => !h.watchlist)
+    .map(h => h.symbol)
+    .sort()
+    .join(',');
+
   const [theses,  setTheses]  = useState<{ ticker: string; thesis: string }[]>([]);
   const [loading, setLoading] = useState(false);
   const [loaded,  setLoaded]  = useState(false);
 
   useEffect(() => {
-    if (inputs.length > 0 && !loaded) load();
+    if (inputs.length > 0) load();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [holdings?.length]);
+  }, [holdingsKey]);
 
   const load = async () => {
     if (!inputs.length) return;

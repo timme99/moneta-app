@@ -14,8 +14,8 @@ const callProxy = async (type: string, payload: any, attempt = 0): Promise<any> 
   const MAX_RETRIES = 2;
   const BASE_DELAY = 1000;
 
-  const userData = localStorage.getItem('moneta_db_mock');
-  const userId = userData ? JSON.parse(userData).id : null;
+  // userId wird serverseitig aus dem Supabase-JWT extrahiert – kein localStorage-Fallback
+  const userId = null;
 
   try {
     const response = await fetch('/api/gemini', {
