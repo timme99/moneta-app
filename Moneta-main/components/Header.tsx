@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import {
   TrendingUp, User, BarChart3, Search, MessageSquare,
-  Settings as SettingsIcon, LogIn, Database, Calendar, FlaskConical, X,
+  Settings as SettingsIcon, LogIn, Calendar, FlaskConical,
 } from 'lucide-react';
 import type { UserAccount } from '../types';
 
@@ -26,18 +26,17 @@ const Header: React.FC<HeaderProps> = ({
 
   const navItems = [
     { id: 'cockpit',   label: 'Cockpit',        icon: BarChart3 },
-    { id: 'portfolio', label: 'Depot',           icon: Database },
     { id: 'earnings',  label: 'Earnings',        icon: Calendar },
     { id: 'scenarios', label: 'Szenarien',       icon: FlaskConical },
     { id: 'assistant', label: 'Assistent',       icon: MessageSquare },
     { id: 'discover',  label: 'Entdecken',       icon: Search },
   ];
 
-  // Bottom-nav items: 5 most-used + settings (Settings kept in account menu)
+  // Bottom-nav items: most-used views + settings (Settings kept in account menu)
   const bottomNavItems = [
     { id: 'cockpit',   label: 'Cockpit',   icon: BarChart3 },
-    { id: 'portfolio', label: 'Depot',     icon: Database },
     { id: 'earnings',  label: 'Earnings',  icon: Calendar },
+    { id: 'scenarios', label: 'Szenarien', icon: FlaskConical },
     { id: 'assistant', label: 'KI-Chat',   icon: MessageSquare },
     { id: 'settings',  label: 'Profil',    icon: SettingsIcon },
   ];
@@ -156,7 +155,6 @@ const Header: React.FC<HeaderProps> = ({
                     {/* Mobile: only items not in bottom tab bar */}
                     <div className="lg:hidden block">
                       {[
-                        { id: 'scenarios', label: 'Szenarien',  icon: FlaskConical },
                         { id: 'discover',  label: 'Entdecken',  icon: Search },
                       ].map((item) => (
                         <button
