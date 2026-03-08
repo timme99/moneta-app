@@ -271,6 +271,90 @@ export const analyzeScenario = async (
   return JSON.parse(stripJsonFences(result.text));
 };
 
+// ── Scenario Fallback ────────────────────────────────────────────────────────
+
+const SCENARIO_FALLBACK_PROMPT = (
+  scenario: string,
+  scenarioDesc: string,
+  holdings: { name: string; ticker: string; weight: number }[]
+) =>
+`Du bist ein Finanzbildungs-Assistent. Die primäre Datenquelle ist vorübergehend nicht verfügbar.
+Erstelle eine bildungsorientierte Schätzung – ausschließlich basierend auf historischen Marktdaten und allgemeinem Finanzwissen – wie sich das folgende Szenario auf dieses Portfolio ausgewirkt hätte.
+
+Szenario: "${scenario}"
+Beschreibung: "${scenarioDesc}"
+
+Portfolio:
+${holdings.map(h => `- ${h.name} (${h.ticker}): ${h.weight}% Gewichtung`).join('\n')}
+
+Antworte NUR mit einem gültigen JSON-Objekt (identisches Format zur normalen Szenario-Analyse):
+{
+  "scenario": "${scenario}",
+  "description": "${scenarioDesc}",
+  "estimatedImpact": "Kurze Zusammenfassung (historische KI-Schätzung ohne Echtzeit-Daten)",
+  "impactPercent": -12.5,
+  "affectedHoldings": [
+    { "ticker": "SYMBOL", "name": "Firmenname", "impact": "Historische Sektorkorrelation und Einschätzung" }
+  ],
+  "explanation": "Bildungsorientierte Erklärung auf Basis historischer Muster und Sektoranalyse",
+  "historicalComparison": "Verweis auf historisch ähnliche Situationen (z. B. 2008, Dotcom-Blase)"
+}
+
+Kein anderer Text außer dem JSON. Keine Anlageberatung. Nur sachliche historische Informationen.`;
+
+export const analyzeScenarioFallback = async (
+  scenario: string,
+  scenarioDesc: string,
+  holdings: { name: string; ticker: string; weight: number }[]
+) => {
+  const result = await callProxy('chat', {
+    contents: [{ parts: [{ text: SCENARIO_FALLBACK_PROMPT(scenario, scenarioDesc, holdings) }] }],
+    config: { temperature: 0.4, maxOutputTokens: 1200 }
+  });
+  return JSON.parse(stripJsonFences(result.text));
+};
+
+// ── Dividends Fallback ───────────────────────────────────────────────────────
+
+const DIVIDENDS_FALLBACK_PROMPT = (tickers: string[], year: number) =>
+`Du bist ein Finanzinformations-Assistent. Offizielle Dividenden-Daten sind vorübergehend nicht verfügbar.
+Schätze für folgende Aktien basierend auf historischen Ausschüttungsmustern typische Dividenden-Informationen für ${year}:
+
+${tickers.join(', ')}
+
+Antworte NUR mit einem gültigen JSON-Array:
+[
+  {
+    "symbol": "AAPL",
+    "dividendPerShare": 0.96,
+    "exDividendDate": "${year}-02-10",
+    "dividendDate": "${year}-02-15",
+    "dividendYield": 0.55,
+    "price": 0,
+    "noData": false
+  }
+]
+
+Falls eine Aktie keine Dividende zahlt, setze noData: true und alle Zahlenwerte auf 0.
+Nur Aktien aus der Liste aufführen. Kein anderer Text außer dem JSON-Array.`;
+
+export const fetchDividendsFallback = async (tickers: string[]): Promise<any[]> => {
+  if (tickers.length === 0) return [];
+  const year = new Date().getFullYear();
+  const result = await callProxy('chat', {
+    contents: [{ parts: [{ text: DIVIDENDS_FALLBACK_PROMPT(tickers, year) }] }],
+    config: { temperature: 0.2, maxOutputTokens: 1000 }
+  });
+  try {
+    const parsed = JSON.parse(stripJsonFences(result.text));
+    return Array.isArray(parsed) ? parsed.map(d => ({ ...d, isEstimated: true })) : [];
+  } catch {
+    return [];
+  }
+};
+
+// ── Ticker Resolution ────────────────────────────────────────────────────────
+
 /** Namen (z. B. "Apple", "Mercedes") in Börsenticker umwandeln (AAPL, DAI). Nutzt Gemini. */
 export const resolveStockNamesToTickers = async (names: string[]): Promise<{ name: string; ticker: string }[]> => {
   const input = names.map((n) => n.trim()).filter(Boolean);

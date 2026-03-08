@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { FlaskConical, TrendingDown, TrendingUp, Loader2, AlertTriangle, ChevronRight, BarChart3, History } from 'lucide-react';
-import { analyzeScenario } from '../services/geminiService';
+import { analyzeScenario, analyzeScenarioFallback } from '../services/geminiService';
 import { ScenarioResult, HoldingRow, PortfolioAnalysisReport } from '../types';
 
 interface ScenarioAnalysisProps {
@@ -79,6 +79,8 @@ const ScenarioAnalysis: React.FC<ScenarioAnalysisProps> = ({ holdings, report })
   const [selectedScenario, setSelectedScenario] = useState<PredefinedScenario | null>(null);
   const [result, setResult] = useState<ScenarioResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isFallback, setIsFallback] = useState(false);
+  const [fallbackLoading, setFallbackLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Alle Positionen mit Ticker-Daten einschließen – auch Watchlist-Einträge
@@ -95,12 +97,30 @@ const ScenarioAnalysis: React.FC<ScenarioAnalysisProps> = ({ holdings, report })
     setSelectedScenario(scenario);
     setResult(null);
     setError(null);
+    setIsFallback(false);
+    setFallbackLoading(false);
     setIsLoading(true);
     try {
       const data = await analyzeScenario(scenario.name, scenario.description, activeHoldings);
       setResult(data as ScenarioResult);
-    } catch (e: any) {
-      setError(e?.message?.includes(':') ? e.message.split(':')[1] : 'Szenario-Analyse fehlgeschlagen. Bitte erneut versuchen.');
+    } catch {
+      // Primär-Aufruf fehlgeschlagen → Gemini-Fallback mit vereinfachtem Prompt
+      setIsLoading(false);
+      setFallbackLoading(true);
+      try {
+        const fallbackData = await analyzeScenarioFallback(scenario.name, scenario.description, activeHoldings);
+        setIsFallback(true);
+        setResult(fallbackData as ScenarioResult);
+      } catch (fallbackErr: any) {
+        setError(
+          fallbackErr?.message?.includes(':')
+            ? fallbackErr.message.split(':')[1]
+            : 'Szenario-Analyse vorübergehend nicht verfügbar. Bitte erneut versuchen.'
+        );
+      } finally {
+        setFallbackLoading(false);
+      }
+      return;
     } finally {
       setIsLoading(false);
     }
@@ -179,11 +199,20 @@ const ScenarioAnalysis: React.FC<ScenarioAnalysisProps> = ({ holdings, report })
 
           {/* Result Panel */}
           <div className="lg:col-span-3">
-            {isLoading && (
+            {(isLoading || fallbackLoading) && (
               <div className="bg-white border border-slate-200 rounded-[28px] p-16 flex flex-col items-center justify-center shadow-sm h-full min-h-[400px]">
                 <Loader2 className="w-10 h-10 animate-spin text-blue-600 mb-4" />
-                <p className="text-sm font-black text-slate-900 uppercase tracking-widest">KI analysiert historische Daten...</p>
-                <p className="text-[11px] text-slate-400 mt-2">Vergleich mit historischen Marktszenarien</p>
+                {fallbackLoading ? (
+                  <>
+                    <p className="text-sm font-black text-slate-900 uppercase tracking-widest">Offizielle Daten nicht verfügbar</p>
+                    <p className="text-[11px] text-slate-400 mt-2">Lade KI-Prognose auf Basis historischer Muster…</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-sm font-black text-slate-900 uppercase tracking-widest">KI analysiert historische Daten...</p>
+                    <p className="text-[11px] text-slate-400 mt-2">Vergleich mit historischen Marktszenarien</p>
+                  </>
+                )}
               </div>
             )}
 
@@ -193,21 +222,28 @@ const ScenarioAnalysis: React.FC<ScenarioAnalysisProps> = ({ holdings, report })
               </div>
             )}
 
-            {!isLoading && !result && !error && (
+            {!isLoading && !fallbackLoading && !result && !error && (
               <div className="bg-white border border-slate-200 rounded-[28px] p-16 flex flex-col items-center justify-center shadow-sm h-full min-h-[400px] text-center">
                 <FlaskConical className="w-12 h-12 text-slate-200 mb-4" />
                 <p className="text-slate-400 font-medium text-sm">Wähle links ein Szenario,<br />um die historische Analyse zu starten.</p>
               </div>
             )}
 
-            {!isLoading && result && (
+            {!isLoading && !fallbackLoading && result && (
               <div className="bg-white border border-slate-200 rounded-[28px] overflow-hidden shadow-sm">
                 {/* Result Header */}
                 <div className="p-6 border-b border-slate-100 bg-slate-50/50">
                   <div className="flex items-center gap-3 mb-3">
                     <span className="text-3xl">{selectedScenario?.icon}</span>
                     <div>
-                      <h3 className="font-black text-slate-900 text-lg">{result.scenario}</h3>
+                      <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                        <h3 className="font-black text-slate-900 text-lg">{result.scenario}</h3>
+                        {isFallback && (
+                          <span className="text-[9px] font-black bg-amber-100 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-lg uppercase tracking-widest shrink-0">
+                            KI-Schätzung (historisch)
+                          </span>
+                        )}
+                      </div>
                       <p className="text-[11px] text-slate-400 font-medium">{result.description}</p>
                     </div>
                   </div>

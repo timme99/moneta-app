@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Calendar, Clock, TrendingUp, Loader2, RefreshCcw, AlertTriangle, Info, DollarSign, TrendingDown } from 'lucide-react';
-import { fetchEarningsCalendar } from '../services/geminiService';
+import { fetchEarningsCalendar, fetchDividendsFallback } from '../services/geminiService';
 import { EarningsEvent, HoldingRow } from '../types';
 import { supabase as sb } from '../lib/supabaseClient';
 
@@ -18,6 +18,7 @@ interface DividendInfo {
   dividendYield: number;
   price: number;
   noData: boolean;
+  isEstimated?: boolean; // true wenn aus Gemini-Fallback
 }
 
 interface HoldingDividend {
@@ -71,6 +72,7 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
   const [dividendData, setDividendData] = useState<DividendInfo[]>([]);
   const [isDivLoading, setIsDivLoading] = useState(false);
   const [divError, setDivError] = useState<string | null>(null);
+  const [isDivFallback, setIsDivFallback] = useState(false);
 
   // Alle Positionen inkl. Watchlist – die KI braucht nur das Symbol für Earnings-Termine
   const tickers = holdings
@@ -109,19 +111,18 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
     if (portfolioHoldings.length === 0) return;
     setIsDivLoading(true);
     setDivError(null);
+    setIsDivFallback(false);
+
+    const portfolioTickers = portfolioHoldings
+      .map(h => h.ticker?.symbol ?? h.symbol)
+      .filter(Boolean)
+      .slice(0, 10);
+
     try {
       const { data: { session } } = await sb.auth.getSession();
-      if (!session?.access_token) {
-        setDivError('Nicht angemeldet.');
-        return;
-      }
-      const symbolList = portfolioHoldings
-        .map(h => h.ticker?.symbol ?? h.symbol)
-        .filter(Boolean)
-        .slice(0, 10)
-        .join(',');
+      if (!session?.access_token) throw new Error('Nicht angemeldet.');
 
-      const res = await fetch(`/api/dividends?symbols=${encodeURIComponent(symbolList)}`, {
+      const res = await fetch(`/api/dividends?symbols=${encodeURIComponent(portfolioTickers.join(','))}`, {
         headers: { Authorization: `Bearer ${session.access_token}` },
       });
 
@@ -132,8 +133,15 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
 
       const json: DividendInfo[] = await res.json();
       setDividendData(json);
-    } catch (e: any) {
-      setDivError(e?.message ?? 'Dividenden-Daten konnten nicht geladen werden.');
+    } catch {
+      // Offizielle Quelle fehlgeschlagen → Gemini-Fallback
+      try {
+        const fallback = await fetchDividendsFallback(portfolioTickers);
+        setDividendData(fallback as DividendInfo[]);
+        setIsDivFallback(true);
+      } catch {
+        setDivError('Dividenden-Daten vorübergehend nicht verfügbar.');
+      }
     } finally {
       setIsDivLoading(false);
     }
@@ -236,10 +244,19 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
           <div className="flex items-center justify-between">
             <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-[0.2em] flex items-center gap-2">
               <DollarSign className="w-4 h-4 text-emerald-600" /> Dividenden-Tracker {currentYear}
+              {isDivFallback && !isDivLoading && (
+                <span
+                  title="Voraussichtliche Termine basierend auf KI-Analyse historischer Muster – keine offiziellen Daten verfügbar"
+                  className="flex items-center gap-1 text-[9px] font-black bg-amber-100 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-lg uppercase tracking-widest cursor-help"
+                >
+                  <Info className="w-3 h-3" /> KI-Schätzung
+                </span>
+              )}
             </h3>
             {isDivLoading && (
               <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-medium">
-                <Loader2 className="w-3 h-3 animate-spin" /> Lädt…
+                <Loader2 className="w-3 h-3 animate-spin" />
+                {isDivFallback ? 'Lade KI-Prognose…' : 'Lädt…'}
               </div>
             )}
           </div>
@@ -302,9 +319,9 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
           </div>
 
           {/* Dividenden-Fehler */}
-          {divError && !isDivLoading && (
+          {divError && !isDivLoading && !isDivFallback && (
             <div className="bg-rose-50 border border-rose-100 p-4 rounded-[16px] text-rose-700 text-xs font-medium">
-              Dividenden: {divError}
+              Offizielle Dividenden-Daten nicht verfügbar – {divError}
             </div>
           )}
 
@@ -320,7 +337,14 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
                     <div className="flex items-center gap-3">
                       <div className={`w-2 h-2 rounded-full ${h.isPaid ? 'bg-emerald-500' : 'bg-blue-400'}`} />
                       <div>
-                        <p className="text-sm font-bold text-slate-800">{h.name}</p>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <p className="text-sm font-bold text-slate-800">{h.name}</p>
+                          {dividendData.find(d => d.symbol === h.symbol)?.isEstimated && (
+                            <span className="text-[8px] font-black bg-amber-50 text-amber-600 border border-amber-200 px-1.5 py-0.5 rounded uppercase tracking-widest">
+                              KI-Schätzung
+                            </span>
+                          )}
+                        </div>
                         <p className="text-[10px] font-mono text-slate-400">
                           {h.symbol} · {h.shares} Stk · {formatCurrency(h.dividendPerShare)} €/Aktie p.a.
                         </p>
@@ -337,8 +361,9 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
               </div>
               <div className="px-6 py-3 bg-slate-50 border-t border-slate-100">
                 <p className="text-[10px] text-slate-400 italic">
-                  * Schätzungen basierend auf Alpha Vantage OVERVIEW-Daten (jährliche Dividende). Keine Garantie für
-                  zukünftige Zahlungen. Angaben in lokaler Währung des jeweiligen Börsenplatzes.
+                  {isDivFallback
+                    ? '* KI-Schätzung basierend auf historischen Ausschüttungsmustern. Keine offiziellen Daten – alle Angaben ohne Gewähr. Termine und Beträge beim Unternehmen prüfen.'
+                    : '* Schätzungen basierend auf Alpha Vantage OVERVIEW-Daten (jährliche Dividende). Keine Garantie für zukünftige Zahlungen. Angaben in lokaler Währung des jeweiligen Börsenplatzes.'}
                 </p>
               </div>
             </div>
