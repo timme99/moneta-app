@@ -19,9 +19,9 @@ import { PortfolioAnalysisReport, PortfolioHealthReport, PortfolioSavingsReport,
 import { analyzePortfolio } from './services/geminiService';
 import { userService } from './services/userService';
 import { getSupabaseBrowser } from './lib/supabaseBrowser';
-import { loadUserHoldings, addTickersByName } from './services/holdingsService';
+import { loadUserHoldings, addTickersByName, deleteHolding } from './services/holdingsService';
 import { useSubscription, PLAN_LIMITS } from './lib/useSubscription';
-import { Clock, AlertTriangle, ShieldCheck, BarChart3, Loader2, BookMarked, Database, Calendar, FlaskConical, Lock, Plus, X } from 'lucide-react';
+import { Clock, AlertTriangle, ShieldCheck, BarChart3, Loader2, BookMarked, Calendar, FlaskConical, Lock, Plus, X, Trash2, ChevronRight, Sparkles } from 'lucide-react';
 
 /** Erstellt ein UserAccount-Objekt aus einem Supabase-User */
 function userFromSupabase(sbUser: any): UserAccount {
@@ -361,7 +361,7 @@ const App: React.FC = () => {
       />
       
       <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 md:py-10 pb-24 lg:pb-10 w-full">
-        {activeView === 'cockpit' && (analysisReport || holdings.length > 0) ? (
+        {activeView === 'cockpit' ? (
           <div className="space-y-6">
             <div className="flex items-center justify-between mb-2">
               <div>
@@ -372,8 +372,8 @@ const App: React.FC = () => {
                   </p>
                 )}
               </div>
-              {analysisReport && (
-                <div className="flex items-center gap-2">
+              <div className="flex items-center gap-3">
+                {analysisReport && (
                   <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest ${
                     analysisReport.score >= 7 ? 'bg-emerald-50 text-emerald-700' :
                     analysisReport.score >= 5 ? 'bg-amber-50 text-amber-700' :
@@ -382,43 +382,71 @@ const App: React.FC = () => {
                     <ShieldCheck className="w-3 h-3" />
                     Score {analysisReport.score}/10
                   </div>
-                </div>
-              )}
+                )}
+                <button
+                  onClick={() => setShowDepotDrawer(true)}
+                  className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold rounded-xl shadow-lg transition-all"
+                >
+                  <Plus className="w-4 h-4" />
+                  Depot verwalten
+                </button>
+              </div>
             </div>
+
+            {/* ── Stats-Leiste ─────────────────────────────────────────────── */}
+            {holdings.length > 0 && (() => {
+              const totalInvested = holdings
+                .filter(h => !h.watchlist && h.shares != null && h.buy_price != null)
+                .reduce((sum, h) => sum + (h.shares! * h.buy_price!), 0);
+              const posCount = holdings.filter(h => !h.watchlist).length;
+              const watchCount = holdings.filter(h => h.watchlist).length;
+              const avgPerPos = posCount > 0 && totalInvested > 0 ? Math.round(totalInvested / posCount) : null;
+              return (
+                <div className="grid grid-cols-3 gap-3">
+                  {[
+                    { label: 'Einstand gesamt', value: totalInvested > 0 ? `${totalInvested.toLocaleString('de-DE', { maximumFractionDigits: 0 })} €` : '—', sub: 'Kaufkurse × Stückzahl' },
+                    { label: 'Positionen', value: `${posCount}`, sub: `+ ${watchCount} Watchlist` },
+                    { label: 'Ø pro Position', value: avgPerPos ? `${avgPerPos.toLocaleString('de-DE')} €` : '—', sub: 'Einstand' },
+                  ].map(stat => (
+                    <div key={stat.label} className="bg-emerald-600/10 border border-emerald-600/20 rounded-2xl p-4">
+                      <p className="text-[10px] font-semibold text-emerald-600 uppercase tracking-widest">{stat.label}</p>
+                      <p className="text-xl font-black text-slate-900 mt-1">{stat.value}</p>
+                      <p className="text-[10px] text-slate-400 mt-0.5">{stat.sub}</p>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+
+            {/* ── Onboarding (wenn kein Depot) ─────────────────────────────── */}
+            {holdings.length === 0 && (
+              <div className="bg-gradient-to-br from-emerald-50 to-slate-50 border border-emerald-100 rounded-3xl p-8 text-center">
+                <div className="w-14 h-14 bg-emerald-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
+                  <BarChart3 className="w-7 h-7 text-white" />
+                </div>
+                <h2 className="text-xl font-black text-slate-900 mb-2">Depot importieren oder aufbauen</h2>
+                <p className="text-sm text-slate-500 mb-6 max-w-sm mx-auto">
+                  Füge deine ersten Aktien hinzu – per Screenshot, PDF oder manuell über den Drawer.
+                </p>
+                <button
+                  onClick={() => setShowDepotDrawer(true)}
+                  className="inline-flex items-center gap-2 px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-xl shadow-lg transition-all"
+                >
+                  <Plus className="w-4 h-4" />
+                  Depot aufbauen
+                </button>
+              </div>
+            )}
 
             {/* ── Live Depot-Übersicht (immer sichtbar wenn Holdings vorhanden) ── */}
             {holdings.length > 0 && (
               <div className="bg-white border border-slate-200 rounded-[28px] shadow-sm overflow-hidden">
-                <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
-                  <div>
-                    <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-[0.2em]">Mein Depot</h3>
-                    <p className="text-[9px] text-slate-400 font-medium mt-0.5">
-                      {holdings.filter(h => !h.watchlist).length} Position{holdings.filter(h => !h.watchlist).length !== 1 ? 'en' : ''}
-                      {holdings.filter(h => h.watchlist).length > 0 && ` · ${holdings.filter(h => h.watchlist).length} Watchlist`}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    {(() => {
-                      const totalInvested = holdings
-                        .filter(h => !h.watchlist && h.shares != null && h.buy_price != null)
-                        .reduce((sum, h) => sum + (h.shares! * h.buy_price!), 0);
-                      return totalInvested > 0 ? (
-                        <div className="text-right">
-                          <p className="text-[9px] text-slate-400 font-medium uppercase tracking-widest">Einstand</p>
-                          <p className="text-sm font-black text-slate-700">
-                            {totalInvested.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €
-                          </p>
-                        </div>
-                      ) : null;
-                    })()}
-                    <button
-                      onClick={() => setShowDepotDrawer(true)}
-                      className="flex items-center gap-1 text-[9px] font-black text-blue-600 uppercase tracking-widest hover:text-slate-900 transition-colors"
-                    >
-                      <Plus className="w-3 h-3" />
-                      Aktie hinzufügen
-                    </button>
-                  </div>
+                <div className="px-6 py-4 border-b border-slate-100">
+                  <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-[0.2em]">Mein Depot</h3>
+                  <p className="text-[9px] text-slate-400 font-medium mt-0.5">
+                    {holdings.filter(h => !h.watchlist).length} Position{holdings.filter(h => !h.watchlist).length !== 1 ? 'en' : ''}
+                    {holdings.filter(h => h.watchlist).length > 0 && ` · ${holdings.filter(h => h.watchlist).length} Watchlist`}
+                  </p>
                 </div>
 
                 <div className="divide-y divide-slate-50 overflow-x-auto">
@@ -443,12 +471,33 @@ const App: React.FC = () => {
                       {!h.watchlist && h.shares != null && (
                         <span className="text-sm font-bold text-slate-500 shrink-0">{h.shares} Stk.</span>
                       )}
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          onClick={() => setShowDepotDrawer(true)}
+                          className="p-1.5 rounded-lg text-slate-300 hover:text-blue-500 hover:bg-blue-50 transition-colors"
+                          title="Im Drawer bearbeiten"
+                        >
+                          <ChevronRight className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            if (!window.confirm(`„${h.symbol}" wirklich aus dem Depot entfernen?`)) return;
+                            await deleteHolding(h.id, userAccount?.id ?? '');
+                            await fetchHoldings();
+                          }}
+                          className="p-1.5 rounded-lg text-slate-300 hover:text-rose-500 hover:bg-rose-50 transition-colors"
+                          title="Löschen"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
                   ))}
                   {holdings.length > 6 && (
                     <div className="px-6 py-3 text-center">
                       <button
-                        onClick={() => setActiveView('portfolio')}
+                        onClick={() => setShowDepotDrawer(true)}
                         className="text-[10px] text-blue-500 font-bold hover:text-blue-600 transition-colors"
                       >
                         + {holdings.length - 6} weitere Position{holdings.length - 6 !== 1 ? 'en' : ''} anzeigen
@@ -517,25 +566,60 @@ const App: React.FC = () => {
               />
             )}
 
+            {/* ── KI-Briefing ───────────────────────────────────────────── */}
+            {holdings.filter(h => !h.watchlist).length > 0 && (
+              <div className="bg-slate-50 border border-slate-100 rounded-2xl p-5">
+                <div className="flex items-center gap-2 mb-4">
+                  <Sparkles className="w-4 h-4 text-emerald-600" />
+                  <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest">KI-Briefing</h3>
+                  <span className="text-[10px] text-slate-400 ml-auto">Automatisch · keine Anlageberatung</span>
+                </div>
+                <div className="space-y-0">
+                  {(() => {
+                    const nonWatch = holdings.filter(h => !h.watchlist);
+                    const insights: string[] = [];
+                    const sectorCounts: Record<string, number> = {};
+                    nonWatch.forEach(h => { if (h.ticker?.sector) sectorCounts[h.ticker.sector] = (sectorCounts[h.ticker.sector] ?? 0) + 1; });
+                    const topSector = Object.entries(sectorCounts).sort((a, b) => b[1] - a[1])[0];
+                    if (topSector && nonWatch.length > 2 && topSector[1] / nonWatch.length > 0.5) {
+                      insights.push(`Klumpenrisiko: Über 50 % deiner Positionen entfallen auf den Sektor „${topSector[0]}".`);
+                    }
+                    if (nonWatch.length < 4) {
+                      insights.push(`Konzentriertes Portfolio: Mit ${nonWatch.length} Position${nonWatch.length !== 1 ? 'en' : ''} ist dein Depot noch wenig gestreut.`);
+                    }
+                    const watchCount = holdings.filter(h => h.watchlist).length;
+                    if (watchCount > 0) {
+                      insights.push(`Du hast ${watchCount} Wert${watchCount !== 1 ? 'e' : ''} auf der Watchlist – füge Kaufpreis & Stückzahl hinzu, um sie zu analysieren.`);
+                    }
+                    if (insights.length === 0) {
+                      insights.push('Dein Portfolio sieht gut aufgestellt aus. Starte eine KI-Analyse für tiefere Einblicke.');
+                    }
+                    return insights.map((text, i) => (
+                      <div key={i} className="flex items-start gap-3 py-2.5 border-b border-slate-100 last:border-0">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mt-1.5 shrink-0" />
+                        <p className="text-sm text-slate-700">{text}</p>
+                      </div>
+                    ));
+                  })()}
+                </div>
+                {!analysisReport && (
+                  <button
+                    onClick={() => {
+                      const text = buildDepotTextFromHoldings(holdings);
+                      if (text) handleAnalysis({ text });
+                    }}
+                    disabled={isGlobalLoading}
+                    className="mt-4 text-xs text-emerald-600 font-semibold hover:underline disabled:opacity-50"
+                  >
+                    Vollständige KI-Analyse starten →
+                  </button>
+                )}
+              </div>
+            )}
+
             {/* ── Schnellzugriff auf Depot-Tools ────────────────────────── */}
             {holdings.length > 0 && (
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <button
-                  onClick={() => setShowDepotDrawer(true)}
-                  className={`flex items-center gap-4 p-5 rounded-[24px] border transition-all text-left group hover:shadow-md ${
-                    showDepotDrawer ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-slate-200 hover:border-blue-300'
-                  }`}
-                >
-                  <div className={`p-3 rounded-[14px] ${showDepotDrawer ? 'bg-white/20' : 'bg-blue-50 group-hover:bg-blue-100'}`}>
-                    <Database className={`w-5 h-5 ${showDepotDrawer ? 'text-white' : 'text-blue-600'}`} />
-                  </div>
-                  <div>
-                    <p className={`text-[10px] font-black uppercase tracking-widest ${showDepotDrawer ? 'text-blue-100' : 'text-slate-400'}`}>Verwalten</p>
-                    <p className={`text-sm font-black mt-0.5 ${showDepotDrawer ? 'text-white' : 'text-slate-900'}`}>Depot verwalten</p>
-                    <p className={`text-[10px] font-medium mt-0.5 ${showDepotDrawer ? 'text-blue-100' : 'text-slate-400'}`}>{holdings.length} Position{holdings.length !== 1 ? 'en' : ''}</p>
-                  </div>
-                </button>
-
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <button
                   onClick={() => setActiveView('earnings')}
                   className={`flex items-center gap-4 p-5 rounded-[24px] border transition-all text-left group hover:shadow-md ${
