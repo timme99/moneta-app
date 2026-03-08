@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Calendar, Clock, TrendingUp, Loader2, RefreshCcw, AlertTriangle, Info, DollarSign, TrendingDown } from 'lucide-react';
-import { fetchEarningsCalendar } from '../services/geminiService';
+import { fetchEarningsCalendar, fetchDividendsFallback } from '../services/geminiService';
 import { EarningsEvent, HoldingRow } from '../types';
 import { supabase as sb } from '../lib/supabaseClient';
 
@@ -18,6 +18,7 @@ interface DividendInfo {
   dividendYield: number;
   price: number;
   noData: boolean;
+  isEstimated?: boolean; // true wenn aus Gemini-Fallback
 }
 
 interface HoldingDividend {
@@ -71,10 +72,10 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
   const [dividendData, setDividendData] = useState<DividendInfo[]>([]);
   const [isDivLoading, setIsDivLoading] = useState(false);
   const [divError, setDivError] = useState<string | null>(null);
+  const [isDivFallback, setIsDivFallback] = useState(false);
 
-  // Nur echte Depot-Positionen (keine Watchlist)
+  // Alle Positionen inkl. Watchlist – die KI braucht nur das Symbol für Earnings-Termine
   const tickers = holdings
-    .filter(h => !h.watchlist)
     .map(h => h.ticker?.symbol ?? h.symbol)
     .filter(Boolean)
     .slice(0, 12);
@@ -110,19 +111,18 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
     if (portfolioHoldings.length === 0) return;
     setIsDivLoading(true);
     setDivError(null);
+    setIsDivFallback(false);
+
+    const portfolioTickers = portfolioHoldings
+      .map(h => h.ticker?.symbol ?? h.symbol)
+      .filter(Boolean)
+      .slice(0, 10);
+
     try {
       const { data: { session } } = await sb.auth.getSession();
-      if (!session?.access_token) {
-        setDivError('Nicht angemeldet.');
-        return;
-      }
-      const symbolList = portfolioHoldings
-        .map(h => h.ticker?.symbol ?? h.symbol)
-        .filter(Boolean)
-        .slice(0, 10)
-        .join(',');
+      if (!session?.access_token) throw new Error('Nicht angemeldet.');
 
-      const res = await fetch(`/api/dividends?symbols=${encodeURIComponent(symbolList)}`, {
+      const res = await fetch(`/api/dividends?symbols=${encodeURIComponent(portfolioTickers.join(','))}`, {
         headers: { Authorization: `Bearer ${session.access_token}` },
       });
 
@@ -133,8 +133,15 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
 
       const json: DividendInfo[] = await res.json();
       setDividendData(json);
-    } catch (e: any) {
-      setDivError(e?.message ?? 'Dividenden-Daten konnten nicht geladen werden.');
+    } catch {
+      // Offizielle Quelle fehlgeschlagen → Gemini-Fallback
+      try {
+        const fallback = await fetchDividendsFallback(portfolioTickers);
+        setDividendData(fallback as DividendInfo[]);
+        setIsDivFallback(true);
+      } catch {
+        setDivError('Dividenden-Daten vorübergehend nicht verfügbar.');
+      }
     } finally {
       setIsDivLoading(false);
     }
@@ -237,10 +244,19 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
           <div className="flex items-center justify-between">
             <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-[0.2em] flex items-center gap-2">
               <DollarSign className="w-4 h-4 text-emerald-600" /> Dividenden-Tracker {currentYear}
+              {isDivFallback && !isDivLoading && (
+                <span
+                  title="Voraussichtliche Termine basierend auf KI-Analyse historischer Muster – keine offiziellen Daten verfügbar"
+                  className="flex items-center gap-1 text-[9px] font-black bg-amber-100 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-lg uppercase tracking-widest cursor-help"
+                >
+                  <Info className="w-3 h-3" /> KI-Schätzung
+                </span>
+              )}
             </h3>
             {isDivLoading && (
               <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-medium">
-                <Loader2 className="w-3 h-3 animate-spin" /> Lädt…
+                <Loader2 className="w-3 h-3 animate-spin" />
+                {isDivFallback ? 'Lade KI-Prognose…' : 'Lädt…'}
               </div>
             )}
           </div>
@@ -303,9 +319,9 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
           </div>
 
           {/* Dividenden-Fehler */}
-          {divError && !isDivLoading && (
+          {divError && !isDivLoading && !isDivFallback && (
             <div className="bg-rose-50 border border-rose-100 p-4 rounded-[16px] text-rose-700 text-xs font-medium">
-              Dividenden: {divError}
+              Offizielle Dividenden-Daten nicht verfügbar – {divError}
             </div>
           )}
 
@@ -321,7 +337,14 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
                     <div className="flex items-center gap-3">
                       <div className={`w-2 h-2 rounded-full ${h.isPaid ? 'bg-emerald-500' : 'bg-blue-400'}`} />
                       <div>
-                        <p className="text-sm font-bold text-slate-800">{h.name}</p>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <p className="text-sm font-bold text-slate-800">{h.name}</p>
+                          {dividendData.find(d => d.symbol === h.symbol)?.isEstimated && (
+                            <span className="text-[8px] font-black bg-amber-50 text-amber-600 border border-amber-200 px-1.5 py-0.5 rounded uppercase tracking-widest">
+                              KI-Schätzung
+                            </span>
+                          )}
+                        </div>
                         <p className="text-[10px] font-mono text-slate-400">
                           {h.symbol} · {h.shares} Stk · {formatCurrency(h.dividendPerShare)} €/Aktie p.a.
                         </p>
@@ -338,8 +361,9 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
               </div>
               <div className="px-6 py-3 bg-slate-50 border-t border-slate-100">
                 <p className="text-[10px] text-slate-400 italic">
-                  * Schätzungen basierend auf Alpha Vantage OVERVIEW-Daten (jährliche Dividende). Keine Garantie für
-                  zukünftige Zahlungen. Angaben in lokaler Währung des jeweiligen Börsenplatzes.
+                  {isDivFallback
+                    ? '* KI-Schätzung basierend auf historischen Ausschüttungsmustern. Keine offiziellen Daten – alle Angaben ohne Gewähr. Termine und Beträge beim Unternehmen prüfen.'
+                    : '* Schätzungen basierend auf Alpha Vantage OVERVIEW-Daten (jährliche Dividende). Keine Garantie für zukünftige Zahlungen. Angaben in lokaler Währung des jeweiligen Börsenplatzes.'}
                 </p>
               </div>
             </div>
@@ -352,7 +376,7 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
       {tickers.length === 0 && (
         <div className="bg-white border border-slate-200 rounded-[28px] p-12 text-center shadow-sm">
           <Calendar className="w-12 h-12 text-slate-300 mx-auto mb-4" />
-          <p className="text-slate-500 font-medium">Füge Depot-Positionen hinzu, um deren Earnings-Termine anzuzeigen.</p>
+          <p className="text-slate-500 font-medium">Füge Aktien oder Watchlist-Positionen hinzu, um deren Earnings-Termine anzuzeigen.</p>
         </div>
       )}
 
@@ -375,8 +399,13 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
       {isLoading && (
         <div className="flex justify-center py-16">
           <div className="bg-white px-6 py-4 rounded-2xl shadow-xl border border-slate-100 flex items-center gap-3">
-            <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
-            <span className="text-xs font-black text-slate-900 uppercase tracking-widest">KI analysiert Earnings-Kalender…</span>
+            <Loader2 className="w-5 h-5 animate-spin text-blue-600 shrink-0" />
+            <div>
+              <span className="text-xs font-black text-slate-900 uppercase tracking-widest block">KI analysiert Earnings-Kalender…</span>
+              <span className="text-[10px] text-slate-400 font-mono mt-0.5 block">
+                Analysiere {tickers.join(', ')}
+              </span>
+            </div>
           </div>
         </div>
       )}
@@ -466,10 +495,18 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
         </div>
       )}
 
-      {!isLoading && events.length === 0 && tickers.length > 0 && !error && lastFetch && (
+      {events.length === 0 && tickers.length > 0 && !error && (
         <div className="bg-white border border-slate-200 rounded-[28px] p-12 text-center shadow-sm">
           <Info className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-          <p className="text-slate-500 font-medium text-sm">Keine Earnings-Daten verfügbar. Bitte erneut versuchen.</p>
+          {isLoading ? (
+            <p className="text-slate-500 font-medium text-sm">
+              Analysiere {tickers.map(t => <span key={t} className="font-mono font-bold text-blue-600">{t}</span>).reduce<React.ReactNode[]>((acc, el, i) => i === 0 ? [el] : [...acc, ', ', el], [])}…
+            </p>
+          ) : (
+            <p className="text-slate-500 font-medium text-sm">
+              {lastFetch ? 'Keine Earnings-Daten gefunden. Bitte erneut versuchen.' : 'Lade Earnings-Daten…'}
+            </p>
+          )}
         </div>
       )}
     </div>

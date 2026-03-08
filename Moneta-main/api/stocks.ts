@@ -85,7 +85,10 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    const rawInput = (req.query.symbol ?? req.query.isin ?? 'AAPL') as string;
+    const rawInput = ((req.query.symbol ?? req.query.isin ?? '') as string).trim();
+    if (!rawInput) {
+      return res.status(400).json({ error: 'Parameter "symbol" oder "isin" fehlt.' });
+    }
     const { symbol: alphaSymbol } = toAlphaVantageSymbol(rawInput);
     const mode = (req.query.mode as string) || 'quote';
 
@@ -147,13 +150,21 @@ export default async function handler(req: any, res: any) {
     const data = await response.json();
 
     if (!response.ok) {
-      return res.status(response.status).json({ error: data.message || 'Alpha Vantage Anfrage fehlgeschlagen' });
+      return res.status(response.status).json({
+        error: data?.message || `Alpha Vantage Anfrage fehlgeschlagen (HTTP ${response.status})`,
+        symbol: alphaSymbol,
+      });
     }
 
-    // Alpha Vantage gibt HTTP 200 auch bei Fehlern zurück – Information im Body prüfen
+    // Alpha Vantage gibt HTTP 200 auch bei Rate-Limit-Fehlern zurück – Body prüfen
     if (data['Note'] || data['Information']) {
       const msg = data['Note'] || data['Information'];
-      return res.status(429).json({ error: msg, limitReached: true });
+      return res.status(503).json({
+        error: 'Alpha Vantage Rate-Limit erreicht. Bitte später erneut versuchen.',
+        detail: msg,
+        limitReached: true,
+        symbol: alphaSymbol,
+      });
     }
 
     if (mode === 'chat') {
@@ -175,7 +186,10 @@ export default async function handler(req: any, res: any) {
     quoteCache.set(alphaSymbol, { data: priceData, fetchedAt: Date.now() });
 
     return res.status(200).json(priceData);
-  } catch (error) {
-    return res.status(500).json({ error: 'Interner Serverfehler' });
+  } catch (error: any) {
+    return res.status(500).json({
+      error: 'Interner Serverfehler beim Abruf der Kursdaten.',
+      detail: error?.message ?? String(error),
+    });
   }
 }
