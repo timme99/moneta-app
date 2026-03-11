@@ -65,6 +65,12 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
     loading: false, message: '', error: '',
   });
 
+  /** Robust float conversion – handles German comma decimals and string values from Gemini. */
+  const safeFloat = (v: any): number => {
+    if (typeof v === 'number' && isFinite(v)) return v;
+    return parseFloat(String(v ?? '').replace(',', '.')) || 0;
+  };
+
   const debounceRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dropRef       = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -499,6 +505,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
         }
         if (!resp.ok) throw new Error('CSV-Analyse fehlgeschlagen');
         const { positions } = await resp.json();
+        console.log('KI Ergebnis:', positions);
 
         if (!positions || positions.length === 0) {
           setImportState({ loading: false, message: '', error: 'Keine Positionen in der CSV erkannt. Bitte stelle sicher, dass die Datei ein Broker-Export mit Stückzahl und Kurs ist.' });
@@ -509,8 +516,8 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
           .map((p: any) => ({
             rawSymbol: (p.symbol || p.isin || '').trim(),
             name:      p.name,
-            shares:    p.shares,
-            avgPrice:  p.price ?? 0,
+            shares:    safeFloat(p.quantity ?? p.shares),
+            avgPrice:  safeFloat(p.averagePrice ?? p.price),
           }))
           .filter((bp: any) => bp.rawSymbol && bp.shares > 0);
 
@@ -644,6 +651,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
       }
       if (!resp.ok) throw new Error('PDF-Analyse fehlgeschlagen');
       const { positions } = await resp.json();
+      console.log('KI Ergebnis:', positions);
 
       if (!positions || positions.length === 0) {
         setImportState({
@@ -658,8 +666,8 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
         .map((p: any) => ({
           rawSymbol: (p.symbol || p.isin || '').trim(),
           name:      p.name,
-          shares:    p.shares,
-          avgPrice:  p.price ?? 0,
+          shares:    safeFloat(p.quantity ?? p.shares),
+          avgPrice:  safeFloat(p.averagePrice ?? p.price),
         }))
         .filter((bp: any) => bp.rawSymbol && bp.shares > 0);
 

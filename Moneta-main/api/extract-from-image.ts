@@ -7,6 +7,17 @@ function stripJsonFences(text: string): string {
 }
 
 /**
+ * Konvertiert Gemini-Zahlenwerte robust zu float.
+ * Behandelt deutsche Komma-Dezimaltrenner ("13,612357" → 13.612357)
+ * und verhindert NaN-Werte, die Positionen stumm herausfiltern würden.
+ */
+function toFloat(v: any): number {
+  if (typeof v === 'number') return isFinite(v) ? v : 0;
+  const s = String(v ?? '').replace(',', '.').replace(/[^\d.]/g, '');
+  return parseFloat(s) || 0;
+}
+
+/**
  * POST /api/extract-from-image
  *
  * Empfängt ein Base64-kodiertes Bild, PDF oder einen CSV-Rohtext und nutzt Gemini Vision
@@ -68,25 +79,23 @@ Antworte NUR mit einem JSON-Array der Börsenkürzel – kein anderer Text:
 Falls nichts Erkennbares im Bild: []`;
 
     const brokerPrompt = `Extrahiere Investment-Daten aus diesem Dokument (Bild/PDF/CSV). WICHTIG:
-1. Erkenne Bruchstücke (z.B. 0.784621). Konvertiere deutsche Kommas immer in Punkte (0,78 -> 0.78).
-2. Extrahiere die ISIN (z.B. DE0005200000).
-3. Finde zusätzlich den passenden Börsen-Ticker (z.B. BEI.DE oder IWDA).
-4. Gib ein sauberes JSON-Array zurück mit: name, symbol (Ticker), isin, quantity (Zahl), averagePrice (Zahl).
+1. Erkenne Bruchstücke (z.B. 0.784621 oder "13,612357"). Konvertiere ALLE deutschen Kommas zu Punkten (13,612357 → 13.612357). Gib Zahlen IMMER als JSON-Number aus, niemals als String.
+2. Extrahiere die ISIN falls vorhanden (z.B. "IE00B4L5Y983") – schreibe sie ins Feld "isin".
+3. Finde den Yahoo Finance Ticker (z.B. "IWDA.AS" für Amsterdam, "EUNL.DE" für XETRA, "AAPL" für NASDAQ). Schreibe NUR den Ticker ins Feld "symbol" – NIEMALS die ISIN dort eintragen!
+4. Gib ein JSON-Array zurück mit: name (string), symbol (Ticker, string), isin (string), quantity (Zahl), averagePrice (Zahl pro Stück).
 
 Beispiel-Ausgabe:
-[{"name":"Beiersdorf AG","symbol":"BEI.DE","isin":"DE0005200000","quantity":0.784621,"averagePrice":134.50}]
+[{"name":"iShares MSCI World","symbol":"IWDA.AS","isin":"IE00B4L5Y983","quantity":13.612357,"averagePrice":89.34}]
 
 Regeln:
-- symbol: Börsen-Ticker (z.B. "AAPL", "BEI.DE") – leer lassen falls nicht erkennbar
-- isin: 12-stelliger ISIN-Code (z.B. "DE0005200000") – leer lassen falls nicht vorhanden
-- quantity: Stückzahl als Dezimalzahl (Bruchstücke erlaubt!)
-- averagePrice: Kaufpreis PRO STÜCK in EUR (falls Gesamtbetrag: Betrag ÷ Stückzahl)
-- name: Firmenname (optional)
-- Nur tatsächliche Positionen/Käufe – keine Verkäufe, Dividenden oder Gebühren
-- Falls kein Preis erkennbar: "averagePrice": 0 setzen
-- Falls keine Positionen erkennbar: []
+- symbol: Börsen-Ticker im Yahoo Finance Format – z.B. "BEI.DE", "AAPL", "IWDA.AS". Leer lassen ("") wenn wirklich nicht erkennbar.
+- isin: 12-stelliger Code wie "IE00B4L5Y983". Leer lassen ("") wenn nicht vorhanden.
+- quantity: Dezimalzahl mit Punkt (z.B. 13.612357). Kein String, kein Komma!
+- averagePrice: Kaufpreis PRO STÜCK. Falls nur Gesamtbetrag: Betrag ÷ quantity. 0 wenn nicht erkennbar.
+- Nur echte Positionen/Käufe – keine Verkäufe, Dividenden, Gebühren.
+- Falls keine Positionen: []
 
-Antworte NUR mit dem JSON-Array – kein anderer Text!`;
+Antworte NUR mit dem JSON-Array!`;
 
     let response: any;
 
@@ -137,11 +146,10 @@ Antworte NUR mit dem JSON-Array – kein anderer Text!`;
               .map((p: any) => ({
                 symbol:   String(p.symbol   ?? '').trim(),
                 isin:     String(p.isin     ?? '').trim(),
-                // Accept both old field names (shares/price) and new (quantity/averagePrice)
-                shares:   Number(p.quantity   ?? p.shares   ?? 0),
-                price:    (Number(p.averagePrice ?? p.price ?? 0) > 0)
-                            ? Number(p.averagePrice ?? p.price)
-                            : null,
+                // Accept both old field names (shares/price) and new (quantity/averagePrice).
+                // toFloat() handles German comma decimals that Number() would turn into NaN.
+                shares:   toFloat(p.quantity ?? p.shares),
+                price:    toFloat(p.averagePrice ?? p.price) || null,
                 name:     p.name ? String(p.name).trim() : undefined,
               }))
               .filter((p: any) => (p.symbol || p.isin) && p.shares > 0)
@@ -149,6 +157,7 @@ Antworte NUR mit dem JSON-Array – kein anderer Text!`;
       } catch {
         positions = [];
       }
+      console.log('[extract-from-image] KI Ergebnis:', JSON.stringify(positions));
       return res.status(200).json({ positions });
     }
 
