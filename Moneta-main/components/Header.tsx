@@ -63,14 +63,14 @@ const Header: React.FC<HeaderProps> = ({
                 {/* Mobile: icon only */}
                 <Logo
                   variant="icon"
-                  className="md:hidden h-9"
+                  className="md:hidden h-10"
                   onClick={undefined}
                 />
                 {/* Desktop: color horizontal logo + slogan */}
                 <div className="hidden md:flex flex-col">
                   <Logo
                     variant="color-horizontal"
-                    className="h-10 group-hover:opacity-90 transition-opacity"
+                    className="h-14 group-hover:opacity-90 transition-opacity"
                     onClick={undefined}
                   />
                 </div>

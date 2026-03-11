@@ -31,8 +31,7 @@ const LOGO_MAP: Record<LogoVariant, { src: string; alt: string }> = {
 const Logo: React.FC<LogoProps> = ({ variant, className = '', onClick }) => {
   const { src, alt } = LOGO_MAP[variant];
 
-  const defaultHeight = variant === 'icon' ? 'h-9' : 'h-10';
-  const baseClasses = `${defaultHeight} w-auto object-contain select-none`;
+  const baseClasses = 'w-auto object-contain select-none';
   const interactiveClasses = onClick ? 'cursor-pointer' : '';
 
   return (
