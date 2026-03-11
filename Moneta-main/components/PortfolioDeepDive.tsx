@@ -1,29 +1,22 @@
 
 import React, { useState, useEffect } from 'react';
 import { PortfolioAnalysisReport, NewsImpactReport, PortfolioHealthReport, PortfolioSavingsReport } from '../types';
-import { 
-  PieChart, 
-  Pie, 
-  Cell, 
-  ResponsiveContainer, 
-  Tooltip, 
-  Legend
+import {
+  PieChart,
+  Pie,
+  Cell,
+  ResponsiveContainer,
+  Tooltip
 } from 'recharts';
-import { 
-  Newspaper, 
-  TrendingUp, 
-  Globe, 
-  ShieldAlert, 
-  BarChart3, 
-  Zap, 
-  X, 
-  Loader2, 
-  TrendingDown, 
-  ArrowRight, 
-  RefreshCcw, 
-  Coins,
+import {
+  Newspaper,
+  TrendingUp,
+  BarChart3,
+  Zap,
+  X,
+  Loader2,
+  ArrowRight,
   Sparkles,
-  Info,
   AlertTriangle,
   Info as InfoIcon
 } from 'lucide-react';
@@ -32,29 +25,40 @@ import { stockService } from '../services/stockService';
 import { Alert, AlertTitle, AlertDescription } from './ui/alert';
 import { Skeleton } from './ui/skeleton';
 
-const COLORS = ['#2563eb', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'];
+const CHART_COLORS = [
+  '#2563eb',
+  '#10b981',
+  '#f59e0b',
+  '#8b5cf6',
+  '#06b6d4',
+  '#f97316',
+  '#64748b',
+];
 
-const SimpleHealthCard = ({ title, score, note, icon: Icon, explanation }: any) => (
-  <div className="bg-slate-50 p-5 rounded-3xl border border-slate-100 flex flex-col gap-3">
-    <div className="flex items-center justify-between">
-      <div className="flex items-center gap-2">
-        <Icon className="w-4 h-4 text-slate-400" />
-        <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-500">{title}</h4>
-      </div>
-      <div className="group/info relative">
-        <Info className="w-3 h-3 text-slate-300 cursor-help" />
-        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2 bg-slate-900 text-white text-[9px] rounded-lg opacity-0 group-hover/info:opacity-100 transition-opacity pointer-events-none z-50">
-          {explanation}
-        </div>
-      </div>
-    </div>
-    <div className="flex items-baseline gap-2">
-      <span className="text-2xl font-black text-slate-900 tracking-tighter">{score ?? '?'}/10</span>
-      <span className="text-[10px] font-bold text-slate-400">Punkte</span>
-    </div>
-    <p className="text-[11px] text-slate-600 font-medium leading-relaxed">{note || 'Wird berechnet...'}</p>
-  </div>
-);
+/** Sort desc by value, group entries < 5% into "Sonstige" */
+function consolidateData(rawData: { name: string; value: number }[] | undefined) {
+  if (!rawData?.length) return [];
+  const sorted = [...rawData].sort((a, b) => b.value - a.value);
+  const main: { name: string; value: number }[] = [];
+  let othersTotal = 0;
+  for (const item of sorted) {
+    if (item.value >= 5) {
+      main.push(item);
+    } else {
+      othersTotal += item.value;
+    }
+  }
+  if (othersTotal > 0.1) {
+    main.push({ name: 'Sonstige', value: Math.round(othersTotal * 10) / 10 });
+  }
+  return main;
+}
+
+const importanceLabel: Record<string, string> = {
+  hoch: 'Hohe Relevanz',
+  mittel: 'Mittlere Relevanz',
+  niedrig: 'Niedrige Relevanz',
+};
 
 type NewsItem = PortfolioAnalysisReport['news'] extends (infer T)[] ? T : never;
 
@@ -67,6 +71,66 @@ interface PortfolioDeepDiveProps {
 }
 
 const CACHED_PRICE_LABEL = '08:00 Uhr';
+
+const DistributionChart = ({ title, data, colorOffset = 0 }: { title: string; data: { name: string; value: number }[]; colorOffset?: number }) => {
+  const consolidated = consolidateData(data);
+  return (
+    <div className="bg-white rounded-[32px] md:rounded-[40px] border border-slate-200 p-6 md:p-8 shadow-sm">
+      <h3 className="text-base font-black text-slate-900 tracking-tight mb-6">{title}</h3>
+      {consolidated.length === 0 ? (
+        <div className="h-48 flex items-center justify-center text-slate-400 text-sm">Keine Daten</div>
+      ) : (
+        <div className="flex flex-col sm:flex-row items-center gap-6 md:gap-8">
+          {/* Donut */}
+          <div className="w-40 h-40 shrink-0">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={consolidated}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={46}
+                  outerRadius={64}
+                  paddingAngle={3}
+                  dataKey="value"
+                  strokeWidth={0}
+                >
+                  {consolidated.map((_, index) => (
+                    <Cell key={`cell-${index}`} fill={CHART_COLORS[(index + colorOffset) % CHART_COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip
+                  formatter={(v: number) => [`${v}%`, '']}
+                  contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 25px -5px rgb(0 0 0 / 0.15)', fontSize: '11px', fontWeight: '700' }}
+                  itemStyle={{ color: '#0f172a' }}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Legend */}
+          <div className="flex-1 w-full space-y-2.5">
+            {consolidated.map((item, i) => {
+              const color = CHART_COLORS[(i + colorOffset) % CHART_COLORS.length];
+              return (
+                <div key={i} className="flex items-center gap-3 group">
+                  <div className="w-2 h-2 rounded-full shrink-0" style={{ background: color }} />
+                  <span className="text-[11px] font-semibold text-slate-600 flex-1 truncate leading-none">{item.name}</span>
+                  <div className="flex items-center gap-2">
+                    <div className="w-14 h-1 bg-slate-100 rounded-full overflow-hidden">
+                      <div className="h-full rounded-full transition-all" style={{ width: `${Math.min(item.value, 100)}%`, background: color }} />
+                    </div>
+                    <span className="text-[11px] font-black text-slate-900 w-9 text-right tabular-nums">{item.value}%</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
 const PortfolioDeepDive: React.FC<PortfolioDeepDiveProps> = ({ report, healthReport, savingsReport, selectedNewsFromTicker, onClearSelectedNews }) => {
   const [analyzingNews, setAnalyzingNews] = useState<string | null>(null);
@@ -122,11 +186,9 @@ const PortfolioDeepDive: React.FC<PortfolioDeepDiveProps> = ({ report, healthRep
 
   if (!report) return null;
 
-  const factors = healthReport?.factors;
-
   return (
     <div className="space-y-8 md:space-y-12 animate-in fade-in duration-700">
-      
+
       {/* 1. PORTFOLIO ÜBERBLICK */}
       <div className="bg-white rounded-[32px] md:rounded-[40px] border border-slate-200 overflow-hidden shadow-sm">
         <div className="p-6 md:p-8 border-b border-slate-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-slate-50/50">
@@ -183,7 +245,7 @@ const PortfolioDeepDive: React.FC<PortfolioDeepDiveProps> = ({ report, healthRep
                   {holding.sentiment ?? holding.decision ?? 'Neutral'}
                 </span>
               </div>
-              
+
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Gewichtung</p>
@@ -197,15 +259,15 @@ const PortfolioDeepDive: React.FC<PortfolioDeepDiveProps> = ({ report, healthRep
                 <div className="space-y-1">
                   <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Markttrend</p>
                   <p className={`text-xs font-black ${
-                    holding.trend?.toLowerCase().includes('hoch') || holding.trend?.toLowerCase().includes('up') ? 'text-emerald-600' : 
-                    holding.trend?.toLowerCase().includes('runter') || holding.trend?.toLowerCase().includes('down') ? 'text-rose-600' : 
+                    holding.trend?.toLowerCase().includes('hoch') || holding.trend?.toLowerCase().includes('up') ? 'text-emerald-600' :
+                    holding.trend?.toLowerCase().includes('runter') || holding.trend?.toLowerCase().includes('down') ? 'text-rose-600' :
                     'text-slate-600'
                   }`}>
                     {holding.trend || 'Stabil'}
                   </p>
                 </div>
               </div>
-              
+
               <div className="bg-slate-50 p-4 rounded-2xl">
                 <p className="text-[11px] font-medium text-slate-600 leading-relaxed italic">
                   <span className="font-black text-slate-400 mr-1 opacity-50">KI:</span>
@@ -259,8 +321,8 @@ const PortfolioDeepDive: React.FC<PortfolioDeepDiveProps> = ({ report, healthRep
                   </td>
                   <td className="px-8 py-6">
                     <div className={`flex items-center gap-1 text-xs font-black ${
-                      holding.trend?.toLowerCase().includes('hoch') || holding.trend?.toLowerCase().includes('up') ? 'text-emerald-600' : 
-                      holding.trend?.toLowerCase().includes('runter') || holding.trend?.toLowerCase().includes('down') ? 'text-rose-600' : 
+                      holding.trend?.toLowerCase().includes('hoch') || holding.trend?.toLowerCase().includes('up') ? 'text-emerald-600' :
+                      holding.trend?.toLowerCase().includes('runter') || holding.trend?.toLowerCase().includes('down') ? 'text-rose-600' :
                       'text-slate-400'
                     }`}>
                       {holding.trend || 'Stabil'}
@@ -285,7 +347,7 @@ const PortfolioDeepDive: React.FC<PortfolioDeepDiveProps> = ({ report, healthRep
             <span className="text-[9px] font-black text-blue-600 uppercase tracking-widest">Relevanz-Filter Aktiv</span>
           </div>
         </div>
-        
+
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
           {report.news?.length > 0 ? report.news.map((item, i) => (
             <div key={i} className="p-6 bg-slate-50 rounded-[28px] md:rounded-[32px] border border-slate-100 flex flex-col group hover:border-blue-200 transition-all hover:shadow-lg">
@@ -295,22 +357,22 @@ const PortfolioDeepDive: React.FC<PortfolioDeepDiveProps> = ({ report, healthRep
                   item.importance === 'mittel' ? 'bg-amber-100 text-amber-600' :
                   'bg-blue-100 text-blue-600'
                 }`}>
-                  {item.importance}e Relevanz
+                  {importanceLabel[item.importance] ?? `${item.importance} Relevanz`}
                 </span>
                 <span className="text-2xl">{item.impact_emoji}</span>
               </div>
-              
+
               <h4 className="font-bold text-slate-900 mb-2 group-hover:text-blue-600 transition-colors leading-snug">
                 {item.title}
               </h4>
-              
+
               <div className="bg-white/60 p-4 rounded-2xl border border-white/40 mb-6 flex-1">
                 <p className="text-xs text-slate-600 font-medium leading-relaxed italic">
                   "{item.snippet}"
                 </p>
               </div>
 
-              <button 
+              <button
                 onClick={() => handleNewsClick(item)}
                 disabled={!!analyzingNews}
                 className="w-full py-3.5 md:py-4 bg-white border border-slate-200 rounded-2xl text-[10px] font-black uppercase tracking-widest text-slate-600 hover:bg-blue-600 hover:text-white transition-all flex items-center justify-center gap-2 shadow-sm"
@@ -336,114 +398,13 @@ const PortfolioDeepDive: React.FC<PortfolioDeepDiveProps> = ({ report, healthRep
         </div>
       )}
 
-      {/* 3. SICHERHEITS-CHECK */}
-      {healthReport && (
-        <div className="bg-white rounded-[32px] md:rounded-[40px] border border-slate-200 p-6 md:p-8 shadow-sm">
-          <div className="flex items-center gap-3 mb-8">
-            <ShieldAlert className="w-5 h-5 text-blue-600" />
-            <h3 className="text-lg md:text-xl font-black text-slate-900 tracking-tight">Analyse-Werte</h3>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <SimpleHealthCard 
-              title="Streuung" 
-              score={factors?.diversification?.score} 
-              note={factors?.diversification?.note}
-              icon={Globe}
-              explanation="Verteilung über Länder und Branchen."
-            />
-            <SimpleHealthCard 
-              title="Kosten" 
-              score={factors?.cost_efficiency?.score} 
-              note={factors?.cost_efficiency?.note}
-              icon={Coins}
-              explanation="Wie viel Gebühren fressen dein Vermögen?"
-            />
-            <SimpleHealthCard 
-              title="Balance" 
-              score={factors?.risk_balance?.score} 
-              note={factors?.risk_balance?.note}
-              icon={TrendingUp}
-              explanation="Verhältnis von Sicherheit zu Rendite."
-            />
-            <SimpleHealthCard 
-              title="Stabilität" 
-              score={factors?.allocation_drift?.score} 
-              note={factors?.allocation_drift?.note}
-              icon={RefreshCcw}
-              explanation="Treue zur gewählten Strategie."
-            />
-          </div>
-        </div>
-      )}
-
-      {/* 4. CHARTS */}
+      {/* 3. CHARTS */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 md:gap-8">
-        <div className="bg-white rounded-[32px] md:rounded-[40px] border border-slate-200 p-6 md:p-8 shadow-sm">
-          <h3 className="text-lg font-black text-slate-900 tracking-tight mb-8 text-center lg:text-left">Verteilung: Themen</h3>
-          <div className="h-64 sm:h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={report.sectors || []}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={55}
-                  outerRadius={75}
-                  paddingAngle={5}
-                  dataKey="value"
-                >
-                  {(report.sectors || []).map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip 
-                  contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                  itemStyle={{ fontSize: '11px', fontWeight: '800' }}
-                />
-                <Legend 
-                  verticalAlign="bottom" 
-                  height={40} 
-                  wrapperStyle={{ fontSize: '10px', fontWeight: '600', paddingTop: '20px' }}
-                />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-[32px] md:rounded-[40px] border border-slate-200 p-6 md:p-8 shadow-sm">
-          <h3 className="text-lg font-black text-slate-900 tracking-tight mb-8 text-center lg:text-left">Verteilung: Regionen</h3>
-          <div className="h-64 sm:h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={report.regions || []}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={55}
-                  outerRadius={75}
-                  paddingAngle={5}
-                  dataKey="value"
-                >
-                  {(report.regions || []).map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[(index + 2) % COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip 
-                  contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                  itemStyle={{ fontSize: '11px', fontWeight: '800' }}
-                />
-                <Legend 
-                  verticalAlign="bottom" 
-                  height={40} 
-                  wrapperStyle={{ fontSize: '10px', fontWeight: '600', paddingTop: '20px' }}
-                />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
+        <DistributionChart title="Verteilung: Themen" data={report.sectors || []} colorOffset={0} />
+        <DistributionChart title="Verteilung: Regionen" data={report.regions || []} colorOffset={2} />
       </div>
 
-      {/* 5. NÄCHSTE SCHRITTE */}
+      {/* 4. NÄCHSTE SCHRITTE */}
       <div className="bg-blue-600 rounded-[32px] md:rounded-[40px] p-8 md:p-12 text-white relative overflow-hidden shadow-2xl shadow-blue-600/30">
         <div className="absolute -top-24 -right-24 w-64 h-64 bg-white/10 rounded-full blur-3xl pointer-events-none" />
         <div className="relative z-10">
