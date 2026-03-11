@@ -2,11 +2,14 @@ import { sendEmail, buildDigestHtml, getResendClient } from '../../lib/email.js'
 
 /**
  * GET /api/test/weekly-report
+ * GET /api/test/weekly-report?secret=<CRON_SECRET>
  *
  * Sendet den KI-Wochenbericht sofort als Test an tim@moneta-invest.de –
- * unabhängig vom Wochentag. Nur mit CRON_SECRET im Authorization-Header nutzbar.
+ * unabhängig vom Wochentag.
  *
- * Header: Authorization: Bearer <CRON_SECRET>
+ * Authentifizierung (eines von beiden genügt):
+ *   - Header:        Authorization: Bearer <CRON_SECRET>
+ *   - Query-Param:   ?secret=<CRON_SECRET>   ← direkt im Browser aufrufbar
  */
 export default async function handler(req: any, res: any) {
   if (req.method !== 'GET' && req.method !== 'POST') {
@@ -14,19 +17,26 @@ export default async function handler(req: any, res: any) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  // ── Authentifizierung (gleiche Logik wie der echte Cron-Job) ─────────────
+  // ── Authentifizierung ────────────────────────────────────────────────────────
   const secret = process.env.CRON_SECRET;
-  const auth   = req.headers?.authorization ?? '';
-  const token  = auth.startsWith('Bearer ') ? auth.slice(7) : '';
 
   if (!secret || secret.length < 16) {
     return res.status(503).json({ error: 'CRON_SECRET nicht konfiguriert (min. 16 Zeichen).' });
   }
+
+  // Token aus Header ODER Query-Param
+  const auth  = req.headers?.authorization ?? '';
+  const fromHeader = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+  const fromQuery  = (req.query?.secret as string | undefined) ?? '';
+  const token = fromHeader || fromQuery;
+
   if (token !== secret) {
+    const masked = token.length >= 3 ? token.slice(0, 3) + '***' : '(leer)';
+    console.warn(`[test/weekly-report] Auth fehlgeschlagen – Token: ${masked}`);
     return res.status(401).json({ error: 'Unauthorized – CRON_SECRET stimmt nicht überein.' });
   }
 
-  // ── E-Mail-Dienst prüfen ─────────────────────────────────────────────────
+  // ── E-Mail-Dienst prüfen ─────────────────────────────────────────────────────
   if (!getResendClient()) {
     return res.status(503).json({ error: 'RESEND_API_KEY nicht konfiguriert.' });
   }
