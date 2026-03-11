@@ -364,8 +364,8 @@ export async function addBrokerHoldings(
 
     if (ISIN_RE.test(raw)) {
       const resolved = resolvedMap.get(raw);
-      if (!resolved) { skipped++; continue; }
-      symbol = resolved;
+      // Fallback: ISIN direkt als Symbol speichern, damit die Position nicht verloren geht
+      symbol = resolved ?? raw;
     } else if (TICKER_RE.test(raw)) {
       symbol = raw;
     } else {

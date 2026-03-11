@@ -481,19 +481,68 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
   const handleBrokerImport = async (file: File) => {
     setImportState({ loading: true, message: '', error: '' });
     try {
-      const XLSX = await import('xlsx');
-      let wb: ReturnType<typeof XLSX.read>;
+      // CSV-Dateien direkt an die KI senden – robuster als starrer Spalten-Parser
       if (file.name.toLowerCase().endsWith('.csv')) {
         const text = await file.text();
-        const firstLine = text.split('\n')[0] ?? '';
-        const commas = (firstLine.match(/,/g) ?? []).length;
-        const semis  = (firstLine.match(/;/g) ?? []).length;
-        const delim  = semis > commas ? ';' : ',';
-        wb = XLSX.read(text, { type: 'string', FS: delim });
-      } else {
-        const buffer = await file.arrayBuffer();
-        wb = XLSX.read(buffer, { type: 'array' });
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 30_000);
+        let resp: Response;
+        try {
+          resp = await fetch('/api/extract-from-image', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ imageBase64: text, mimeType: 'text/csv' }),
+            signal: controller.signal,
+          });
+        } finally {
+          clearTimeout(timeoutId);
+        }
+        if (!resp.ok) throw new Error('CSV-Analyse fehlgeschlagen');
+        const { positions } = await resp.json();
+
+        if (!positions || positions.length === 0) {
+          setImportState({ loading: false, message: '', error: 'Keine Positionen in der CSV erkannt. Bitte stelle sicher, dass die Datei ein Broker-Export mit Stückzahl und Kurs ist.' });
+          return;
+        }
+
+        const brokerPositions: BrokerPosition[] = positions
+          .map((p: any) => ({
+            rawSymbol: (p.symbol || p.isin || '').trim(),
+            name:      p.name,
+            shares:    p.shares,
+            avgPrice:  p.price ?? 0,
+          }))
+          .filter((bp: any) => bp.rawSymbol && bp.shares > 0);
+
+        if (brokerPositions.length === 0) {
+          setImportState({ loading: false, message: '', error: 'Keine gültigen Positionen in der CSV gefunden.' });
+          return;
+        }
+
+        let effectiveUserId = userId;
+        if (sb) {
+          const { data: sessionData } = await sb.auth.getSession();
+          effectiveUserId = sessionData?.session?.user?.id ?? userId;
+        }
+        if (!effectiveUserId) throw new Error('Nicht eingeloggt – bitte zuerst anmelden.');
+
+        const { count, skipped, error } = await addBrokerHoldings(brokerPositions, effectiveUserId);
+        if (error) throw new Error(error);
+
+        if (effectiveUserId !== userId) setUserId(effectiveUserId);
+        await onRefresh?.();
+        setImportState({
+          loading: false,
+          message: `${count} Position${count !== 1 ? 'en' : ''} aus CSV importiert${skipped > 0 ? ` (${skipped} übersprungen)` : ''}.`,
+          error: '',
+        });
+        return;
       }
+
+      // Nicht-CSV (Excel): XLSX-Parser + parseBrokerData
+      const XLSX = await import('xlsx');
+      const buffer = await file.arrayBuffer();
+      const wb = XLSX.read(buffer, { type: 'array' });
       const ws = wb.Sheets[wb.SheetNames[0]];
       const rows: any[] = XLSX.utils.sheet_to_json(ws, { defval: '' });
 
@@ -539,11 +588,19 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
     setImportState({ loading: true, message: '', error: '' });
     try {
       const { base64, mimeType } = await resizeImage(file);
-      const resp = await fetch('/api/extract-from-image', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64: base64, mimeType }),
-      });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30_000);
+      let resp: Response;
+      try {
+        resp = await fetch('/api/extract-from-image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ imageBase64: base64, mimeType }),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
       if (!resp.ok) throw new Error('Bild-Analyse fehlgeschlagen');
       const { tickers } = await resp.json();
       if (!tickers || tickers.length === 0) {
@@ -561,18 +618,30 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
   const handlePdfImport = async (file: File) => {
     setImportState({ loading: true, message: '', error: '' });
     try {
-      // Read PDF as base64
-      const buffer = await file.arrayBuffer();
-      const bytes = new Uint8Array(buffer);
-      let binary = '';
-      for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
-      const base64 = btoa(binary);
-
-      const resp = await fetch('/api/extract-from-image', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64: base64, mimeType: 'application/pdf' }),
+      // Read PDF as base64 via FileReader (safer than manual btoa loop for binary data)
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const dataUrl = reader.result as string;
+          resolve(dataUrl.split(',')[1]);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
       });
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30_000);
+      let resp: Response;
+      try {
+        resp = await fetch('/api/extract-from-image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ imageBase64: base64, mimeType: 'application/pdf' }),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
       if (!resp.ok) throw new Error('PDF-Analyse fehlgeschlagen');
       const { positions } = await resp.json();
 
@@ -584,13 +653,15 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
         return;
       }
 
-      // Convert to BrokerPosition format
-      const brokerPositions = positions.map((p: any) => ({
-        rawSymbol: p.symbol,
-        name: p.name,
-        shares: p.shares,
-        avgPrice: p.price ?? 0,
-      }));
+      // Convert to BrokerPosition format (API returns: symbol, isin, shares, price, name)
+      const brokerPositions = positions
+        .map((p: any) => ({
+          rawSymbol: (p.symbol || p.isin || '').trim(),
+          name:      p.name,
+          shares:    p.shares,
+          avgPrice:  p.price ?? 0,
+        }))
+        .filter((bp: any) => bp.rawSymbol && bp.shares > 0);
 
       let effectiveUserId = userId;
       if (sb) {
@@ -1013,7 +1084,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
         {importState.loading && (
           <div className="flex items-center gap-2 text-[10px] text-slate-500 font-medium">
             <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            KI analysiert Dokument – bitte warten…
+            KI analysiert Dokument (ISINs & Bruchstücke werden verarbeitet)...
           </div>
         )}
         {importState.message && !importState.loading && (
