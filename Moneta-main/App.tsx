@@ -756,7 +756,7 @@ const App: React.FC = () => {
         <div className="max-w-7xl mx-auto px-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-12 mb-12">
             <div>
-              <Logo variant="color-horizontal" className="mb-4" />
+              <Logo variant="color-horizontal" className="h-14 mb-4" />
               <p className="text-sm text-slate-500 font-medium max-w-sm leading-relaxed">
                 Ein privates Hobby-Projekt für intelligente Portfolio-Analysen. Entwickelt für Bildungszwecke und persönliche Finanzbildung.
               </p>
