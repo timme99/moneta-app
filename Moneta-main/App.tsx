@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import Header from './components/Header';
+import Logo from './components/atoms/Logo';
 import DashboardSummary from './components/DashboardSummary';
 import Assistant from './components/Assistant';
 import EmptyState from './components/EmptyState';
@@ -755,14 +756,7 @@ const App: React.FC = () => {
         <div className="max-w-7xl mx-auto px-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-12 mb-12">
             <div>
-              <div className="flex items-center gap-2 mb-4">
-                <div className="bg-blue-600 p-2 rounded-lg">
-                  <ShieldCheck className="text-white w-4 h-4" />
-                </div>
-                <span className="text-xl font-black text-slate-900 tracking-tighter italic">
-                  Mon<span className="text-blue-600">eta</span>
-                </span>
-              </div>
+              <Logo variant="color-horizontal" className="mb-4" />
               <p className="text-sm text-slate-500 font-medium max-w-sm leading-relaxed">
                 Ein privates Hobby-Projekt für intelligente Portfolio-Analysen. Entwickelt für Bildungszwecke und persönliche Finanzbildung.
               </p>

@@ -6,7 +6,6 @@ import {
 } from 'lucide-react';
 import type { UserAccount } from '../types';
 import Logo from './atoms/Logo';
-import { APP_SLOGAN } from '../constants';
 
 interface HeaderProps {
   activeView: string;
@@ -74,9 +73,6 @@ const Header: React.FC<HeaderProps> = ({
                     className="h-10 group-hover:opacity-90 transition-opacity"
                     onClick={undefined}
                   />
-                  <p className="text-brand-slogan text-moneta-sage tracking-wide mt-0.5 leading-tight">
-                    {APP_SLOGAN}
-                  </p>
                 </div>
               </button>
 
