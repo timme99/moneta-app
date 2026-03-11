@@ -221,8 +221,9 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
           </div>
           <h2 className="text-3xl md:text-4xl font-black mb-3 tracking-tighter">Earnings & Dividenden</h2>
           <p className="text-slate-400 font-medium leading-relaxed text-sm max-w-xl">
-            Bevorstehende Quartalszahlen und Dividenden-Schätzungen für deine Depot-Positionen.
-            KI-Schätzungen auf Basis historischer Daten – rein informativ, keine Anlageberatung.
+            Bevorstehende Quartalszahlen und Dividenden-Schätzungen für deine Depot-Positionen –{' '}
+            <span className="text-white font-bold">Investieren mit Durchblick.</span>{' '}
+            KI-Schätzungen auf Basis historischer Daten, rein informativ, keine Anlageberatung.
           </p>
         </div>
       </div>
