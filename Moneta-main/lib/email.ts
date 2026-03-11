@@ -1,13 +1,20 @@
 import { Resend } from 'resend';
 import type { NewsletterSubscriber } from './subscribers.js';
 
-const resend = new Resend(process.env.RESEND_API_KEY);
-
 /** Absender – in Vercel z. B. setzen: FROM_EMAIL="Moneta <newsletter@deine-domain.de>" */
 const FROM_EMAIL = process.env.FROM_EMAIL ?? 'Moneta <onboarding@resend.dev>';
 
+// Lazy-Init: Resend-Client wird erst bei erster Nutzung erzeugt.
+// Verhindert "new Resend(undefined)" beim Laden des Moduls ohne API-Key.
+let _resend: Resend | null = null;
+
 export function getResendClient(): Resend | null {
-  return process.env.RESEND_API_KEY ? resend : null;
+  if (!process.env.RESEND_API_KEY) {
+    console.warn('[email] RESEND_API_KEY nicht gesetzt – E-Mail-Versand nicht verfügbar.');
+    return null;
+  }
+  if (!_resend) _resend = new Resend(process.env.RESEND_API_KEY);
+  return _resend;
 }
 
 /**

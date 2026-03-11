@@ -26,7 +26,8 @@ export async function getSubscribersForDigest(): Promise<NewsletterSubscriber[]>
   const { data, error } = await supabase
     .from('profiles')
     .select('email, full_name')
-    .eq('weekly_digest_enabled', true)
+    // JSONB-Filter: preferences @> '{"weeklyReport":true}'
+    .contains('preferences', { weeklyReport: true })
     .not('email', 'is', null) as unknown as { data: ProfileRow[] | null; error: any };
 
   if (error) {
