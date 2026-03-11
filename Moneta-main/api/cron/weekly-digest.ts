@@ -25,8 +25,18 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
+    // Prüfe ob E-Mail-Dienst konfiguriert ist
+    const { getResendClient } = await import('../../lib/email.js');
+    if (!getResendClient()) {
+      console.error('[cron/weekly-digest] RESEND_API_KEY fehlt – Versand abgebrochen.');
+      return res.status(503).json({ error: 'RESEND_API_KEY nicht konfiguriert.' });
+    }
+
     const subscribers = await getSubscribersForDigest();
+    console.log(`[cron/weekly-digest] ${subscribers.length} Abonnent(en) mit weeklyReport=true gefunden.`);
+
     if (subscribers.length === 0) {
+      console.log('[cron/weekly-digest] Kein Versand – alle User haben Opt-out oder preferences leer.');
       return res.status(200).json({
         ok: true,
         message: 'Keine Abonnenten für den Wochenbericht.',
@@ -44,6 +54,9 @@ export default async function handler(req: any, res: any) {
       ctaUrl: process.env.APP_URL ?? undefined,
     });
 
+    console.log(`[cron/weekly-digest] Ergebnis: ${result.sent} versendet, ${result.failed} Fehler.`);
+    result.errors.forEach((e) => console.error('[cron/weekly-digest] Versandfehler:', e));
+
     return res.status(200).json({
       ok: true,
       sent: result.sent,
@@ -51,7 +64,7 @@ export default async function handler(req: any, res: any) {
       errors: result.errors.length ? result.errors : undefined,
     });
   } catch (e: any) {
-    console.error('[cron/weekly-digest]', e?.message || e);
+    console.error('[cron/weekly-digest] Unerwarteter Fehler:', e?.message || e);
     return res.status(500).json({ error: 'Fehler beim Versand des Wochenberichts' });
   }
 }

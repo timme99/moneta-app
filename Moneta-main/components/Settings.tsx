@@ -15,11 +15,8 @@ interface SettingsProps {
   onProfileRefresh?: (userId?: string) => Promise<void>;
 }
 
-type BoolPrefColumn =
-  | 'weekly_digest_enabled'
-  | 'newsletter_subscribed'
-  | 'cloud_sync_enabled'
-  | 'legal_updates_enabled';
+/** Keys within the `preferences` JSONB column on the profiles table. */
+type PrefKey = 'weeklyReport' | 'autoNewsletter' | 'cloudSync' | 'legalUpdates';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -147,24 +144,34 @@ const Settings: React.FC<SettingsProps> = ({ account, onOpenAuth, onProfileRefre
 
   // ── Load all preferences from Supabase on mount ───────────────────────────
   useEffect(() => {
-    if (!sb || !account) return;
-    setDisplayName(account.name ?? '');
+    if (!sb || !account?.id) return;
+    let cancelled = false;
 
-    getSession().then(async (session) => {
-      if (!session?.user?.id) return;
-      const { data } = await sb
+    (async () => {
+      const session = await getSession();
+      if (!session?.user?.id || cancelled) return;
+
+      const { data, error } = await sb
         .from('profiles')
-        .select('full_name, weekly_digest_enabled, newsletter_subscribed, cloud_sync_enabled, legal_updates_enabled')
+        .select('full_name, preferences')
         .eq('id', session.user.id)
-        .single();
+        .maybeSingle();
+
+      if (cancelled) return;
+      if (error) { console.error('[Settings] loadPrefs:', error.message); return; }
       if (!data) return;
+
       const d = data as any;
-      if (d.full_name)           setDisplayName(d.full_name);
-      if (d.weekly_digest_enabled  != null) setWeeklyDigest(d.weekly_digest_enabled);
-      if (d.newsletter_subscribed  != null) setAutoNewsletter(d.newsletter_subscribed);
-      if (d.cloud_sync_enabled     != null) setCloudSync(d.cloud_sync_enabled);
-      if (d.legal_updates_enabled  != null) setLegalUpdates(d.legal_updates_enabled);
-    });
+      const prefs = (d.preferences ?? {}) as Record<string, boolean | undefined>;
+
+      if (d.full_name != null)           setDisplayName(d.full_name);
+      if (prefs.weeklyReport   != null)  setWeeklyDigest(!!prefs.weeklyReport);
+      if (prefs.autoNewsletter != null)  setAutoNewsletter(!!prefs.autoNewsletter);
+      if (prefs.cloudSync      != null)  setCloudSync(!!prefs.cloudSync);
+      if (prefs.legalUpdates   != null)  setLegalUpdates(!!prefs.legalUpdates);
+    })();
+
+    return () => { cancelled = true; };
   }, [account?.id]);
 
   // ── Save display name ─────────────────────────────────────────────────────
@@ -197,27 +204,33 @@ const Settings: React.FC<SettingsProps> = ({ account, onOpenAuth, onProfileRefre
   };
 
   // ── Boolean preference toggle ─────────────────────────────────────────────
-  const updatePreference = async (column: BoolPrefColumn, value: boolean) => {
+  // Nutzt merge_user_preference RPC für atomares JSONB-Merging:
+  // preferences = preferences || '{"key":value}' – andere Keys bleiben unberührt.
+  const updatePreference = async (key: PrefKey, value: boolean) => {
     if (!sb || !account) return;
-    setSaving(column);
+    setSaving(key);
     const session = await getSession();
     if (!session?.user?.id) { setSaving(null); return; }
 
-    const { error } = await sb.from('profiles').update({ [column]: value }).eq('id', session.user.id);
+    const { error } = await sb.rpc('merge_user_preference', {
+      p_user_id: session.user.id,
+      p_key:     key,
+      p_value:   value,
+    });
     setSaving(null);
 
     if (error) { flash('Fehler beim Speichern', true); return; }
 
-    const setters: Record<BoolPrefColumn, (v: boolean) => void> = {
-      weekly_digest_enabled:  setWeeklyDigest,
-      newsletter_subscribed:  setAutoNewsletter,
-      cloud_sync_enabled:     setCloudSync,
-      legal_updates_enabled:  setLegalUpdates,
+    const setters: Record<PrefKey, (v: boolean) => void> = {
+      weeklyReport:   setWeeklyDigest,
+      autoNewsletter: setAutoNewsletter,
+      cloudSync:      setCloudSync,
+      legalUpdates:   setLegalUpdates,
     };
-    setters[column](value);
+    setters[key](value);
     flash('Gespeichert ✓');
 
-    if (column === 'cloud_sync_enabled') setShowSyncWarning(!value);
+    if (key === 'cloudSync') setShowSyncWarning(!value);
   };
 
   // ── Delete account ────────────────────────────────────────────────────────
@@ -250,10 +263,10 @@ const Settings: React.FC<SettingsProps> = ({ account, onOpenAuth, onProfileRefre
   // ── Sub-components ────────────────────────────────────────────────────────
 
   const ToggleRow = ({
-    icon: Icon, label, description, isActive, column, warningOff,
+    icon: Icon, label, description, isActive, prefKey, warningOff,
   }: {
     icon: any; label: string; description: string;
-    isActive: boolean; column: BoolPrefColumn; warningOff?: string;
+    isActive: boolean; prefKey: PrefKey; warningOff?: string;
   }) => (
     <div className="flex items-start justify-between px-5 py-5 sm:p-6 border-b border-slate-100 last:border-0">
       <div className="flex items-start gap-4 min-w-0">
@@ -271,12 +284,12 @@ const Settings: React.FC<SettingsProps> = ({ account, onOpenAuth, onProfileRefre
         </div>
       </div>
       <button
-        onClick={() => updatePreference(column, !isActive)}
-        disabled={saving === column || !account}
+        onClick={() => updatePreference(prefKey, !isActive)}
+        disabled={saving === prefKey || !account}
         className="shrink-0 flex items-center gap-1.5 disabled:opacity-40 transition-opacity ml-4 mt-0.5 min-h-[44px] min-w-[44px] justify-center"
         title={account ? (isActive ? 'Deaktivieren' : 'Aktivieren') : 'Bitte zuerst anmelden'}
       >
-        {saving === column
+        {saving === prefKey
           ? <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
           : isActive
             ? <ToggleRight className="w-7 h-7 text-blue-600" />
@@ -419,7 +432,7 @@ const Settings: React.FC<SettingsProps> = ({ account, onOpenAuth, onProfileRefre
             label="Cloud-Sync"
             description="Portfolio & Einstellungen auf allen Geräten synchronisieren"
             isActive={cloudSync}
-            column="cloud_sync_enabled"
+            prefKey="cloudSync"
             warningOff="Achtung: Daten werden nicht mehr in der Cloud gesichert."
           />
         </div>
@@ -434,7 +447,7 @@ const Settings: React.FC<SettingsProps> = ({ account, onOpenAuth, onProfileRefre
             label="Rechtliche Mitteilungen"
             description="Wichtige Änderungen der AGB, Datenschutzerklärung und Pflichthinweise (DSGVO)"
             isActive={legalUpdates}
-            column="legal_updates_enabled"
+            prefKey="legalUpdates"
           />
         </div>
 
@@ -457,14 +470,14 @@ const Settings: React.FC<SettingsProps> = ({ account, onOpenAuth, onProfileRefre
             label="KI-Wochenbericht"
             description="Automatische Depot-Analyse per E-Mail (jeden Montag)"
             isActive={weeklyDigest}
-            column="weekly_digest_enabled"
+            prefKey="weeklyReport"
           />
           <ToggleRow
             icon={Target}
             label="Markt-Updates"
             description="Sofortige Info bei wichtigen Kursänderungen in deinem Depot"
             isActive={autoNewsletter}
-            column="newsletter_subscribed"
+            prefKey="autoNewsletter"
           />
         </div>
 

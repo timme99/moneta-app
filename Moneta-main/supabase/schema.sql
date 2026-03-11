@@ -474,3 +474,46 @@ CREATE INDEX IF NOT EXISTS idx_subscriptions_user          ON public.subscriptio
 -- Ermöglicht Cross-Device-Sync: Änderungen erscheinen sofort in allen Tabs.
 -- ============================================================
 ALTER PUBLICATION supabase_realtime ADD TABLE public.holdings;
+
+
+-- ============================================================
+-- 9. PREFERENCES JSONB – Nutzer-Präferenzen als JSONB-Feld
+-- Atomares JSONB-Merging verhindert Race Conditions beim Toggle.
+-- Keys: weeklyReport, autoNewsletter, cloudSync, legalUpdates
+-- ============================================================
+
+-- 9a. Neue Spalte (idempotent)
+ALTER TABLE public.profiles
+  ADD COLUMN IF NOT EXISTS preferences JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+-- 9b. Datenmigration: bestehende Boolean-Spalten → JSONB
+--     Nur Rows migrieren, bei denen preferences noch leer ist.
+UPDATE public.profiles
+SET preferences = jsonb_build_object(
+  'weeklyReport',   COALESCE(weekly_digest_enabled, false),
+  'autoNewsletter', COALESCE(newsletter_subscribed,  false),
+  'cloudSync',      COALESCE(cloud_sync_enabled,     true),
+  'legalUpdates',   COALESCE(legal_updates_enabled,  true)
+)
+WHERE preferences = '{}'::jsonb;
+
+-- 9c. Atomare Merge-Funktion (RPC) – aktualisiert einen einzelnen Key
+--     ohne andere Keys zu überschreiben. Legt den Row an falls nicht vorhanden.
+CREATE OR REPLACE FUNCTION public.merge_user_preference(
+  p_user_id UUID,
+  p_key     TEXT,
+  p_value   BOOLEAN
+)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  INSERT INTO public.profiles (id, preferences)
+  VALUES (p_user_id, jsonb_build_object(p_key, p_value))
+  ON CONFLICT (id) DO UPDATE
+    SET preferences = COALESCE(profiles.preferences, '{}'::jsonb)
+                      || jsonb_build_object(p_key, p_value);
+END;
+$$;
