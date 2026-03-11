@@ -13,8 +13,8 @@
  *
  * All tasks require:  Authorization: Bearer <CRON_SECRET>
  */
-import { getSupabaseAdmin } from '../lib/supabaseClient.js';
-import { sendEmail, buildDigestHtml } from '../lib/email.js';
+import { getSupabaseAdmin } from '../lib/supabaseClient';
+import { sendEmail, buildDigestHtml } from '../lib/email';
 
 function requireSecret(req: any, res: any): boolean {
   const secret = process.env.CRON_SECRET ?? '';
