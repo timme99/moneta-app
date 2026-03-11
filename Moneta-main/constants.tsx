@@ -3,6 +3,15 @@ import { ETF } from './types';
 
 export const APP_NAME = "Moneta";
 export const APP_TAGLINE = "Your Digital Wealth Advisor";
+export const APP_SLOGAN = "Investieren mit Durchblick";
+
+// ── Logo Assets (Supabase Storage) ───────────────────────────────────────────
+export const LOGO_COLOR_HORIZONTAL =
+  'https://oeqqaybtsdfaktvdjgtp.supabase.co/storage/v1/object/public/Logo/Color%20HFull.png';
+export const LOGO_WHITE_HORIZONTAL =
+  'https://oeqqaybtsdfaktvdjgtp.supabase.co/storage/v1/object/public/Logo/White%20HFull.png';
+export const LOGO_ICON_ONLY =
+  'https://oeqqaybtsdfaktvdjgtp.supabase.co/storage/v1/object/public/Logo/Color%20Icon.png';
 
 export const MOCK_ETFS: ETF[] = [
   {
@@ -68,7 +77,9 @@ export const MOCK_ETFS: ETF[] = [
 ];
 
 export const APP_THEME = {
-  primary: 'blue-600',
-  secondary: 'slate-800',
-  accent: 'emerald-500'
+  primary:    'moneta-forest',   // #1D4C32 — Deep Forest
+  hover:      'moneta-growth',   // #286743 — Growth Green
+  accent:     'moneta-sage',     // #78A494 — Sage-Eta
+  background: 'moneta-offwhite', // #F8F8F7 — Off-White
+  dark:       'moneta-obsidian', // #212020 — Obsidian Black
 };
