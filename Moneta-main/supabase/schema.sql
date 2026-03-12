@@ -456,6 +456,36 @@ CREATE POLICY "subscriptions_service_role"
 
 
 -- ============================================================
+-- 10. STOCK EVENTS – Earnings-Kalender-Cache (global, kein user_id)
+--
+-- event_type Werte:
+--   'earnings'  – Quartalszahlen-Termin (event_date = echtes Datum)
+--   'agm'       – Hauptversammlung
+--   'dividend'  – Dividenden-Ex-Datum
+--   '_scanned'  – Sentinel: event_date = '1970-01-01', last_updated = Scan-Zeitstempel
+--                 Verhindert erneutes Scannen innerhalb der Cache-TTL (30 Tage).
+-- ============================================================
+CREATE TABLE IF NOT EXISTS public.stock_events (
+  id           SERIAL      PRIMARY KEY,
+  symbol       TEXT        NOT NULL,
+  event_type   TEXT        NOT NULL,
+  event_date   DATE        NOT NULL,
+  quarter      TEXT,
+  details      JSONB       NOT NULL DEFAULT '{}',
+  last_updated TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (symbol, event_type, event_date)
+);
+
+-- RLS: Lesen für Auth-User; Schreiben nur via Service-Role
+ALTER TABLE public.stock_events ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "stock_events_select_authenticated"
+  ON public.stock_events FOR SELECT
+  TO authenticated
+  USING (true);
+
+
+-- ============================================================
 -- INDEX-Optimierungen
 -- ============================================================
 CREATE INDEX IF NOT EXISTS idx_ticker_mapping_symbol       ON public.ticker_mapping (symbol);
@@ -467,6 +497,9 @@ CREATE INDEX IF NOT EXISTS idx_news_cache_ticker           ON public.news_cache 
 CREATE INDEX IF NOT EXISTS idx_news_cache_cached_at        ON public.news_cache (cached_at);
 CREATE INDEX IF NOT EXISTS idx_snapshots_user_date         ON public.portfolio_snapshots (user_id, snapshot_date DESC);
 CREATE INDEX IF NOT EXISTS idx_subscriptions_user          ON public.subscriptions (user_id);
+CREATE INDEX IF NOT EXISTS idx_stock_events_symbol         ON public.stock_events (symbol);
+CREATE INDEX IF NOT EXISTS idx_stock_events_date           ON public.stock_events (event_date);
+CREATE INDEX IF NOT EXISTS idx_stock_events_type_date      ON public.stock_events (event_type, event_date);
 
 -- ============================================================
 -- SUPABASE REALTIME

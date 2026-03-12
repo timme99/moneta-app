@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Calendar, Clock, TrendingUp, Loader2, RefreshCcw, AlertTriangle, Info, DollarSign, TrendingDown } from 'lucide-react';
-import { fetchEarningsCalendar, fetchDividendsFallback } from '../services/geminiService';
+import { Calendar, Clock, TrendingUp, Loader2, RefreshCcw, AlertTriangle, Info, DollarSign, TrendingDown, Database } from 'lucide-react';
+import { fetchDividendsFallback } from '../services/geminiService';
 import { EarningsEvent, HoldingRow } from '../types';
 import { supabase as sb } from '../lib/supabaseClient';
 
@@ -67,6 +67,8 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastFetch, setLastFetch] = useState<Date | null>(null);
+  const [scannedSymbol, setScannedSymbol] = useState<string | null>(null);
+  const [cacheStats, setCacheStats] = useState<{ total: number; cached: number; stale: number } | null>(null);
 
   // Dividenden-State
   const [dividendData, setDividendData] = useState<DividendInfo[]>([]);
@@ -85,18 +87,33 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
   // Nur Positionen mit Stückzahl für Dividenden-Berechnung
   const portfolioHoldings = holdings.filter(h => !h.watchlist && h.shares && h.shares > 0);
 
-  // ── Earnings laden ──────────────────────────────────────────────────────────
+  // ── Earnings laden (Cache-First via /api/earnings) ──────────────────────────
 
   const loadEarnings = async () => {
     if (tickers.length === 0) return;
     setIsLoading(true);
     setError(null);
     try {
-      const data = await fetchEarningsCalendar(tickers);
-      const sorted = (data as EarningsEvent[]).sort(
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session?.access_token) throw new Error('Nicht angemeldet.');
+
+      const res = await fetch(
+        `/api/earnings?symbols=${encodeURIComponent(tickers.join(','))}`,
+        { headers: { Authorization: `Bearer ${session.access_token}` } }
+      );
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.error ?? `HTTP ${res.status}`);
+      }
+
+      const json = await res.json();
+      const sorted = (json.events as EarningsEvent[]).sort(
         (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
       );
       setEvents(sorted);
+      setScannedSymbol(json.scannedSymbol ?? null);
+      setCacheStats(json.cacheStats ?? null);
       setLastFetch(new Date());
     } catch (e: any) {
       setError(e?.message?.includes(':') ? e.message.split(':')[1] : 'Earnings-Daten konnten nicht geladen werden.');
@@ -382,10 +399,21 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
       )}
 
       {tickers.length > 0 && (
-        <div className="flex items-center justify-between">
-          <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">
-            {tickers.length} Position{tickers.length !== 1 ? 'en' : ''} analysiert
-          </p>
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-3">
+            <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">
+              {tickers.length} Position{tickers.length !== 1 ? 'en' : ''}
+            </p>
+            {cacheStats && (
+              <div className="flex items-center gap-1.5 text-[9px] font-black text-slate-400 bg-slate-50 border border-slate-100 px-2.5 py-1 rounded-lg">
+                <Database className="w-2.5 h-2.5" />
+                {cacheStats.cached}/{cacheStats.total} gecacht
+                {scannedSymbol && (
+                  <span className="text-blue-500 ml-1">· {scannedSymbol} gescannt</span>
+                )}
+              </div>
+            )}
+          </div>
           <button
             onClick={() => { loadEarnings(); loadDividends(); }}
             disabled={isLoading || isDivLoading}
@@ -402,9 +430,9 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
           <div className="bg-white px-6 py-4 rounded-2xl shadow-xl border border-slate-100 flex items-center gap-3">
             <Loader2 className="w-5 h-5 animate-spin text-blue-600 shrink-0" />
             <div>
-              <span className="text-xs font-black text-slate-900 uppercase tracking-widest block">KI analysiert Earnings-Kalender…</span>
+              <span className="text-xs font-black text-slate-900 uppercase tracking-widest block">Lade Earnings-Kalender…</span>
               <span className="text-[10px] text-slate-400 font-mono mt-0.5 block">
-                Analysiere {tickers.join(', ')}
+                Cache wird geprüft · ggf. 1 neue Aktie gescannt
               </span>
             </div>
           </div>
