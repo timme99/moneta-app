@@ -47,9 +47,13 @@ export default async function handler(req: any, res: any) {
       return res.status(200).json({ ok: true, message: 'Keine Abonnenten.', sent: 0 });
     }
 
-    // ── Snapshot-Daten für Wochenvergleich ───────────────────────────────────
+    // ── Snapshot + Earnings-Daten laden ──────────────────────────────────────
     let prevByUser = new Map<string, number>();
     let currByUser = new Map<string, number>();
+    // userId → ihre Portfolio-Symbole
+    const symbolsByUser = new Map<string, string[]>();
+    // symbol → Earnings-Eintrag für nächste Woche
+    const earningsBySymbol = new Map<string, { ticker: string; company: string; date: string; timeOfDay?: string; quarter?: string }>();
 
     if (SUPABASE_URL && SUPABASE_SERVICE) {
       const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE, {
@@ -60,17 +64,20 @@ export default async function handler(req: any, res: any) {
       const sevenDaysAgo = new Date();
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
       const weekAgoStr = sevenDaysAgo.toISOString().slice(0, 10);
+      const nextWeek = new Date();
+      nextWeek.setDate(nextWeek.getDate() + 7);
+      const nextWeekStr = nextWeek.toISOString().slice(0, 10);
 
       const userIds = subscribers.map((s) => s.userId);
 
-      // Heutiger Snapshot (neuester pro User)
+      // Heutiger Snapshot
       const { data: currRows } = await sb
         .from('portfolio_snapshots')
         .select('user_id, total_value')
         .in('user_id', userIds)
         .eq('snapshot_date', today) as any;
 
-      // Snapshot von vor 7 Tagen (oder nächstälterer)
+      // Snapshot von vor 7 Tagen
       const { data: prevRows } = await sb
         .from('portfolio_snapshots')
         .select('user_id, total_value')
@@ -79,6 +86,41 @@ export default async function handler(req: any, res: any) {
 
       currByUser = new Map((currRows ?? []).map((r: any) => [r.user_id, r.total_value]));
       prevByUser = new Map((prevRows ?? []).map((r: any) => [r.user_id, r.total_value]));
+
+      // Holdings pro User für Earnings-Filterung
+      const { data: holdingsData } = await sb
+        .from('holdings')
+        .select('user_id, symbol')
+        .in('user_id', userIds)
+        .not('shares', 'is', null) as any;
+
+      for (const h of (holdingsData ?? [])) {
+        const arr = symbolsByUser.get(h.user_id) ?? [];
+        if (!arr.includes(h.symbol)) arr.push(h.symbol);
+        symbolsByUser.set(h.user_id, arr);
+      }
+
+      // Earnings der nächsten 7 Tage aus stock_events
+      const allSymbols = [...new Set((holdingsData ?? []).map((h: any) => h.symbol))] as string[];
+      if (allSymbols.length > 0) {
+        const { data: earningsRows } = await sb
+          .from('stock_events')
+          .select('symbol, event_date, quarter, details')
+          .eq('event_type', 'earnings')
+          .gte('event_date', today)
+          .lte('event_date', nextWeekStr)
+          .in('symbol', allSymbols) as any;
+
+        for (const row of (earningsRows ?? [])) {
+          earningsBySymbol.set(row.symbol, {
+            ticker:    row.symbol,
+            company:   row.details?.company ?? row.symbol,
+            date:      row.event_date,
+            timeOfDay: row.details?.timeOfDay,
+            quarter:   row.quarter ?? undefined,
+          });
+        }
+      }
     }
 
     // ── Personalisierte E-Mails senden ────────────────────────────────────────
@@ -97,10 +139,17 @@ export default async function handler(req: any, res: any) {
       const weeklyChangePct = (weeklyChange !== undefined && prevValue && prevValue > 0)
         ? (weeklyChange / prevValue) * 100 : undefined;
 
+      // Earnings der nächsten 7 Tage für diesen User
+      const userSymbols = symbolsByUser.get(sub.userId) ?? [];
+      const upcomingEarnings = userSymbols
+        .filter((s) => earningsBySymbol.has(s))
+        .map((s) => earningsBySymbol.get(s)!)
+        .sort((a, b) => a.date.localeCompare(b.date));
+
       const highlights = [
-        'KI-gestützte Depot-Analyse – direkt in deiner App verfügbar',
-        'Earnings-Kalender: nächste Quartalszahlen im Blick behalten',
-        'Szenario-Analyse: simuliere Marktszenarien für dein Depot',
+        'KI-gestützte Szenario-Analyse für dein Depot verfügbar',
+        'Earnings-Kalender: alle Quartalszahlen auf einen Blick',
+        'Täglicher Depot-Überblick per E-Mail aktivierbar',
       ];
 
       const html = buildDigestHtml({
@@ -111,6 +160,7 @@ export default async function handler(req: any, res: any) {
         totalValue,
         weeklyChange,
         weeklyChangePercent: weeklyChangePct,
+        upcomingEarnings:    upcomingEarnings.length > 0 ? upcomingEarnings : undefined,
       });
 
       console.log(`[cron/weekly-digest] Sende an ${sub.email} (${i + 1}/${subscribers.length})…`);

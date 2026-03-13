@@ -26,10 +26,54 @@ const SUPABASE_SERVICE  = process.env.MONETA_SUPABASE_SERVICE_ROLE_KEY ?? '';
 const AV_API_KEY        = process.env.ALPHA_VANTAGE_API_KEY ?? '';
 const CRON_SECRET       = process.env.CRON_SECRET ?? '';
 const APP_BASE_URL      = process.env.APP_URL ?? '';
+const GEMINI_MODEL      = 'gemini-2.5-flash';
 
 // In-Memory Preis-Cache für diesen Cron-Lauf (30 min TTL)
 const priceCache = new Map<string, { price: number; fetchedAt: number }>();
 const PRICE_TTL  = 30 * 60 * 1000;
+
+// ── Gemini: Makrolage-News ────────────────────────────────────────────────────
+
+async function fetchMacroNews(dateLabel: string): Promise<string[]> {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) return [];
+
+  const prompt =
+`Du bist ein Finanzinformations-Assistent. Nenne 3 aktuelle makroökonomische Punkte für Aktieninvestoren heute (${dateLabel}).
+
+Antworte NUR mit einem JSON-Array aus genau 3 kurzen deutschen Sätzen (max. 110 Zeichen pro Satz).
+Keine Anlageberatung. Nur sachliche Marktinformationen (Zinsen, Konjunktur, Rohstoffe, Index-Trend).
+["Punkt 1", "Punkt 2", "Punkt 3"]`;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8_000);
+  try {
+    const resp = await fetch(
+      `https://generativelanguage.googleapis.com/v1/models/${GEMINI_MODEL}:generateContent?key=${key}`,
+      {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { temperature: 0.2, maxOutputTokens: 300 },
+        }),
+        signal: controller.signal,
+      }
+    );
+    if (!resp.ok) return [];
+    const data = await resp.json();
+    const raw  = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '[]';
+    const stripped = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/)?.[1]?.trim() ?? raw.trim();
+    const parsed = JSON.parse(stripped);
+    return Array.isArray(parsed)
+      ? parsed.slice(0, 3).filter((s: unknown) => typeof s === 'string')
+      : [];
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 async function fetchPrice(symbol: string): Promise<number | null> {
   const cached = priceCache.get(symbol);
@@ -158,11 +202,15 @@ export default async function handler(req: any, res: any) {
       console.log(`[daily-snapshot] ${subscribers.length} Abonnent(en) mit dailyDigest=true.`);
 
       if (subscribers.length > 0) {
+        const ctaUrl   = APP_BASE_URL || 'https://moneta-invest.de';
+        const dateLabel = new Date().toLocaleDateString('de-DE', {
+          weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+        });
+
         // Gestrige Snapshots für Tagesvergleich
         const yesterday = new Date();
         yesterday.setDate(yesterday.getDate() - 1);
         const yesterdayStr = yesterday.toISOString().slice(0, 10);
-
         const subscriberIds = subscribers.map((s) => s.userId);
 
         const { data: prevRows } = await sb
@@ -174,37 +222,57 @@ export default async function handler(req: any, res: any) {
         const prevByUser = new Map<string, number>(
           (prevRows ?? []).map((r: any) => [r.user_id, r.total_value])
         );
-
         const todayByUser = new Map<string, number>(
           snapshots.map((s) => [s.user_id, s.total_value])
         );
 
-        const ctaUrl = APP_BASE_URL || 'https://moneta-invest.de';
-        const dateLabel = new Date().toLocaleDateString('de-DE', {
-          weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
-        });
+        // Ticker-Namen für die Holdings (einmalig laden)
+        const allSymbols = [...new Set((allHoldings as any[]).map((h: any) => h.symbol))] as string[];
+        const { data: tickerRows } = await sb
+          .from('ticker_mapping')
+          .select('symbol, company_name')
+          .in('symbol', allSymbols) as any;
+        const nameBySymbol = new Map<string, string>(
+          (tickerRows ?? []).map((t: any) => [t.symbol, t.company_name as string])
+        );
 
-        let emailsSent = 0;
-        let emailsFailed = 0;
+        // Makro-News: EINMALIG für alle User (1 Gemini-Call)
+        const macroNews = await fetchMacroNews(dateLabel);
+        console.log(`[daily-snapshot] Makro-News: ${macroNews.length} Punkte`);
+
+        let emailsSent = 0, emailsFailed = 0;
 
         for (const sub of subscribers) {
           const totalValue = todayByUser.get(sub.userId);
-          if (!totalValue) continue; // kein Snapshot für diesen User heute
+          if (!totalValue) continue;
 
-          const prevValue  = prevByUser.get(sub.userId) ?? totalValue;
+          const prevValue      = prevByUser.get(sub.userId) ?? totalValue;
           const dailyChange    = totalValue - prevValue;
           const dailyChangePct = prevValue > 0 ? (dailyChange / prevValue) * 100 : 0;
 
-          const sign = dailyChange >= 0 ? '+' : '';
+          // Top-Positionen nach Wert sortiert
+          const userPositions = (allHoldings as any[])
+            .filter((h: any) => h.user_id === sub.userId && h.shares > 0)
+            .map((h: any) => ({
+              symbol: h.symbol as string,
+              name:   nameBySymbol.get(h.symbol),
+              value:  (priceCache.get(h.symbol)?.price ?? 0) * h.shares,
+            }))
+            .sort((a, b) => b.value - a.value)
+            .slice(0, 6);
+
+          const sign    = dailyChange >= 0 ? '+' : '';
           const subject = `📊 Depot heute: ${sign}${dailyChangePct.toFixed(1)} % | Moneta`;
 
           const html = buildDailySnapshotHtml({
-            userName: sub.name,
+            userName:   sub.name,
             totalValue,
             dailyChange,
             dailyChangePercent: dailyChangePct,
             ctaUrl,
             dateLabel,
+            macroNews,
+            topHoldings: userPositions,
           });
 
           const result = await sendEmail({ to: sub.email, subject, html });

@@ -161,6 +161,10 @@ export function buildDailySnapshotHtml(options: {
   dailyChangePercent: number;
   ctaUrl?: string;
   dateLabel?: string;
+  /** Makro-News-Punkte (max. 3), generiert via Gemini */
+  macroNews?: string[];
+  /** Top-Positionen im Depot (Symbol + optionaler Firmenname) */
+  topHoldings?: { symbol: string; name?: string }[];
 }): string {
   const {
     userName,
@@ -171,6 +175,8 @@ export function buildDailySnapshotHtml(options: {
     dateLabel = new Date().toLocaleDateString('de-DE', {
       weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
     }),
+    macroNews = [],
+    topHoldings = [],
   } = options;
 
   const pos   = dailyChange >= 0;
@@ -201,9 +207,32 @@ export function buildDailySnapshotHtml(options: {
     <p style="margin:0 0 4px;font-size:11px;color:${LABEL_CLR};font-weight:700;letter-spacing:0.18em;text-transform:uppercase;">Tagesabschluss</p>
     <p style="margin:0 0 28px;font-size:16px;color:${TEXT_SEC};line-height:1.55;">${userName ? `Hallo ${userName},` : 'Hallo,'} hier ist dein heutiger Depotstand.</p>
     ${twoColumnCards(leftCard, rightCard)}
+    ${topHoldings.length > 0 ? `
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-top:1px solid ${CARD_BDR};padding-top:16px;">
+      <tr><td style="padding-bottom:10px;">
+        <p style="margin:0;font-size:10px;color:${LABEL_CLR};font-weight:700;letter-spacing:0.18em;text-transform:uppercase;">Deine Positionen</p>
+      </td></tr>
+      <tr><td>${topHoldings.map(h => `<span style="display:inline-block;background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.25);color:#a5b4fc;border-radius:8px;padding:5px 11px;font-size:12px;font-weight:700;margin:3px 4px 3px 0;letter-spacing:0.03em;" title="${h.name ?? h.symbol}">${h.symbol}</span>`).join('')}</td></tr>
+    </table>` : ''}
   </td></tr>
 
   <tr><td style="height:12px;">&nbsp;</td></tr>
+
+  ${macroNews.length > 0 ? `
+  <!-- ─ MAKROLAGE ─ -->
+  <tr><td style="background:rgba(255,255,255,0.03);border:1px solid ${CARD_BDR};border-radius:20px;padding:24px;">
+    <p style="margin:0 0 14px;font-size:10px;color:${LABEL_CLR};font-weight:700;letter-spacing:0.18em;text-transform:uppercase;">Makrolage</p>
+    <table width="100%" cellpadding="0" cellspacing="0" border="0">
+      ${macroNews.map((news, i) => `
+      <tr><td style="padding:9px 0;${i < macroNews.length - 1 ? `border-bottom:1px solid ${CARD_BDR};` : ''}">
+        <table cellpadding="0" cellspacing="0" border="0"><tr>
+          <td style="width:22px;vertical-align:top;padding-top:1px;font-size:15px;">📰</td>
+          <td style="padding-left:10px;font-size:13px;color:#cbd5e1;line-height:1.55;">${news}</td>
+        </tr></table>
+      </td></tr>`).join('')}
+    </table>
+  </td></tr>
+  <tr><td style="height:12px;">&nbsp;</td></tr>` : ''}
 
   ${emailCta(ctaUrl, 'Depot öffnen →')}
 
@@ -227,6 +256,8 @@ export function buildDigestHtml(options: {
   totalValue?: number;
   weeklyChange?: number;
   weeklyChangePercent?: number;
+  /** Bevorstehende Earnings-Termine aus stock_events (nächste 7 Tage) */
+  upcomingEarnings?: { ticker: string; company: string; date: string; timeOfDay?: string; quarter?: string }[];
 }): string {
   const {
     userName,
@@ -236,6 +267,7 @@ export function buildDigestHtml(options: {
     totalValue,
     weeklyChange,
     weeklyChangePercent,
+    upcomingEarnings = [],
   } = options;
 
   const now      = new Date();
@@ -292,6 +324,32 @@ export function buildDigestHtml(options: {
     ${highlights.length > 0 ? `
     <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-top:1px solid ${CARD_BDR};">
       ${highlightRows}
+    </table>` : ''}
+
+    ${upcomingEarnings.length > 0 ? `
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:20px;border-top:1px solid ${CARD_BDR};padding-top:16px;">
+      <tr><td style="padding-bottom:12px;">
+        <p style="margin:0;font-size:10px;color:${LABEL_CLR};font-weight:700;letter-spacing:0.18em;text-transform:uppercase;">Earnings nächste Woche</p>
+      </td></tr>
+      ${upcomingEarnings.map((e, i) => {
+        const d = new Date(e.date + 'T12:00:00');
+        const dayLabel = d.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'short' });
+        const timeIcon = e.timeOfDay === 'vor Marktöffnung' ? '🌅' : e.timeOfDay === 'nach Marktschluss' ? '🌙' : '📅';
+        return `
+      <tr><td style="padding:10px 0;${i < upcomingEarnings.length - 1 ? `border-bottom:1px solid ${CARD_BDR};` : ''}">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+          <td style="font-size:15px;width:24px;">${timeIcon}</td>
+          <td style="padding-left:10px;">
+            <p style="margin:0 0 2px;font-size:14px;font-weight:700;color:${TEXT_PRI};">${e.company}</p>
+            <p style="margin:0;font-size:11px;color:${TEXT_SEC};">${e.ticker}${e.quarter ? ` · ${e.quarter}` : ''}</p>
+          </td>
+          <td align="right">
+            <p style="margin:0;font-size:12px;font-weight:600;color:#a5b4fc;">${dayLabel}</p>
+            <p style="margin:2px 0 0;font-size:10px;color:#64748b;">${e.timeOfDay ?? ''}</p>
+          </td>
+        </tr></table>
+      </td></tr>`;
+      }).join('')}
     </table>` : ''}
   </td></tr>
 
