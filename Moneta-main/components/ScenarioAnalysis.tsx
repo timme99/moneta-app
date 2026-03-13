@@ -151,12 +151,15 @@ const ScenarioAnalysis: React.FC<ScenarioAnalysisProps> = ({ holdings, report })
   const [interestRate, setInterestRate] = useState(2);
 
   const allWithTicker = holdings.filter(h => h.ticker?.symbol);
-  const activeHoldings = allWithTicker.map(h => ({
+  const rawHoldings = allWithTicker.map(h => ({
     name: h.ticker!.company_name ?? h.symbol,
     ticker: h.ticker!.symbol,
-    weight: report?.holdings?.find(rh => rh.ticker === h.ticker!.symbol)?.weight
-      ?? Math.round(100 / allWithTicker.length),
+    weight: report?.holdings?.find(rh => rh.ticker === h.ticker!.symbol)?.weight ?? 0,
   }));
+  const totalWeight = rawHoldings.reduce((s, h) => s + h.weight, 0);
+  const activeHoldings = totalWeight > 0
+    ? rawHoldings.map(h => ({ ...h, weight: Math.round((h.weight / totalWeight) * 100) }))
+    : rawHoldings.map(h => ({ ...h, weight: Math.round(100 / rawHoldings.length) }));
 
   const runAnalysis = async (name: string, description: string, custom?: PredefinedScenario) => {
     if (activeHoldings.length === 0) return;
@@ -170,7 +173,7 @@ const ScenarioAnalysis: React.FC<ScenarioAnalysisProps> = ({ holdings, report })
     } catch (e: any) {
       setError(
         e?.message?.includes(':')
-          ? e.message.split(':')[1]
+          ? e.message.split(':').slice(1).join(':').trim()
           : 'Szenario-Analyse vorübergehend nicht verfügbar. Bitte erneut versuchen.'
       );
     } finally {
@@ -197,6 +200,19 @@ const ScenarioAnalysis: React.FC<ScenarioAnalysisProps> = ({ holdings, report })
     if (pct < 0) return 'text-amber-600';
     return 'text-emerald-600';
   };
+
+  if (allWithTicker.length === 0) {
+    return (
+      <div className="rounded-2xl bg-gray-800/60 border border-gray-700 p-8 text-center">
+        <div className="text-4xl mb-3">📊</div>
+        <h3 className="text-lg font-semibold text-white mb-2">Depot-Daten werden geladen</h3>
+        <p className="text-gray-400 text-sm max-w-sm mx-auto">
+          Die Szenario-Analyse benötigt Depot-Positionen mit zugeordneten Ticker-Symbolen.
+          Bitte stelle sicher, dass dein Depot Wertpapiere enthält und die Seite vollständig geladen ist.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
