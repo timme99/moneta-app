@@ -1,26 +1,29 @@
 /**
  * GET /api/admin/system-check?task=<task>
  *
- * Consolidated admin/diagnostic endpoint – replaces the old
- *   api/auth/verify-profile  and  api/cron/test-digest
- * endpoints to stay within the Vercel Hobby 12-function limit.
+ * Consolidated admin/diagnostic endpoint.
  *
  * Tasks:
- *   ?task=verify-db    – count profiles rows and return the latest entry
- *                        (confirms on_auth_user_created trigger is working)
- *   ?task=test-email   – send a test digest email to the first profiles user
- *                        (confirms Resend + RESEND_API_KEY are wired up)
+ *   ?task=verify-db        – count profiles rows and return the latest entry
+ *   ?task=test-email       – send a test digest email to the first profiles user
+ *   ?task=weekly-preview   – send the weekly digest preview to tim@moneta-invest.de
  *
- * All tasks require:  Authorization: Bearer <CRON_SECRET>
+ * Auth (one of):
+ *   Authorization: Bearer <CRON_SECRET>
+ *   ?secret=<CRON_SECRET>   ← directly callable from the browser
  */
 import { getSupabaseAdmin } from '../lib/supabaseClient';
-import { sendEmail, buildDigestHtml } from '../lib/email';
+import { sendEmail, buildDigestHtml, getResendClient } from '../lib/email';
 
 function requireSecret(req: any, res: any): boolean {
   const secret = process.env.CRON_SECRET ?? '';
   const auth   = req.headers?.authorization ?? '';
-  const token  = auth.startsWith('Bearer ') ? auth.slice(7) : '';
-  if (!secret || token !== secret) {
+  const fromHeader = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+  const fromQuery  = (req.query?.secret as string | undefined) ?? '';
+  const token = fromHeader || fromQuery;
+  if (!secret || secret.length < 16 || token !== secret) {
+    const masked = token.length >= 3 ? token.slice(0, 3) + '***' : '(leer)';
+    console.warn(`[admin/system-check] Auth fehlgeschlagen – Token: ${masked}`);
     res.status(401).json({ error: 'Unauthorized' });
     return false;
   }
@@ -112,11 +115,58 @@ async function testEmail(res: any) {
   });
 }
 
+// ── task=weekly-preview ───────────────────────────────────────────────────────
+
+async function weeklyPreview(res: any) {
+  if (!getResendClient()) {
+    return res.status(503).json({ error: 'RESEND_API_KEY nicht konfiguriert.' });
+  }
+
+  const TEST_RECIPIENT = 'tim@moneta-invest.de';
+  const ctaUrl = process.env.APP_URL ?? 'https://moneta-invest.de';
+
+  const html = buildDigestHtml({
+    userName: 'Tim',
+    summary:
+      'Dies ist eine Test-Vorschau deines wöchentlichen KI-Depot-Berichts. ' +
+      'So würde die Mail deinen Abonnenten jeden Montag zugestellt.',
+    highlights: [
+      'KI-gestützte Depot-Analyse ist aktiv und bereit',
+      'Bruchstück-Positionen werden korrekt erkannt und angezeigt',
+      'Alle Abonnenten mit weeklyReport=true erhalten diese Mail',
+      'Rate-Limit-Schutz (600 ms Pause, 429-Retry) aktiv',
+    ],
+    ctaUrl,
+  });
+
+  console.log(`[admin/system-check?task=weekly-preview] Sende Test-Mail an ${TEST_RECIPIENT}…`);
+
+  const result = await sendEmail({
+    to:      TEST_RECIPIENT,
+    subject: '[TEST] Ihr KI-Wochenbericht – Moneta',
+    html,
+  });
+
+  if (!result.success) {
+    console.error('[admin/system-check?task=weekly-preview] Versand fehlgeschlagen:', result.error);
+    return res.status(500).json({ error: result.error });
+  }
+
+  console.log(`[admin/system-check?task=weekly-preview] ✓ Test-Mail gesendet (id: ${result.id})`);
+  return res.status(200).json({
+    ok:  true,
+    task: 'weekly-preview',
+    to:  TEST_RECIPIENT,
+    id:  result.id,
+    msg: 'Test-Mail erfolgreich versendet.',
+  });
+}
+
 // ── Router ────────────────────────────────────────────────────────────────────
 
 export default async function handler(req: any, res: any) {
-  if (req.method !== 'GET') {
-    res.setHeader('Allow', 'GET');
+  if (req.method !== 'GET' && req.method !== 'POST') {
+    res.setHeader('Allow', 'GET, POST');
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
@@ -130,10 +180,12 @@ export default async function handler(req: any, res: any) {
         return await verifyDb(res);
       case 'test-email':
         return await testEmail(res);
+      case 'weekly-preview':
+        return await weeklyPreview(res);
       default:
         return res.status(400).json({
-          error: 'Unbekannter task. Gültige Werte: verify-db, test-email',
-          available: ['verify-db', 'test-email'],
+          error: 'Unbekannter task. Gültige Werte: verify-db, test-email, weekly-preview',
+          available: ['verify-db', 'test-email', 'weekly-preview'],
         });
     }
   } catch (e: any) {
