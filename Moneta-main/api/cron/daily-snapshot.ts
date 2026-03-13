@@ -18,6 +18,8 @@
  */
 
 import { createClient } from '@supabase/supabase-js';
+import { getSubscribersForDailyDigest } from '../../lib/subscribers.js';
+import { buildDailySnapshotHtml, sendEmail, getResendClient } from '../../lib/email.js';
 
 const SUPABASE_URL      = process.env.MONETA_SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
 const SUPABASE_SERVICE  = process.env.MONETA_SUPABASE_SERVICE_ROLE_KEY ?? '';
@@ -148,5 +150,79 @@ export default async function handler(req: any, res: any) {
   }
 
   console.log(`[daily-snapshot] ${snapshotCount} Snapshots für ${today} gespeichert.`);
+
+  // ── Tägliche Digest-E-Mails ───────────────────────────────────────────────
+  if (getResendClient()) {
+    try {
+      const subscribers = await getSubscribersForDailyDigest();
+      console.log(`[daily-snapshot] ${subscribers.length} Abonnent(en) mit dailyDigest=true.`);
+
+      if (subscribers.length > 0) {
+        // Gestrige Snapshots für Tagesvergleich
+        const yesterday = new Date();
+        yesterday.setDate(yesterday.getDate() - 1);
+        const yesterdayStr = yesterday.toISOString().slice(0, 10);
+
+        const subscriberIds = subscribers.map((s) => s.userId);
+
+        const { data: prevRows } = await sb
+          .from('portfolio_snapshots')
+          .select('user_id, total_value')
+          .in('user_id', subscriberIds)
+          .eq('snapshot_date', yesterdayStr) as any;
+
+        const prevByUser = new Map<string, number>(
+          (prevRows ?? []).map((r: any) => [r.user_id, r.total_value])
+        );
+
+        const todayByUser = new Map<string, number>(
+          snapshots.map((s) => [s.user_id, s.total_value])
+        );
+
+        const ctaUrl = APP_BASE_URL || 'https://moneta-invest.de';
+        const dateLabel = new Date().toLocaleDateString('de-DE', {
+          weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+        });
+
+        let emailsSent = 0;
+        let emailsFailed = 0;
+
+        for (const sub of subscribers) {
+          const totalValue = todayByUser.get(sub.userId);
+          if (!totalValue) continue; // kein Snapshot für diesen User heute
+
+          const prevValue  = prevByUser.get(sub.userId) ?? totalValue;
+          const dailyChange    = totalValue - prevValue;
+          const dailyChangePct = prevValue > 0 ? (dailyChange / prevValue) * 100 : 0;
+
+          const sign = dailyChange >= 0 ? '+' : '';
+          const subject = `📊 Depot heute: ${sign}${dailyChangePct.toFixed(1)} % | Moneta`;
+
+          const html = buildDailySnapshotHtml({
+            userName: sub.name,
+            totalValue,
+            dailyChange,
+            dailyChangePercent: dailyChangePct,
+            ctaUrl,
+            dateLabel,
+          });
+
+          const result = await sendEmail({ to: sub.email, subject, html });
+          if (result.success) {
+            emailsSent++;
+            console.log(`[daily-snapshot] ✓ Tagesmail an ${sub.email}`);
+          } else {
+            emailsFailed++;
+            console.error(`[daily-snapshot] ✗ Fehler ${sub.email}: ${result.error}`);
+          }
+        }
+
+        console.log(`[daily-snapshot] E-Mails: ${emailsSent} versendet, ${emailsFailed} Fehler.`);
+      }
+    } catch (emailErr: any) {
+      console.error('[daily-snapshot] E-Mail-Versand fehlgeschlagen:', emailErr?.message);
+    }
+  }
+
   return res.status(200).json({ message: 'OK', snapshots: snapshotCount, date: today });
 }
