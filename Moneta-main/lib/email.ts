@@ -1,212 +1,408 @@
 import { Resend } from 'resend';
-
-let _resend: Resend | null = null;
+import type { NewsletterSubscriber } from './subscribers.js';
 
 /**
- * Initialisiert den Resend-Client mit dem API-Key aus den Umgebungsvariablen.
+ * Absender-Adresse.
+ * Beispiel in Vercel: EMAIL_FROM="Moneta <newsletter@moneta-invest.de>"
  */
+const FROM_EMAIL =
+  process.env.EMAIL_FROM ??
+  process.env.FROM_EMAIL ??
+  'Moneta <onboarding@resend.dev>';
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+// Lazy-Init: verhindert "new Resend(undefined)" beim Laden ohne API-Key.
+let _resend: Resend | null = null;
+
 export function getResendClient(): Resend | null {
-  if (!process.env.RESEND_API_KEY) return null;
+  if (!process.env.RESEND_API_KEY) {
+    console.warn('[email] RESEND_API_KEY nicht gesetzt – E-Mail-Versand nicht verfügbar.');
+    return null;
+  }
   if (!_resend) _resend = new Resend(process.env.RESEND_API_KEY);
   return _resend;
 }
 
-const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
 /**
- * Erzeugt das hochprofessionelle HTML-Layout für die Moneta-Berichte.
- * Design-Features: Karten-Layout, Icons für verschiedene Kategorien, Responsive Design.
+ * Sendet eine einzelne E-Mail über Resend.
+ * Bei Rate-Limit (429) wird einmalig 2 s gewartet und erneut versucht.
  */
-function getEmailHtml(content: {
-  title: string;
-  userName: string;
-  introduction: string;
-  sections: { title: string; items: string[]; type?: 'news' | 'perf' | 'calendar' }[];
-  ctaLink: string;
-  ctaText: string;
-}) {
-  const sectionsHtml = content.sections.map(section => {
-    // Auswahl von Icon und Farbe basierend auf dem Sektionstyp für den "Durchblick"
-    let icon = '•';
-    let accentColor = '#1e40af'; // Moneta Blau
-    
-    if (section.type === 'calendar') {
-      icon = '📅';
-      accentColor = '#0891b2'; // Cyan für Termine/HV
-    } else if (section.type === 'news') {
-      icon = '📰';
-      accentColor = '#475569'; // Slate für Markt-News
-    } else if (section.type === 'perf') {
-      icon = '📈';
-      accentColor = '#16a34a'; // Grün für Performance
+export async function sendEmail(params: {
+  to: string | string[];
+  subject: string;
+  html: string;
+  from?: string;
+}): Promise<{ success: boolean; id?: string; error?: string }> {
+  const client = getResendClient();
+  if (!client) return { success: false, error: 'RESEND_API_KEY nicht konfiguriert' };
+
+  const from = params.from ?? FROM_EMAIL;
+  const to   = Array.isArray(params.to) ? params.to : [params.to];
+
+  const trySend = () =>
+    client.emails.send({ from, to, subject: params.subject, html: params.html });
+
+  let { data, error } = await trySend();
+
+  if (error) {
+    const isRateLimit =
+      (error as any).statusCode === 429 ||
+      error.message?.includes('429') ||
+      error.message?.toLowerCase().includes('rate limit');
+    if (isRateLimit) {
+      console.warn('[email] Rate-Limit (429) – warte 2s…');
+      await sleep(2000);
+      ({ data, error } = await trySend());
     }
-
-    return `
-      <div style="margin-bottom: 24px; padding: 24px; background: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
-        <h3 style="margin: 0 0 16px 0; font-size: 14px; font-weight: 700; color: ${accentColor}; text-transform: uppercase; letter-spacing: 0.1em; display: flex; align-items: center;">
-          <span style="margin-right: 10px; font-size: 18px;">${icon}</span> ${section.title}
-        </h3>
-        <ul style="margin: 0; padding: 0; list-style: none;">
-          ${section.items.map(item => `
-            <li style="margin-bottom: 12px; line-height: 1.5; color: #334155; font-size: 15px; border-bottom: 1px solid #f8fafc; padding-bottom: 10px;">
-              <span style="color: #3b82f6; margin-right: 8px;">•</span> ${item}
-            </li>
-          `).join('')}
-        </ul>
-      </div>
-    `;
-  }).join('');
-
-  return `
-    <!DOCTYPE html>
-    <html lang="de">
-    <head>
-      <meta charset="utf-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <style>
-        @media only screen and (max-width: 600px) {
-          .main-card { padding: 30px 20px !important; }
-          .header-title { font-size: 28px !important; }
-        }
-      </style>
-    </head>
-    <body style="margin: 0; padding: 0; background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
-      <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #f8fafc; padding: 40px 10px;">
-        <tr>
-          <td align="center">
-            <table width="100%" style="max-width: 600px; border-spacing: 0;">
-              <!-- Branding Header -->
-              <tr>
-                <td style="text-align: center; padding-bottom: 35px;">
-                  <h1 class="header-title" style="margin: 0; color: #1e3a8a; font-size: 34px; font-weight: 800; letter-spacing: -1px;">Moneta</h1>
-                  <p style="margin: 6px 0 0 0; color: #64748b; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 2.5px;">Investieren mit Durchblick</p>
-                </td>
-              </tr>
-              
-              <!-- Haupt-Inhaltskarte -->
-              <tr>
-                <td class="main-card" style="background: #ffffff; padding: 45px 35px; border-radius: 24px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1);">
-                  <h2 style="margin: 0 0 15px 0; color: #0f172a; font-size: 24px; font-weight: 700;">Hallo ${content.userName},</h2>
-                  <p style="margin: 0 0 35px 0; color: #475569; font-size: 17px; line-height: 1.6;">${content.introduction}</p>
-                  
-                  ${sectionsHtml}
-
-                  <!-- Call to Action -->
-                  <div style="text-align: center; margin-top: 40px; padding-top: 30px; border-top: 2px dashed #f1f5f9;">
-                    <p style="margin-bottom: 25px; color: #64748b; font-size: 15px;">Detaillierte Charts und Analysen findest du in deinem Dashboard.</p>
-                    <a href="${content.ctaLink}" style="background: #2563eb; color: #ffffff; padding: 16px 36px; border-radius: 12px; text-decoration: none; font-weight: 700; font-size: 16px; display: inline-block; box-shadow: 0 10px 15px -3px rgba(37, 99, 235, 0.3);">
-                      ${content.ctaText}
-                    </a>
-                  </div>
-                </td>
-              </tr>
-
-              <!-- Footer -->
-              <tr>
-                <td style="text-align: center; padding-top: 40px;">
-                  <p style="margin: 0; font-size: 12px; color: #94a3b8; line-height: 1.8;">
-                    &copy; ${new Date().getFullYear()} Moneta App. Alle Rechte vorbehalten.<br>
-                    <strong>Investieren mit Durchblick.</strong><br>
-                    Diese KI-gestützte Analyse ersetzt keine professionelle Anlageberatung.<br>
-                    <a href="https://moneta-invest.de/settings" style="color: #3b82f6; text-decoration: none; font-weight: 600;">E-Mail-Einstellungen</a> • <a href="#" style="color: #3b82f6; text-decoration: none; font-weight: 600;">Abmelden</a>
-                  </p>
-                </td>
-              </tr>
-            </table>
-          </td>
-        </tr>
-      </table>
-    </body>
-    </html>
-  `;
-}
-
-/**
- * Einzelner E-Mail-Versand mit Fehlerbehandlung für Rate-Limits (429).
- * Unterstützt 'daily' und 'weekly' Typen.
- */
-export async function sendDigestEmail(params: {
-  to: string;
-  userName: string;
-  type: 'daily' | 'weekly';
-  analysis: any; 
-}) {
-  const resend = getResendClient();
-  if (!resend) {
-    console.warn('[lib/email] RESEND_API_KEY fehlt. Überspringe Versand.');
-    return null;
   }
 
-  const from = process.env.EMAIL_FROM || 'Moneta <onboarding@resend.dev>';
-  const subject = params.type === 'weekly' 
-    ? 'Dein KI-Wochenbericht – Investieren mit Durchblick'
-    : 'Dein Markt-Update für heute – Moneta';
+  if (error) return { success: false, error: error.message };
+  return { success: true, id: data?.id };
+}
 
-  const html = getEmailHtml({
-    title: subject,
-    userName: params.userName || 'Investor',
-    introduction: params.analysis.intro || "Hier ist dein personalisiertes Markt-Update.",
-    sections: params.analysis.sections || [],
-    ctaLink: "https://moneta-invest.de/dashboard",
-    ctaText: params.type === 'weekly' ? "Wochenanalyse ansehen" : "Dashboard öffnen"
-  });
+// ── Shared design tokens (inline CSS, email-safe) ─────────────────────────────
 
-  try {
-    const { data, error } = await resend.emails.send({
-      from,
-      to: [params.to],
-      subject,
-      html,
+const BG        = '#070d1a';
+const CARD_BG   = 'linear-gradient(135deg,#0f1b38 0%,#1e1040 100%)';
+const CARD_BDR  = '#1e2d4a';
+const ACCENT    = '#6366f1';
+const ACCENT2   = '#8b5cf6';
+const TEXT_PRI  = '#f1f5f9';
+const TEXT_SEC  = '#94a3b8';
+const TEXT_MUT  = '#334155';
+const TEXT_FADE = '#475569';
+const LABEL_CLR = '#818cf8';
+
+const GREEN_BG  = '#052e16';
+const GREEN_BDR = '#166534';
+const GREEN_TXT = '#22c55e';
+const RED_BG    = '#450a0a';
+const RED_BDR   = '#991b1b';
+const RED_TXT   = '#ef4444';
+
+function emailHead(title: string): string {
+  return `<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>${title}</title>
+</head>`;
+}
+
+function emailHeader(rightLabel: string): string {
+  return `
+  <!-- ─ HEADER ─ -->
+  <tr><td style="padding-bottom:28px;">
+    <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+      <td>
+        <table cellpadding="0" cellspacing="0" border="0"><tr>
+          <td style="width:38px;height:38px;background:linear-gradient(135deg,${ACCENT},${ACCENT2});border-radius:11px;text-align:center;vertical-align:middle;font-size:19px;line-height:1;">📈</td>
+          <td style="padding-left:10px;font-size:21px;font-weight:800;color:${TEXT_PRI};letter-spacing:-0.03em;">Moneta</td>
+        </tr></table>
+      </td>
+      <td align="right" style="font-size:11px;color:${TEXT_FADE};font-weight:500;">${rightLabel}</td>
+    </tr></table>
+  </td></tr>`;
+}
+
+function emailCta(href: string, label: string): string {
+  return `
+  <!-- ─ CTA ─ -->
+  <tr><td align="center" style="padding:20px 0 36px;">
+    <a href="${href}" style="display:inline-block;background:linear-gradient(135deg,${ACCENT},${ACCENT2});color:#ffffff;text-decoration:none;font-size:15px;font-weight:700;padding:15px 40px;border-radius:14px;letter-spacing:0.02em;">${label}</a>
+  </td></tr>`;
+}
+
+function emailFooter(unsubscribeHint: string): string {
+  return `
+  <!-- ─ FOOTER ─ -->
+  <tr><td style="border-top:1px solid ${CARD_BDR};padding-top:20px;">
+    <p style="margin:0 0 4px;font-size:13px;font-weight:700;color:${ACCENT};letter-spacing:0.02em;">Moneta – Investieren mit Durchblick.</p>
+    <p style="margin:0;font-size:11px;color:${TEXT_MUT};line-height:1.75;">${unsubscribeHint}</p>
+  </td></tr>`;
+}
+
+function valueCard(label: string, value: string, sub?: string,
+                   bg = 'rgba(255,255,255,0.05)', border = 'rgba(255,255,255,0.09)',
+                   labelColor = '#64748b', valueColor = TEXT_PRI): string {
+  return `<table width="100%" cellpadding="0" cellspacing="0" border="0"
+    style="background:${bg};border:1px solid ${border};border-radius:16px;padding:20px;">
+    <tr><td>
+      <p style="margin:0 0 8px;font-size:10px;color:${labelColor};font-weight:700;text-transform:uppercase;letter-spacing:0.12em;">${label}</p>
+      <p style="margin:0 0 ${sub ? '5px' : '0'};font-size:26px;font-weight:800;color:${valueColor};letter-spacing:-0.02em;">${value}</p>
+      ${sub ? `<p style="margin:0;font-size:14px;color:${valueColor};opacity:0.75;">${sub}</p>` : ''}
+    </td></tr>
+  </table>`;
+}
+
+function twoColumnCards(left: string, right: string): string {
+  return `<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;">
+    <tr>
+      <td width="48%" style="vertical-align:top;">${left}</td>
+      <td width="4%">&nbsp;</td>
+      <td width="48%" style="vertical-align:top;">${right}</td>
+    </tr>
+  </table>`;
+}
+
+function fmtEur(n: number): string {
+  return new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2 }).format(n);
+}
+
+// ── buildDailySnapshotHtml ────────────────────────────────────────────────────
+
+export function buildDailySnapshotHtml(options: {
+  userName?: string;
+  totalValue: number;
+  dailyChange: number;
+  dailyChangePercent: number;
+  ctaUrl?: string;
+  dateLabel?: string;
+  /** Makro-News-Punkte (max. 3), generiert via Gemini */
+  macroNews?: string[];
+  /** Top-Positionen im Depot (Symbol + optionaler Firmenname) */
+  topHoldings?: { symbol: string; name?: string }[];
+}): string {
+  const {
+    userName,
+    totalValue,
+    dailyChange,
+    dailyChangePercent,
+    ctaUrl = 'https://moneta-invest.de',
+    dateLabel = new Date().toLocaleDateString('de-DE', {
+      weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+    }),
+    macroNews = [],
+    topHoldings = [],
+  } = options;
+
+  const pos   = dailyChange >= 0;
+  const sign  = pos ? '+' : '';
+  const arrow = pos ? '▲' : '▼';
+  const chBg  = pos ? GREEN_BG  : RED_BG;
+  const chBdr = pos ? GREEN_BDR : RED_BDR;
+  const chTxt = pos ? GREEN_TXT : RED_TXT;
+
+  const leftCard  = valueCard('Depotwert', fmtEur(totalValue));
+  const rightCard = valueCard(
+    `Heute ${arrow}`,
+    `${sign}${fmtEur(dailyChange)}`,
+    `${sign}${dailyChangePercent.toFixed(2)} %`,
+    chBg, chBdr, chTxt, chTxt,
+  );
+
+  return `${emailHead('Moneta – Tagesabschluss')}
+<body style="margin:0;padding:0;background-color:${BG};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${BG};">
+<tr><td align="center" style="padding:28px 16px 52px;">
+<table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;">
+
+  ${emailHeader(dateLabel)}
+
+  <!-- ─ HERO CARD ─ -->
+  <tr><td style="background:${CARD_BG};border:1px solid ${CARD_BDR};border-radius:24px;padding:32px;">
+    <p style="margin:0 0 4px;font-size:11px;color:${LABEL_CLR};font-weight:700;letter-spacing:0.18em;text-transform:uppercase;">Tagesabschluss</p>
+    <p style="margin:0 0 28px;font-size:16px;color:${TEXT_SEC};line-height:1.55;">${userName ? `Hallo ${userName},` : 'Hallo,'} hier ist dein heutiger Depotstand.</p>
+    ${twoColumnCards(leftCard, rightCard)}
+    ${topHoldings.length > 0 ? `
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-top:1px solid ${CARD_BDR};padding-top:16px;">
+      <tr><td style="padding-bottom:10px;">
+        <p style="margin:0;font-size:10px;color:${LABEL_CLR};font-weight:700;letter-spacing:0.18em;text-transform:uppercase;">Deine Positionen</p>
+      </td></tr>
+      <tr><td>${topHoldings.map(h => `<span style="display:inline-block;background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.25);color:#a5b4fc;border-radius:8px;padding:5px 11px;font-size:12px;font-weight:700;margin:3px 4px 3px 0;letter-spacing:0.03em;" title="${h.name ?? h.symbol}">${h.symbol}</span>`).join('')}</td></tr>
+    </table>` : ''}
+  </td></tr>
+
+  <tr><td style="height:12px;">&nbsp;</td></tr>
+
+  ${macroNews.length > 0 ? `
+  <!-- ─ MAKROLAGE ─ -->
+  <tr><td style="background:rgba(255,255,255,0.03);border:1px solid ${CARD_BDR};border-radius:20px;padding:24px;">
+    <p style="margin:0 0 14px;font-size:10px;color:${LABEL_CLR};font-weight:700;letter-spacing:0.18em;text-transform:uppercase;">Makrolage</p>
+    <table width="100%" cellpadding="0" cellspacing="0" border="0">
+      ${macroNews.map((news, i) => `
+      <tr><td style="padding:9px 0;${i < macroNews.length - 1 ? `border-bottom:1px solid ${CARD_BDR};` : ''}">
+        <table cellpadding="0" cellspacing="0" border="0"><tr>
+          <td style="width:22px;vertical-align:top;padding-top:1px;font-size:15px;">📰</td>
+          <td style="padding-left:10px;font-size:13px;color:#cbd5e1;line-height:1.55;">${news}</td>
+        </tr></table>
+      </td></tr>`).join('')}
+    </table>
+  </td></tr>
+  <tr><td style="height:12px;">&nbsp;</td></tr>` : ''}
+
+  ${emailCta(ctaUrl, 'Depot öffnen →')}
+
+  ${emailFooter('Du erhältst diese Mail, weil du den täglichen Depot-Überblick aktiviert hast.<br>Zum Abmelden deaktiviere den Toggle in deinen Einstellungen.')}
+
+</table>
+</td></tr>
+</table>
+</body>
+</html>`;
+}
+
+// ── buildDigestHtml (Wochenbericht) ───────────────────────────────────────────
+
+export function buildDigestHtml(options: {
+  userName?: string;
+  summary?: string;
+  highlights?: string[];
+  ctaUrl?: string;
+  /** Portfolio-Daten für personalisierte Darstellung (optional) */
+  totalValue?: number;
+  weeklyChange?: number;
+  weeklyChangePercent?: number;
+  /** Bevorstehende Earnings-Termine aus stock_events (nächste 7 Tage) */
+  upcomingEarnings?: { ticker: string; company: string; date: string; timeOfDay?: string; quarter?: string }[];
+}): string {
+  const {
+    userName,
+    summary = 'Dein wöchentlicher KI-Depot-Überblick.',
+    highlights = [],
+    ctaUrl = 'https://moneta-invest.de',
+    totalValue,
+    weeklyChange,
+    weeklyChangePercent,
+    upcomingEarnings = [],
+  } = options;
+
+  const now      = new Date();
+  const weekStart = new Date(now);
+  weekStart.setDate(now.getDate() - now.getDay() + 1);
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekStart.getDate() + 6);
+  const fmtD = (d: Date) => d.toLocaleDateString('de-DE', { day: 'numeric', month: 'short' });
+  const weekLabel = `${fmtD(weekStart)} – ${fmtD(weekEnd)}, ${now.getFullYear()}`;
+
+  // Portfolio change section
+  let portfolioSection = '';
+  if (totalValue !== undefined && weeklyChange !== undefined && weeklyChangePercent !== undefined) {
+    const pos   = weeklyChange >= 0;
+    const sign  = pos ? '+' : '';
+    const arrow = pos ? '▲' : '▼';
+    const chBg  = pos ? GREEN_BG  : RED_BG;
+    const chBdr = pos ? GREEN_BDR : RED_BDR;
+    const chTxt = pos ? GREEN_TXT : RED_TXT;
+
+    portfolioSection = twoColumnCards(
+      valueCard('Depotwert', fmtEur(totalValue)),
+      valueCard(`Diese Woche ${arrow}`, `${sign}${fmtEur(weeklyChange)}`, `${sign}${weeklyChangePercent.toFixed(2)} %`,
+        chBg, chBdr, chTxt, chTxt),
+    );
+  }
+
+  // Highlights list
+  const highlightRows = highlights.map((h) => `
+    <tr><td style="padding:11px 0;border-bottom:1px solid ${CARD_BDR};">
+      <table cellpadding="0" cellspacing="0" border="0"><tr>
+        <td style="width:26px;vertical-align:top;padding-right:12px;padding-top:1px;">
+          <div style="width:22px;height:22px;background:linear-gradient(135deg,${ACCENT},${ACCENT2});border-radius:7px;text-align:center;line-height:22px;font-size:12px;color:white;">✓</div>
+        </td>
+        <td style="font-size:14px;color:#cbd5e1;line-height:1.55;">${h}</td>
+      </tr></table>
+    </td></tr>`).join('');
+
+  return `${emailHead('Moneta – KI-Wochenbericht')}
+<body style="margin:0;padding:0;background-color:${BG};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${BG};">
+<tr><td align="center" style="padding:28px 16px 52px;">
+<table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;">
+
+  ${emailHeader(weekLabel)}
+
+  <!-- ─ HERO CARD ─ -->
+  <tr><td style="background:${CARD_BG};border:1px solid ${CARD_BDR};border-radius:24px;padding:32px;">
+    <p style="margin:0 0 4px;font-size:11px;color:${LABEL_CLR};font-weight:700;letter-spacing:0.18em;text-transform:uppercase;">KI-Wochenbericht</p>
+    <p style="margin:0 0 ${portfolioSection || highlights.length ? '24px' : '0'};font-size:16px;color:${TEXT_SEC};line-height:1.55;">${userName ? `Hallo ${userName},` : 'Hallo,'} ${summary}</p>
+
+    ${portfolioSection}
+
+    ${highlights.length > 0 ? `
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-top:1px solid ${CARD_BDR};">
+      ${highlightRows}
+    </table>` : ''}
+
+    ${upcomingEarnings.length > 0 ? `
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:20px;border-top:1px solid ${CARD_BDR};padding-top:16px;">
+      <tr><td style="padding-bottom:12px;">
+        <p style="margin:0;font-size:10px;color:${LABEL_CLR};font-weight:700;letter-spacing:0.18em;text-transform:uppercase;">Earnings nächste Woche</p>
+      </td></tr>
+      ${upcomingEarnings.map((e, i) => {
+        const d = new Date(e.date + 'T12:00:00');
+        const dayLabel = d.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'short' });
+        const timeIcon = e.timeOfDay === 'vor Marktöffnung' ? '🌅' : e.timeOfDay === 'nach Marktschluss' ? '🌙' : '📅';
+        return `
+      <tr><td style="padding:10px 0;${i < upcomingEarnings.length - 1 ? `border-bottom:1px solid ${CARD_BDR};` : ''}">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+          <td style="font-size:15px;width:24px;">${timeIcon}</td>
+          <td style="padding-left:10px;">
+            <p style="margin:0 0 2px;font-size:14px;font-weight:700;color:${TEXT_PRI};">${e.company}</p>
+            <p style="margin:0;font-size:11px;color:${TEXT_SEC};">${e.ticker}${e.quarter ? ` · ${e.quarter}` : ''}</p>
+          </td>
+          <td align="right">
+            <p style="margin:0;font-size:12px;font-weight:600;color:#a5b4fc;">${dayLabel}</p>
+            <p style="margin:2px 0 0;font-size:10px;color:#64748b;">${e.timeOfDay ?? ''}</p>
+          </td>
+        </tr></table>
+      </td></tr>`;
+      }).join('')}
+    </table>` : ''}
+  </td></tr>
+
+  <tr><td style="height:12px;">&nbsp;</td></tr>
+
+  ${emailCta(ctaUrl, 'Wochenbericht öffnen →')}
+
+  ${emailFooter('Du erhältst diese Mail, weil du den KI-Wochenbericht aktiviert hast.<br>Zum Abmelden deaktiviere den Toggle in deinen Einstellungen.')}
+
+</table>
+</td></tr>
+</table>
+</body>
+</html>`;
+}
+
+// ── sendDigestToSubscribers ───────────────────────────────────────────────────
+// Sendet eine E-Mail an jeden Abonnenten – sequenziell mit 600 ms Pause.
+
+export async function sendDigestToSubscribers(
+  subscribers: NewsletterSubscriber[],
+  content: { subject?: string; summary?: string; highlights?: string[]; ctaUrl?: string }
+): Promise<{ sent: number; failed: number; errors: string[] }> {
+  const subject = content.subject ?? 'Dein KI-Wochenbericht – Moneta';
+  let sent = 0, failed = 0;
+  const errors: string[] = [];
+  const total = subscribers.length;
+
+  for (let i = 0; i < total; i++) {
+    const sub = subscribers[i];
+    console.log(`[email] Sende an ${sub.email} (${i + 1}/${total})…`);
+
+    const html = buildDigestHtml({
+      userName:   sub.name,
+      summary:    content.summary,
+      highlights: content.highlights,
+      ctaUrl:     content.ctaUrl,
     });
 
-    if (error) {
-      // Automatischer Retry bei Rate Limits (429)
-      if ((error as any).statusCode === 429) {
-        console.warn('[lib/email] Rate limit (429) erreicht. Warte 2s vor Retry...');
-        await sleep(2000);
-        return sendDigestEmail(params);
-      }
-      throw error;
+    const result = await sendEmail({ to: sub.email, subject, html });
+
+    if (result.success) {
+      sent++;
+      console.log(`[email] ✓ ${sub.email} (id: ${result.id})`);
+    } else {
+      failed++;
+      const msg = `${sub.email}: ${result.error}`;
+      errors.push(msg);
+      console.error(`[email] ✗ ${msg}`);
     }
 
-    // Kurze Pause, um das 2/s Limit von Resend sicher zu unterschreiten
-    await sleep(600);
-    return data;
-  } catch (err) {
-    console.error(`[lib/email] Fehler beim Versand an ${params.to}:`, err);
-    throw err;
-  }
-}
-
-/**
- * Hilfsfunktion für Massen-Mails in Cron-Jobs.
- * Versendet E-Mails nacheinander mit Delay, um Rate-Limits zu vermeiden.
- */
-export async function sendDigestToSubscribers(subscribers: any[], type: 'daily' | 'weekly') {
-  console.log(`[lib/email] Starte Versand an ${subscribers.length} Abonnenten (${type})...`);
-  const results = { sent: 0, failed: 0, errors: [] as any[] };
-
-  for (const sub of subscribers) {
-    try {
-      // Falls die Analyse bereits im Subscriber-Objekt enthalten ist, nutzen wir sie.
-      // Andernfalls wird ein Standard-Fallback genutzt.
-      await sendDigestEmail({
-        to: sub.email,
-        userName: sub.full_name,
-        type,
-        analysis: sub.analysis || {
-          intro: "Dein Depot-Update.",
-          sections: [{ title: "Update", items: ["Keine spezifischen News vorhanden."], type: "news" }]
-        }
-      });
-      results.sent++;
-      console.log(`[lib/email] ✓ Gesendet an ${sub.email}`);
-    } catch (err: any) {
-      results.failed++;
-      results.errors.push({ email: sub.email, error: err.message });
-      console.error(`[lib/email] ✗ Fehler bei ${sub.email}:`, err.message);
-    }
+    if (i < total - 1) await sleep(600);
   }
 
-  return results;
+  return { sent, failed, errors };
 }

@@ -14,6 +14,7 @@ import AuthModal from './components/AuthModal';
 import PortfolioInput from './components/PortfolioInput';
 import EarningsCalendar from './components/EarningsCalendar';
 import ScenarioAnalysis from './components/ScenarioAnalysis';
+import NewsletterQuickToggle from './components/NewsletterQuickToggle';
 import PerformanceChart from './components/PerformanceChart';
 import UpgradeModal from './components/UpgradeModal';
 import { PortfolioAnalysisReport, PortfolioHealthReport, PortfolioSavingsReport, UserAccount, HoldingRow } from './types';
@@ -671,6 +672,8 @@ const App: React.FC = () => {
                   insight={null}
                   holdings={holdings}
                 />
+
+                <NewsletterQuickToggle account={userAccount} />
 
                 <PortfolioDeepDive
                   report={analysisReport}

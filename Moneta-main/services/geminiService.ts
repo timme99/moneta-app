@@ -268,7 +268,12 @@ export const analyzeScenario = async (
     contents: [{ parts: [{ text: SCENARIO_ANALYSIS_PROMPT(scenario, scenarioDesc, holdings) }] }],
     config: { temperature: 0.3, maxOutputTokens: 1500 }
   });
-  return JSON.parse(stripJsonFences(result.text));
+  const raw = stripJsonFences(result.text);
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new Error('PARSE_ERROR:Gemini hat kein gültiges JSON zurückgegeben. Bitte erneut versuchen.');
+  }
 };
 
 // ── Scenario Fallback ────────────────────────────────────────────────────────

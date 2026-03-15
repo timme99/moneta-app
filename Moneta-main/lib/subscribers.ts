@@ -1,5 +1,5 @@
 /**
- * Abonnenten für Newsletter / KI-Wochenbericht.
+ * Abonnenten für Newsletter / KI-Wochenbericht / Tagesabschluss.
  * Nutzt getSupabaseAdmin (Service-Role-Key) – funktioniert ohne aktive User-Session.
  *
  * Filterung nach preferences-Keys erfolgt im JavaScript-Speicher (statt via
@@ -10,9 +10,11 @@
 import { getSupabaseAdmin } from './supabaseClient.js';
 
 export interface NewsletterSubscriber {
+  userId: string;
   email: string;
   name?: string;
   weeklyDigest?: boolean;
+  dailyDigest?: boolean;
   autoNewsletter?: boolean;
 }
 
@@ -23,7 +25,7 @@ interface ProfileRow {
   preferences: Record<string, unknown> | null;
 }
 
-export async function getSubscribersForDigest(): Promise<NewsletterSubscriber[]> {
+async function loadProfiles(): Promise<ProfileRow[]> {
   const supabase = getSupabaseAdmin();
   const { data, error } = await (supabase
     .from('profiles')
@@ -31,36 +33,29 @@ export async function getSubscribersForDigest(): Promise<NewsletterSubscriber[]>
     .not('email', 'is', null) as unknown as Promise<{ data: ProfileRow[] | null; error: any }>);
 
   if (error) {
-    console.error('[subscribers] getSubscribersForDigest:', error.message);
+    console.error('[subscribers] loadProfiles:', error.message);
     return [];
   }
+  return data ?? [];
+}
 
-  return (data ?? [])
-    .filter((row) => row.preferences?.weeklyReport === true)
-    .map((row) => ({
-      email: row.email,
-      name: row.full_name ?? undefined,
-      weeklyDigest: true,
-    }));
+export async function getSubscribersForDigest(): Promise<NewsletterSubscriber[]> {
+  const rows = await loadProfiles();
+  return rows
+    .filter((r) => r.preferences?.weeklyReport === true)
+    .map((r) => ({ userId: r.id, email: r.email, name: r.full_name ?? undefined, weeklyDigest: true }));
+}
+
+export async function getSubscribersForDailyDigest(): Promise<NewsletterSubscriber[]> {
+  const rows = await loadProfiles();
+  return rows
+    .filter((r) => r.preferences?.dailyDigest === true)
+    .map((r) => ({ userId: r.id, email: r.email, name: r.full_name ?? undefined, dailyDigest: true }));
 }
 
 export async function getSubscribersForNewsletter(): Promise<NewsletterSubscriber[]> {
-  const supabase = getSupabaseAdmin();
-  const { data, error } = await (supabase
-    .from('profiles')
-    .select('id, email, full_name, preferences')
-    .not('email', 'is', null) as unknown as Promise<{ data: ProfileRow[] | null; error: any }>);
-
-  if (error) {
-    console.error('[subscribers] getSubscribersForNewsletter:', error.message);
-    return [];
-  }
-
-  return (data ?? [])
-    .filter((row) => row.preferences?.autoNewsletter === true)
-    .map((row) => ({
-      email: row.email,
-      name: row.full_name ?? undefined,
-      autoNewsletter: true,
-    }));
+  const rows = await loadProfiles();
+  return rows
+    .filter((r) => r.preferences?.autoNewsletter === true)
+    .map((r) => ({ userId: r.id, email: r.email, name: r.full_name ?? undefined, autoNewsletter: true }));
 }

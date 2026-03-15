@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  User, Shield, Mail, LogOut, Target, Scale, Bell,
+  User, Shield, Mail, LogOut, Target, Scale, Bell, TrendingUp,
   Loader2, ToggleLeft, ToggleRight, CheckCircle2,
   Pencil, X, AlertTriangle, Cloud, CloudOff, Trash2,
 } from 'lucide-react';
@@ -16,7 +16,7 @@ interface SettingsProps {
 }
 
 /** Keys within the `preferences` JSONB column on the profiles table. */
-type PrefKey = 'weeklyReport' | 'autoNewsletter' | 'cloudSync' | 'legalUpdates';
+type PrefKey = 'weeklyReport' | 'dailyDigest' | 'autoNewsletter' | 'cloudSync' | 'legalUpdates';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -113,6 +113,7 @@ const Settings: React.FC<SettingsProps> = ({ account, onOpenAuth, onProfileRefre
 
   // ── Boolean preferences – start false/true; real values loaded from DB ──
   const [weeklyDigest,   setWeeklyDigest]   = useState(false);
+  const [dailyDigest,    setDailyDigest]    = useState(false);
   const [autoNewsletter, setAutoNewsletter] = useState(false);
   const [cloudSync,      setCloudSync]      = useState(true);   // default ON
   const [legalUpdates,   setLegalUpdates]   = useState(true);   // default ON (GDPR)
@@ -166,6 +167,7 @@ const Settings: React.FC<SettingsProps> = ({ account, onOpenAuth, onProfileRefre
 
       if (d.full_name != null)           setDisplayName(d.full_name);
       if (prefs.weeklyReport   != null)  setWeeklyDigest(!!prefs.weeklyReport);
+      if (prefs.dailyDigest    != null)  setDailyDigest(!!prefs.dailyDigest);
       if (prefs.autoNewsletter != null)  setAutoNewsletter(!!prefs.autoNewsletter);
       if (prefs.cloudSync      != null)  setCloudSync(!!prefs.cloudSync);
       if (prefs.legalUpdates   != null)  setLegalUpdates(!!prefs.legalUpdates);
@@ -223,6 +225,7 @@ const Settings: React.FC<SettingsProps> = ({ account, onOpenAuth, onProfileRefre
 
     const setters: Record<PrefKey, (v: boolean) => void> = {
       weeklyReport:   setWeeklyDigest,
+      dailyDigest:    setDailyDigest,
       autoNewsletter: setAutoNewsletter,
       cloudSync:      setCloudSync,
       legalUpdates:   setLegalUpdates,
@@ -471,6 +474,13 @@ const Settings: React.FC<SettingsProps> = ({ account, onOpenAuth, onProfileRefre
             description="Automatische Depot-Analyse per E-Mail (jeden Montag)"
             isActive={weeklyDigest}
             prefKey="weeklyReport"
+          />
+          <ToggleRow
+            icon={TrendingUp}
+            label="Täglicher Depot-Überblick"
+            description="Tagesabschluss mit aktuellem Depotwert und Tagesperformance (täglich 22 Uhr)"
+            isActive={dailyDigest}
+            prefKey="dailyDigest"
           />
           <ToggleRow
             icon={Target}
