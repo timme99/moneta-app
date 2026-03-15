@@ -674,13 +674,58 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
         clearTimeout(timeoutId);
       }
       if (!resp.ok) throw new Error('Bild-Analyse fehlgeschlagen');
-      const { tickers } = await resp.json();
-      if (!tickers || tickers.length === 0) {
+      const { positions } = await resp.json();
+
+      if (!positions || positions.length === 0) {
         setImportState({ loading: false, message: '', error: 'Keine Aktien erkannt. Bitte stelle sicher, dass der Screenshot gut lesbar ist und Aktien-/ETF-Positionen enthält.' });
         return;
       }
-      const count = await bulkAddTickers(tickers);
-      setImportState({ loading: false, message: `${count} Ticker aus Screenshot importiert.`, error: '' });
+
+      // Positionen mit Stückzahl + Kurs → direkt als vollständige Depot-Positionen
+      const fullPositions: BrokerPosition[] = positions
+        .filter((p: any) => safeFloat(p.shares) > 0 && safeFloat(p.price) > 0)
+        .map((p: any) => ({
+          rawSymbol: (p.symbol || p.isin || '').trim(),
+          name:      p.name,
+          shares:    safeFloat(p.shares),
+          avgPrice:  safeFloat(p.price),
+        }))
+        .filter((bp: BrokerPosition) => bp.rawSymbol);
+
+      // Positionen ohne Finanzdaten → Watchlist
+      const watchlistSymbols: string[] = positions
+        .filter((p: any) => !(safeFloat(p.shares) > 0 && safeFloat(p.price) > 0))
+        .map((p: any) => (p.symbol || p.isin || p.name || '').trim())
+        .filter(Boolean);
+
+      let effectiveUserId = userId;
+      if (sb) {
+        const { data: sessionData } = await sb.auth.getSession();
+        effectiveUserId = sessionData?.session?.user?.id ?? userId;
+      }
+      if (!effectiveUserId) throw new Error('Nicht eingeloggt – bitte zuerst anmelden.');
+
+      const parts: string[] = [];
+
+      if (fullPositions.length > 0) {
+        const { count, skipped, error } = await addBrokerHoldings(fullPositions, effectiveUserId);
+        if (error) throw new Error(error);
+        parts.push(`${count} Position${count !== 1 ? 'en' : ''} mit Einstandskurs importiert${skipped > 0 ? ` (${skipped} übersprungen)` : ''}`);
+      }
+
+      if (watchlistSymbols.length > 0) {
+        const count = await bulkAddTickers(watchlistSymbols);
+        parts.push(`${count} Ticker als Watchlist hinzugefügt`);
+      } else {
+        await onRefresh?.();
+      }
+
+      if (effectiveUserId !== userId) setUserId(effectiveUserId);
+      setImportState({
+        loading: false,
+        message: parts.length > 0 ? parts.join(' · ') + '.' : 'Import abgeschlossen.',
+        error: '',
+      });
     } catch (e: any) {
       setImportState({ loading: false, message: '', error: e?.message ?? 'Fehler beim Bild-Import.' });
     }
