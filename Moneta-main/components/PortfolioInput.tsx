@@ -549,6 +549,149 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
     }));
   };
 
+  // ── Analyst-Level Excel Engine ───────────────────────────────────────────
+  /**
+   * Parst einen rohen 2D-Array (XLSX { header:1 }) mit drei Stufen:
+   *  1. Smart Header Discovery – scannt bis zu 30 Zeilen nach der echten Kopfzeile
+   *  2. Fuzzy Column Mapping   – erkennt deutsche Broker-Spaltennamen über includes()
+   *  3. European Number Format – konvertiert '1.200,50' korrekt zu 1200.50
+   */
+  const parseExcelBrokerData = (rawRows: any[][]): BrokerPosition[] | null => {
+    if (!rawRows.length) return null;
+
+    // ── 1. Smart Header Discovery ──────────────────────────────────────────
+    const HEADER_KEYWORDS = [
+      'isin', 'wkn', 'name', 'bezeichnung', 'wertpapier',
+      'stück', 'stückzahl', 'stck', 'anzahl', 'menge', 'shares', 'qty',
+      'einstandskurs', 'kurs', 'preis', 'price',
+      'einstandswert', 'gesamtwert', 'marktwert',
+      'ticker', 'symbol',
+    ];
+
+    let headerIdx = -1;
+    let headers: string[] = [];
+    const scanLimit = Math.min(30, rawRows.length);
+
+    for (let i = 0; i < scanLimit; i++) {
+      const rowLow = rawRows[i].map((c: any) => String(c ?? '').toLowerCase().trim());
+      const hits = rowLow.filter((cell: string) =>
+        HEADER_KEYWORDS.some((kw) => cell.includes(kw))
+      );
+      if (hits.length >= 2) {
+        headerIdx = i;
+        headers = rawRows[i].map((c: any) => String(c ?? '').trim());
+        break;
+      }
+    }
+
+    if (headerIdx === -1) return null;
+
+    // ── 2. Fuzzy Column Mapping ────────────────────────────────────────────
+    const headersLow = headers.map((h) => h.toLowerCase());
+
+    /** Returns first column index whose header includes any of the candidate strings (most-specific first). */
+    const fuzzyIdx = (...candidates: string[]): number => {
+      for (const c of candidates) {
+        const i = headersLow.findIndex((h) => h.includes(c));
+        if (i !== -1) return i;
+      }
+      return -1;
+    };
+
+    // Most-specific terms first so 'einstandskurs' wins over plain 'kurs'
+    const isinIdx   = fuzzyIdx('isin');
+    const wknIdx    = fuzzyIdx('wkn');
+    const nameIdx   = fuzzyIdx('name', 'bezeichnung', 'wertpapier', 'description');
+    const sharesIdx = fuzzyIdx('stückzahl', 'stück', 'stck', 'anzahl', 'menge', 'shares', 'qty');
+    const priceIdx  = fuzzyIdx('einstandskurs', 'kurs', 'preis', 'price');
+    const totalIdx  = fuzzyIdx('gesamtwert', 'einstandswert', 'marktwert', 'total');
+    const typeIdx   = fuzzyIdx('transaktionstyp', 'transaktion', 'typ', 'art', 'type');
+    const dateIdx   = fuzzyIdx('datum', 'date', 'buchungstag', 'handelsdatum', 'ausführungsdatum');
+
+    const symbolIdx = isinIdx !== -1 ? isinIdx : wknIdx;
+    if (symbolIdx === -1 || sharesIdx === -1 || (priceIdx === -1 && totalIdx === -1)) return null;
+
+    // ── 3. European Number Format ──────────────────────────────────────────
+    /**
+     * Handles both:
+     *   European: '1.200,50' → 1200.50  (period = thousands separator, comma = decimal)
+     *   Standard: '1,200.50' → 1200.50  (comma = thousands separator, period = decimal)
+     *   Plain:    '89,34'    → 89.34
+     */
+    const parseEU = (v: any): number => {
+      const s = String(v ?? '').trim().replace(/[€$£\s]/g, '');
+      if (!s) return 0;
+      // European pattern: digit · three digits (thousands dot) optionally followed by ,decimal
+      if (/\d\.\d{3}(,|$)/.test(s)) {
+        return parseFloat(s.replace(/\./g, '').replace(',', '.')) || 0;
+      }
+      // Comma-only (no period): '89,34' → decimal comma
+      if (s.includes(',') && !s.includes('.')) {
+        return parseFloat(s.replace(',', '.')) || 0;
+      }
+      return parseFloat(s.replace(/[^0-9.-]/g, '')) || 0;
+    };
+
+    const BUY_TYPES  = ['kauf', 'buy', 'purchase', 'sparplan', 'einzahlung', 'wertpapierkauf'];
+    const SELL_TYPES = ['verkauf', 'sell', 'sale'];
+
+    const dataRows = rawRows.slice(headerIdx + 1);
+    const bySymbol = new Map<string, { totalShares: number; totalCost: number; name?: string; date?: string }>();
+
+    for (const row of dataRows) {
+      if (typeIdx !== -1) {
+        const t = String(row[typeIdx] ?? '').toLowerCase().trim();
+        if (SELL_TYPES.some((s) => t.includes(s))) continue;
+        if (t && !BUY_TYPES.some((b) => t.includes(b))) continue;
+      }
+
+      const rawSym = String(row[symbolIdx] ?? '').trim().replace(/\s/g, '');
+      if (!rawSym || rawSym.length < 4) continue;
+
+      const shares = parseEU(row[sharesIdx]);
+      if (!shares || shares <= 0) continue;
+
+      let price = priceIdx !== -1 ? parseEU(row[priceIdx]) : 0;
+      if (!price && totalIdx !== -1) {
+        const total = parseEU(row[totalIdx]);
+        if (total > 0) price = total / shares;
+      }
+      if (!price || price <= 0) continue;
+
+      const existing = bySymbol.get(rawSym) ?? { totalShares: 0, totalCost: 0 };
+      existing.totalShares += shares;
+      existing.totalCost   += shares * price;
+
+      if (!existing.name && nameIdx !== -1) {
+        const n = String(row[nameIdx] ?? '').trim();
+        if (n) existing.name = n;
+      }
+      if (!existing.date && dateIdx !== -1) {
+        const rawDate = String(row[dateIdx] ?? '').trim();
+        if (rawDate) {
+          const parts = rawDate.split('.');
+          if (parts.length === 3 && parts[0].length <= 2) {
+            const [d, m, y] = parts;
+            existing.date = `${y.length === 2 ? `20${y}` : y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+          } else {
+            existing.date = rawDate;
+          }
+        }
+      }
+      bySymbol.set(rawSym, existing);
+    }
+
+    if (!bySymbol.size) return null;
+
+    return Array.from(bySymbol.entries()).map(([rawSymbol, agg]) => ({
+      rawSymbol,
+      name:     agg.name,
+      shares:   Math.round(agg.totalShares * 1e5) / 1e5,
+      avgPrice: Math.round((agg.totalCost / agg.totalShares) * 1e4) / 1e4,
+      date:     agg.date,
+    }));
+  };
+
   const handleBrokerImport = async (file: File) => {
     setImportState({ loading: true, message: '', error: '' });
     try {
@@ -611,19 +754,20 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
         return;
       }
 
-      // Nicht-CSV (Excel): XLSX-Parser + parseBrokerData
+      // Nicht-CSV (Excel): XLSX-Parser + parseExcelBrokerData
       const XLSX = await import('xlsx');
       const buffer = await file.arrayBuffer();
       const wb = XLSX.read(buffer, { type: 'array' });
       const ws = wb.Sheets[wb.SheetNames[0]];
-      const rows: any[] = XLSX.utils.sheet_to_json(ws, { defval: '' });
+      // header:1 → raw 2D array so we can discover the actual header row ourselves
+      const rawRows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
 
-      if (!rows.length) {
+      if (!rawRows.length) {
         setImportState({ loading: false, message: '', error: 'Keine Daten in der Datei gefunden.' });
         return;
       }
 
-      const positions = parseBrokerData(rows);
+      const positions = parseExcelBrokerData(rawRows);
 
       if (!positions) {
         // Kein Broker-Format → regulären Excel-Import versuchen
