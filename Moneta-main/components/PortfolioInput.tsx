@@ -122,6 +122,9 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
   // Command Dock Focus-State
   const [isFocused, setIsFocused] = useState(false);
 
+  // Excel-Import: Anreicherungs-Modus
+  const [enrichMode, setEnrichMode] = useState(false);
+
   // Bulk-Import (Screenshot / Excel)
   const [importState, setImportState] = useState<{ loading: boolean; message: string; error: string }>({
     loading: false, message: '', error: '',
@@ -836,14 +839,16 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
         }
         if (!effectiveUserId) throw new Error('Nicht eingeloggt – bitte zuerst anmelden.');
 
-        const { count, skipped, error } = await addBrokerHoldings(positions, effectiveUserId);
+        const { count, skipped, error } = await addBrokerHoldings(positions, effectiveUserId, enrichMode);
         if (error) throw new Error(error);
 
         if (effectiveUserId !== userId) setUserId(effectiveUserId);
         await onRefresh?.();
         setImportState({
           loading: false,
-          message: `${count} Position${count !== 1 ? 'en' : ''} importiert${skipped > 0 ? ` (${skipped} übersprungen)` : ''}.`,
+          message: enrichMode
+            ? `${count} Position${count !== 1 ? 'en' : ''} angereichert${skipped > 0 ? ` · ${skipped} bereits vollständig (übersprungen)` : ''}.`
+            : `${count} Position${count !== 1 ? 'en' : ''} importiert${skipped > 0 ? ` (${skipped} übersprungen)` : ''}.`,
           error: '',
         });
         return;
@@ -1131,6 +1136,32 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
             Excel / CSV
           </button>
         </div>
+
+        {/* Enrich-Mode Toggle */}
+        <button
+          type="button"
+          onClick={() => setEnrichMode((v) => !v)}
+          className={`w-full flex items-center justify-between px-4 py-2.5 rounded-[14px] border transition-colors text-[10px] font-bold ${
+            enrichMode
+              ? 'bg-emerald-50 border-emerald-300 text-emerald-700'
+              : 'bg-slate-50 border-slate-200 text-slate-500 hover:border-slate-300'
+          }`}
+        >
+          <span className="flex items-center gap-2">
+            <Zap className={`w-3.5 h-3.5 ${enrichMode ? 'text-emerald-500' : 'text-slate-400'}`} />
+            Nur fehlende Daten ergänzen
+          </span>
+          <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${
+            enrichMode ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-400'
+          }`}>
+            {enrichMode ? 'AN' : 'AUS'}
+          </span>
+        </button>
+        {enrichMode && (
+          <p className="text-[9px] text-emerald-600 font-medium px-1">
+            Aktien, die bereits Stückzahl + Kurs haben, werden übersprungen. Nur Watchlist-Einträge und unvollständige Positionen werden angereichert.
+          </p>
+        )}
 
         {/* Row 2: PDF Broker statement */}
         <button
