@@ -843,7 +843,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
       const fullPositions: BrokerPosition[] = positions
         .filter((p: any) => safeFloat(p.shares) > 0 && safeFloat(p.price) > 0)
         .map((p: any) => ({
-          rawSymbol: (p.symbol || p.isin || '').trim(),
+          rawSymbol: (p.symbol || p.isin || p.name || '').trim(),
           name:      p.name,
           shares:    safeFloat(p.shares),
           avgPrice:  safeFloat(p.price),
@@ -1013,7 +1013,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
       const fullPositions: BrokerPosition[] = positions
         .filter((p: any) => safeFloat(p.shares) > 0 && safeFloat(p.price) > 0)
         .map((p: any) => ({
-          rawSymbol: (p.symbol || p.isin || '').trim(),
+          rawSymbol: (p.symbol || p.isin || p.name || '').trim(),
           name:      p.name,
           shares:    safeFloat(p.shares),
           avgPrice:  safeFloat(p.price),
