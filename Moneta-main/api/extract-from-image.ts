@@ -61,24 +61,36 @@ export default async function handler(req: any, res: any) {
     const isCsv = mimeType === 'text/csv';
 
 
-    const brokerPrompt = `Extrahiere Investment-Daten aus diesem Dokument (Bild/PDF/CSV). WICHTIG:
-1. Erkenne Bruchstücke (z.B. 0.784621 oder "13,612357"). Konvertiere ALLE deutschen Kommas zu Punkten (13,612357 → 13.612357). Gib Zahlen IMMER als JSON-Number aus, niemals als String.
-2. Extrahiere die ISIN falls vorhanden (z.B. "IE00B4L5Y983") – schreibe sie ins Feld "isin".
-3. Finde den Yahoo Finance Ticker (z.B. "IWDA.AS" für Amsterdam, "EUNL.DE" für XETRA, "AAPL" für NASDAQ). Schreibe NUR den Ticker ins Feld "symbol" – NIEMALS die ISIN dort eintragen!
-4. Gib ein JSON-Array zurück mit: name (string), symbol (Ticker, string), isin (string), quantity (Zahl), averagePrice (Zahl pro Stück).
+    const brokerPrompt = `Extrahiere Investment-Positionen aus diesem Dokument (Broker-Export, Depotauszug, PDF oder Screenshot).
 
-Beispiel-Ausgabe:
-[{"name":"iShares MSCI World","symbol":"IWDA.AS","isin":"IE00B4L5Y983","quantity":13.612357,"averagePrice":89.34}]
+KRITISCHE FELDNAMEN – verwende exakt diese Keys im JSON:
+  "shares"    → Stückzahl / Nominal / Anzahl / Qty (z.B. 13.612357 oder 15)
+  "buy_price" → Einstandskurs / Einstand / Einstandskurs inkl. NK / Kaufkurs / Purchase Price PRO STÜCK
+               Falls nur Gesamtbetrag vorhanden: buy_price = Gesamtbetrag ÷ shares
+  "symbol"    → Yahoo Finance Ticker (z.B. "EUNL.DE", "IWDA.AS", "AAPL") – NIEMALS die ISIN hier eintragen!
+  "isin"      → 12-stelliger ISIN-Code (z.B. "IE00B4L5Y983") – leer lassen wenn nicht vorhanden
+  "name"      → Wertpapiername
+
+ZAHLENFORMAT:
+- Konvertiere ALLE deutschen Kommas zu Punkten: "13,612357" → 13.612357, "1.200,50" → 1200.50
+- Gib Zahlen IMMER als JSON-Number aus, NIEMALS als String
+
+SPALTEN-ERKENNUNG (Scalable Capital / Finanzen.net Depotauszug):
+- "Stück/Nominal", "Stück", "Anzahl"   → shares
+- "Einstandskurs inkl. NK", "Einstand", "Einstandskurs", "Kurs (Kauf)" → buy_price
+- "ISIN"                                → isin
+- "Bezeichnung", "Name", "Wertpapier"  → name
+
+Ausgabe-Format:
+[{"name":"iShares MSCI World","symbol":"IWDA.AS","isin":"IE00B4L5Y983","shares":13.612357,"buy_price":89.34}]
 
 Regeln:
-- symbol: Börsen-Ticker im Yahoo Finance Format – z.B. "BEI.DE", "AAPL", "IWDA.AS". Leer lassen ("") wenn wirklich nicht erkennbar.
-- isin: 12-stelliger Code wie "IE00B4L5Y983". Leer lassen ("") wenn nicht vorhanden.
-- quantity: Dezimalzahl mit Punkt (z.B. 13.612357). Kein String, kein Komma!
-- averagePrice: Kaufpreis PRO STÜCK. Falls nur Gesamtbetrag: Betrag ÷ quantity. 0 wenn nicht erkennbar.
-- Nur echte Positionen/Käufe – keine Verkäufe, Dividenden, Gebühren.
-- Falls keine Positionen: []
+- symbol: Yahoo Finance Format ("BEI.DE", "AAPL", "IWDA.AS"). Leer ("") wenn nicht erkennbar.
+- buy_price: Einstandskurs PRO STÜCK. 0 wenn nicht erkennbar.
+- Nur echte Bestands-Positionen – keine Verkäufe, Dividenden, Gebühren, Summenzeilen.
+- Falls keine Positionen erkennbar: []
 
-Antworte NUR mit dem JSON-Array!`;
+Antworte NUR mit dem JSON-Array – kein anderer Text!`;
 
     let response: any;
 
@@ -107,8 +119,9 @@ Antworte NUR mit dem JSON-Array!`;
             .map((p: any) => ({
               symbol: String(p.symbol ?? '').trim(),
               isin:   String(p.isin   ?? '').trim(),
-              shares: toFloat(p.quantity ?? p.shares),
-              price:  toFloat(p.averagePrice ?? p.price) || null,
+              // Accept new canonical keys (shares/buy_price) AND old fallback keys
+              shares: toFloat(p.shares    ?? p.quantity),
+              price:  toFloat(p.buy_price ?? p.averagePrice ?? p.price) || null,
               name:   p.name ? String(p.name).trim() : undefined,
             }))
             .filter((p: any) => p.symbol || p.isin)

@@ -77,24 +77,30 @@ export function useSubscription(userId: string | null | undefined): Subscription
 
 export const PLAN_LIMITS = {
   free: {
-    maxHoldings:       5,
-    analysesPerMonth:  3,
-    csvImports:        1,
-    performanceDays:   7,   // Tage Historie im Performance-Chart
-    alerts:            0,
+    maxHoldings:          5,
+    maxScenarioHoldings:  5,    // Max Positionen in der Szenario-Analyse
+    maxAnalysisHoldings:  10,   // Max Positionen die an KI-Analysen übergeben werden
+    analysesPerMonth:     3,
+    csvImports:           1,
+    performanceDays:      7,   // Tage Historie im Performance-Chart
+    alerts:               0,
   },
   premium: {
-    maxHoldings:       Infinity,
-    analysesPerMonth:  Infinity,
-    csvImports:        Infinity,
-    performanceDays:   365,
-    alerts:            20,
+    maxHoldings:          Infinity,
+    maxScenarioHoldings:  Infinity,
+    maxAnalysisHoldings:  Infinity,
+    analysesPerMonth:     Infinity,
+    csvImports:           Infinity,
+    performanceDays:      365,
+    alerts:               20,
   },
   pro: {
-    maxHoldings:       Infinity,
-    analysesPerMonth:  Infinity,
-    csvImports:        Infinity,
-    performanceDays:   Infinity,
-    alerts:            Infinity,
+    maxHoldings:          Infinity,
+    maxScenarioHoldings:  Infinity,
+    maxAnalysisHoldings:  Infinity,
+    analysesPerMonth:     Infinity,
+    csvImports:           Infinity,
+    performanceDays:      Infinity,
+    alerts:               Infinity,
   },
 } as const;

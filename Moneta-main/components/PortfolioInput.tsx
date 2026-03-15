@@ -553,8 +553,12 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
   /**
    * Parst einen rohen 2D-Array (XLSX { header:1 }) mit drei Stufen:
    *  1. Smart Header Discovery – scannt bis zu 30 Zeilen nach der echten Kopfzeile
-   *  2. Fuzzy Column Mapping   – erkennt deutsche Broker-Spaltennamen über includes()
-   *  3. European Number Format – konvertiert '1.200,50' korrekt zu 1200.50
+   *  2. Fuzzy Column Mapping   – erkennt Scalable/Finanzen.net Broker-Spaltennamen
+   *  3. cleanNumeric           – konvertiert deutsche Formate inkl. Währungstexten
+   *
+   * Mappings (Supabase-Spalten):
+   *   'Stück/Nominal', 'Stückzahl', 'Qty' … → shares
+   *   'Einstandskurs inkl. NK', 'Kurs', 'Preis' … → buy_price (= avgPrice)
    */
   const parseExcelBrokerData = (rawRows: any[][]): BrokerPosition[] | null => {
     if (!rawRows.length) return null;
@@ -562,8 +566,10 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
     // ── 1. Smart Header Discovery ──────────────────────────────────────────
     const HEADER_KEYWORDS = [
       'isin', 'wkn', 'name', 'bezeichnung', 'wertpapier',
-      'stück', 'stückzahl', 'stck', 'anzahl', 'menge', 'shares', 'qty',
-      'einstandskurs', 'kurs', 'preis', 'price',
+      // shares-Spalte – inkl. Scalable 'Stück/Nominal'
+      'stück', 'stückzahl', 'nominal', 'stck', 'anzahl', 'menge', 'shares', 'qty',
+      // buy_price-Spalte – inkl. Scalable 'Einstandskurs inkl. NK'
+      'einstandskurs', 'einstand', 'kurs', 'preis', 'price',
       'einstandswert', 'gesamtwert', 'marktwert',
       'ticker', 'symbol',
     ];
@@ -598,12 +604,13 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
       return -1;
     };
 
-    // Most-specific terms first so 'einstandskurs' wins over plain 'kurs'
     const isinIdx   = fuzzyIdx('isin');
     const wknIdx    = fuzzyIdx('wkn');
     const nameIdx   = fuzzyIdx('name', 'bezeichnung', 'wertpapier', 'description');
-    const sharesIdx = fuzzyIdx('stückzahl', 'stück', 'stck', 'anzahl', 'menge', 'shares', 'qty');
-    const priceIdx  = fuzzyIdx('einstandskurs', 'kurs', 'preis', 'price');
+    // 'Stück/Nominal' → fuzzyIdx hits 'stück' (substring match on '/')
+    const sharesIdx = fuzzyIdx('stückzahl', 'stück/nominal', 'stück', 'nominal', 'stck', 'anzahl', 'menge', 'shares', 'qty');
+    // 'Einstandskurs inkl. NK' → most-specific first; 'kurs' excluded when 'aktuell'/'gesamt' precede it
+    const priceIdx  = fuzzyIdx('einstandskurs inkl', 'einstandskurs', 'einstand', 'kurs', 'preis', 'price');
     const totalIdx  = fuzzyIdx('gesamtwert', 'einstandswert', 'marktwert', 'total');
     const typeIdx   = fuzzyIdx('transaktionstyp', 'transaktion', 'typ', 'art', 'type');
     const dateIdx   = fuzzyIdx('datum', 'date', 'buchungstag', 'handelsdatum', 'ausführungsdatum');
@@ -611,21 +618,28 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
     const symbolIdx = isinIdx !== -1 ? isinIdx : wknIdx;
     if (symbolIdx === -1 || sharesIdx === -1 || (priceIdx === -1 && totalIdx === -1)) return null;
 
-    // ── 3. European Number Format ──────────────────────────────────────────
+    // ── 3. cleanNumeric ────────────────────────────────────────────────────
     /**
-     * Handles both:
-     *   European: '1.200,50' → 1200.50  (period = thousands separator, comma = decimal)
-     *   Standard: '1,200.50' → 1200.50  (comma = thousands separator, period = decimal)
-     *   Plain:    '89,34'    → 89.34
+     * Robuste Zahl-Konvertierung für deutsche Broker-Exporte:
+     *   'EUR 1.200,50' → 1200.50   (Präfix-Währungstext)
+     *   '1.200,50 EUR' → 1200.50   (Suffix-Währungstext)
+     *   '1.200,50'     → 1200.50   (Tausenderpunkt + Dezimalkomma)
+     *   '89,34'        → 89.34     (reines Dezimalkomma)
+     *   '89.34'        → 89.34     (Standard)
+     *   '0,784621'     → 0.784621  (Bruchstücke)
      */
-    const parseEU = (v: any): number => {
-      const s = String(v ?? '').trim().replace(/[€$£\s]/g, '');
+    const cleanNumeric = (v: any): number => {
+      const s = String(v ?? '')
+        .replace(/[€$£¥₹]/g, '')   // Währungssymbole
+        .replace(/[A-Za-z]+/g, '')  // Währungscodes (EUR, USD, CHF …) und sonstige Buchstaben
+        .replace(/\s/g, '')         // Leerzeichen
+        .trim();
       if (!s) return 0;
-      // European pattern: digit · three digits (thousands dot) optionally followed by ,decimal
+      // Europäisches Format: '1.234,56' (Tausenderpunkt, Dezimalkomma)
       if (/\d\.\d{3}(,|$)/.test(s)) {
         return parseFloat(s.replace(/\./g, '').replace(',', '.')) || 0;
       }
-      // Comma-only (no period): '89,34' → decimal comma
+      // Reines Dezimalkomma ohne Tausenderpunkt: '89,34' oder '0,784621'
       if (s.includes(',') && !s.includes('.')) {
         return parseFloat(s.replace(',', '.')) || 0;
       }
@@ -648,12 +662,12 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
       const rawSym = String(row[symbolIdx] ?? '').trim().replace(/\s/g, '');
       if (!rawSym || rawSym.length < 4) continue;
 
-      const shares = parseEU(row[sharesIdx]);
+      const shares = cleanNumeric(row[sharesIdx]);
       if (!shares || shares <= 0) continue;
 
-      let price = priceIdx !== -1 ? parseEU(row[priceIdx]) : 0;
+      let price = priceIdx !== -1 ? cleanNumeric(row[priceIdx]) : 0;
       if (!price && totalIdx !== -1) {
-        const total = parseEU(row[totalIdx]);
+        const total = cleanNumeric(row[totalIdx]);
         if (total > 0) price = total / shares;
       }
       if (!price || price <= 0) continue;
