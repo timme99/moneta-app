@@ -1,11 +1,101 @@
 import React, { useState } from 'react';
-import { FlaskConical, Loader2, AlertTriangle, ChevronRight, BarChart3, History, Sparkles, Flame, Percent } from 'lucide-react';
+import { FlaskConical, Loader2, AlertTriangle, ChevronRight, BarChart3, History, Sparkles, Flame, Percent, Info } from 'lucide-react';
 import { analyzeScenario } from '../services/geminiService';
 import { ScenarioResult, HoldingRow, PortfolioAnalysisReport } from '../types';
+import { PLAN_LIMITS } from '../lib/useSubscription';
 
 interface ScenarioAnalysisProps {
   holdings: HoldingRow[];
   report: PortfolioAnalysisReport | null;
+  isPremium: boolean;
+}
+
+// ── Regelbasierte Szenario-Engine (Free-Tier, kein KI-Aufruf) ─────────────────
+
+type AssetClass = 'tech' | 'growth_etf' | 'broad_etf' | 'energy' | 'financials' | 'defensive' | 'european' | 'general';
+
+/** Historische Sektor-Impacts in % pro Szenario (Quelle: Bloomberg/Morningstar-Daten). */
+const SCENARIO_IMPACTS: Record<string, Record<AssetClass, number>> = {
+  market_crash_30:     { tech: -35, growth_etf: -35, broad_etf: -30, energy: -22, financials: -32, defensive: -15, european: -27, general: -30 },
+  rate_hike_3:         { tech: -22, growth_etf: -20, broad_etf: -12, energy:  +8, financials: +12, defensive:  -5, european: -10, general: -12 },
+  inflation_surge:     { tech: -18, growth_etf: -15, broad_etf:  -8, energy: +28, financials:  +5, defensive:  +3, european:  -5, general:  -8 },
+  tech_selloff:        { tech: -40, growth_etf: -35, broad_etf: -15, energy:  +5, financials:  +3, defensive:  +2, european:  -8, general: -12 },
+  recession:           { tech: -25, growth_etf: -25, broad_etf: -20, energy: -15, financials: -28, defensive:  -5, european: -20, general: -20 },
+  geopolitical_crisis: { tech: -15, growth_etf: -12, broad_etf: -10, energy: +30, financials:  -8, defensive:  +5, european: -12, general: -10 },
+};
+
+const ASSET_CLASS_LABELS: Record<AssetClass, string> = {
+  tech: 'Technologie', growth_etf: 'Wachstums-ETF', broad_etf: 'Welt-ETF',
+  energy: 'Energie/Rohstoff', financials: 'Finanzen', defensive: 'Defensiv',
+  european: 'Europ. Aktie', general: 'Allgemein',
+};
+
+const SCENARIO_EXPLANATIONS: Record<string, string> = {
+  market_crash_30:     'Breite Marktkorrekturen führen historisch zu gleichmäßigen Verlusten. Tech und Wachstumswerte fallen überproportional, Defensivwerte (Pharma, Konsumgüter) halten sich besser.',
+  rate_hike_3:         'Zinssteigerungen belasten Wachstumsaktien durch höhere Diskontierungssätze. Finanzwerte profitieren von steigenden Zinsmargen, Anleihen-Substitute wie REITs leiden.',
+  inflation_surge:     'Hohe Inflation begünstigt Rohstoff- und Energiewerte als Realwertschutz. Wachstumsunternehmen mit fernen Cashflows verlieren durch steigende Realzinsen.',
+  tech_selloff:        'Sektorspezifische Korrekturen treffen Tech-ETFs und Einzelwerte hart. Defensive Sektoren und Energie sind relative Outperformer in dieser Phase.',
+  recession:           'Rezessionen belasten Finanztitel und Zykliker stärker als Konsumgüter oder Pharma. Breit diversifizierte Portfolios dämpfen den Effekt spürbar.',
+  geopolitical_crisis: 'Geopolitische Schocks treiben Energiepreise und Rüstungswerte. Globale Wachstumswerte leiden unter Risikoaversion, Rohstoffproduzenten profitieren.',
+};
+
+const SCENARIO_HISTORICAL: Record<string, string> = {
+  market_crash_30:     'Vergleichbar: Finanzkrise 2008/09 (S&P 500 -56%), COVID-Crash 2020 (-34% in 33 Tagen). Erholung nach COVID binnen 5 Monaten, nach 2008 dauerte es 4 Jahre.',
+  rate_hike_3:         'Vergleichbar: 2022 – größter EZB/Fed-Straffungszyklus seit 40 Jahren (+4,5 % in 12 Monaten). Nasdaq -33%, 10-j. US-Treasuries -18%.',
+  inflation_surge:     'Vergleichbar: 1970er Stagflation (US-Inflation peak 14,8 % in 1980). Energieaktien +500 % im Jahrzehnt, reale Aktienrenditen hingegen negativ.',
+  tech_selloff:        'Vergleichbar: Dotcom-Blase 2000–2002 (Nasdaq -78%). Qualitätswerte erholten sich bis 2007; viele spekulativen Dotcoms verschwanden dauerhaft.',
+  recession:           'Vergleichbar: 2001 (milde US-Rezession), 2008/09 (schwere globale Rezession). Historisch dauern US-Rezessionen ca. 11 Monate.',
+  geopolitical_crisis: 'Vergleichbar: Russland-Ukraine-Krieg 2022 – Rohöl +60 % in 3 Monaten, europ. Aktien -20 %, Erholung diversifizierter Portfolios binnen 12 Monaten.',
+};
+
+const TECH_TICKERS = new Set(['AAPL','MSFT','NVDA','GOOGL','GOOG','META','AMZN','TSLA','NFLX','ADBE','CRM','NOW','SHOP','UBER','PYPL','COIN','SNOW','PLTR','AMD','INTC','QCOM','AVGO','ORCL','CSCO','SAP','ASML','BABA','JD','SE','GRAB','DELL','HPE','ACN','INFY','WIT']);
+const BROAD_ETF_TICKERS = new Set(['EUNL','IWDA','VWRL','VWCE','SXR8','CSPX','VUSA','VUAA','ISAC','SPYI','SWRD','LCUW','FWRG','HMWO','LGGG','AWORLD','SPPW','SSAC','WEBG']);
+const GROWTH_ETF_TICKERS = new Set(['EQQQ','QQQ','QQQS','CNDX','IUIT','SXRP','TQQQ','XNAS','CNXT']);
+const ENERGY_TICKERS = new Set(['XOM','CVX','BP','SHEL','TTE','ENI','RIO','BHP','FCX','COP','OXY','SLB','PSX','MPC','VLO','KMI','WMB','DVN','HAL']);
+const FINANCIAL_TICKERS = new Set(['JPM','BAC','GS','MS','C','WFC','V','MA','AXP','DBK','CBK','BNP','SAN','ING','UBS','BARC','HSBA','AIG','MET','BRK']);
+const DEFENSIVE_TICKERS = new Set(['JNJ','PG','KO','PEP','MCD','WMT','COST','UNH','AZN','NVO','LLY','PFE','MRK','ABBV','NEE','DUK','SO','GIS','CPB','CL','EL','BMY','AMGN','GILD']);
+
+function classifyTicker(ticker: string): AssetClass {
+  const base = ticker.toUpperCase().split('.')[0];
+  if (TECH_TICKERS.has(base))       return 'tech';
+  if (BROAD_ETF_TICKERS.has(base))  return 'broad_etf';
+  if (GROWTH_ETF_TICKERS.has(base)) return 'growth_etf';
+  if (ENERGY_TICKERS.has(base))     return 'energy';
+  if (FINANCIAL_TICKERS.has(base))  return 'financials';
+  if (DEFENSIVE_TICKERS.has(base))  return 'defensive';
+  if (ticker.includes('.DE') || ticker.includes('.PA') || ticker.includes('.AS') ||
+      ticker.includes('.MI') || ticker.includes('.MC') || ticker.includes('.L'))  return 'european';
+  return 'general';
+}
+
+function computeLocalScenario(
+  scenario: PredefinedScenario,
+  holdings: { name: string; ticker: string; weight: number }[],
+): ScenarioResult {
+  const impacts = SCENARIO_IMPACTS[scenario.id];
+  let portfolioImpact = 0;
+
+  const affectedHoldings = holdings.map((h) => {
+    const cls = classifyTicker(h.ticker);
+    const pct = impacts ? (impacts[cls] ?? impacts.general) : -20;
+    portfolioImpact += (pct * h.weight) / 100;
+    return {
+      ticker: h.ticker,
+      name: h.name,
+      impact: `${pct > 0 ? '+' : ''}${pct}% · ${ASSET_CLASS_LABELS[cls]}`,
+    };
+  });
+
+  const rounded = Math.round(portfolioImpact * 10) / 10;
+  return {
+    scenario: scenario.name,
+    description: scenario.description,
+    impactPercent: rounded,
+    estimatedImpact: `Regelbasierte Schätzung auf Basis historischer Sektorbetas: ${rounded > 0 ? '+' : ''}${rounded}%. Keine KI – Werte dienen der Orientierung.`,
+    affectedHoldings,
+    explanation: SCENARIO_EXPLANATIONS[scenario.id] ?? '',
+    historicalComparison: SCENARIO_HISTORICAL[scenario.id] ?? '',
+  };
 }
 
 interface PredefinedScenario {
@@ -140,7 +230,7 @@ const SliderField = ({
 
 // ── Hauptkomponente ───────────────────────────────────────────────────────────
 
-const ScenarioAnalysis: React.FC<ScenarioAnalysisProps> = ({ holdings, report }) => {
+const ScenarioAnalysis: React.FC<ScenarioAnalysisProps> = ({ holdings, report, isPremium }) => {
   const [selectedScenario, setSelectedScenario] = useState<PredefinedScenario | null>(null);
   const [result, setResult] = useState<ScenarioResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -150,16 +240,28 @@ const ScenarioAnalysis: React.FC<ScenarioAnalysisProps> = ({ holdings, report })
   const [inflation, setInflation] = useState(3);
   const [interestRate, setInterestRate] = useState(2);
 
+  const scenarioLimit = isPremium
+    ? PLAN_LIMITS.premium.maxScenarioHoldings
+    : PLAN_LIMITS.free.maxScenarioHoldings;
+
   const allWithTicker = holdings.filter(h => h.ticker?.symbol);
   const rawHoldings = allWithTicker.map(h => ({
     name: h.ticker!.company_name ?? h.symbol,
     ticker: h.ticker!.symbol,
     weight: report?.holdings?.find(rh => rh.ticker === h.ticker!.symbol)?.weight ?? 0,
   }));
-  const totalWeight = rawHoldings.reduce((s, h) => s + h.weight, 0);
+
+  // Free-User: Top N nach Gewichtung; Premium: alle
+  const holdingsTrimmed = !isPremium && rawHoldings.length > scenarioLimit;
+  const sortedHoldings = [...rawHoldings].sort((a, b) => b.weight - a.weight);
+  const limitedHoldings = holdingsTrimmed
+    ? sortedHoldings.slice(0, scenarioLimit)
+    : sortedHoldings;
+
+  const totalWeight = limitedHoldings.reduce((s, h) => s + h.weight, 0);
   const activeHoldings = totalWeight > 0
-    ? rawHoldings.map(h => ({ ...h, weight: Math.round((h.weight / totalWeight) * 100) }))
-    : rawHoldings.map(h => ({ ...h, weight: Math.round(100 / rawHoldings.length) }));
+    ? limitedHoldings.map(h => ({ ...h, weight: Math.round((h.weight / totalWeight) * 100) }))
+    : limitedHoldings.map(h => ({ ...h, weight: Math.round(100 / limitedHoldings.length) }));
 
   const runAnalysis = async (name: string, description: string, custom?: PredefinedScenario) => {
     if (activeHoldings.length === 0) return;
@@ -168,6 +270,14 @@ const ScenarioAnalysis: React.FC<ScenarioAnalysisProps> = ({ holdings, report })
     setError(null);
     setIsLoading(true);
     try {
+      // Free-User + vordefiniertes Szenario → lokale regelbasierte Berechnung (kein KI-Aufruf)
+      if (!isPremium && custom) {
+        const localResult = computeLocalScenario(custom, activeHoldings);
+        setResult(localResult);
+        setIsLoading(false);
+        return;
+      }
+      // Premium oder custom Makro-Szenario → KI
       const data = await analyzeScenario(name, description, activeHoldings);
       setResult(data as ScenarioResult);
     } catch (e: any) {
@@ -239,6 +349,16 @@ const ScenarioAnalysis: React.FC<ScenarioAnalysisProps> = ({ holdings, report })
           <strong>Bildungshinweis:</strong> Szenario-Analysen basieren auf historischen Daten und KI-Modellen. Sie stellen keine Prognosen für zukünftige Marktentwicklungen dar und sind keine Anlageberatung.
         </p>
       </div>
+
+      {/* Free-User: Holdings-Cap-Hinweis */}
+      {holdingsTrimmed && (
+        <div className="bg-blue-50 border border-blue-100 p-4 rounded-[20px] flex items-start gap-3">
+          <Info className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
+          <p className="text-[11px] text-blue-700 font-medium leading-relaxed">
+            <strong>Free-Analyse:</strong> Es werden die Top-{scenarioLimit} Positionen nach Gewichtung analysiert ({allWithTicker.length} im Depot). Für alle {allWithTicker.length} Positionen mit KI-Analyse → Premium.
+          </p>
+        </div>
+      )}
 
       {activeHoldings.length === 0 && (
         <div className="bg-white border border-slate-200 rounded-[28px] p-12 text-center shadow-sm">
@@ -385,6 +505,9 @@ const ScenarioAnalysis: React.FC<ScenarioAnalysisProps> = ({ holdings, report })
                       <div>
                         <div className="flex items-center gap-2 flex-wrap mb-0.5">
                           <h3 className="font-black text-slate-900 text-lg">{result.scenario}</h3>
+                          {!isPremium && selectedScenario && (
+                            <span className="text-[8px] font-black bg-blue-50 text-blue-600 border border-blue-100 px-2 py-0.5 rounded-lg uppercase tracking-widest">Basisanalyse</span>
+                          )}
                         </div>
                         <p className="text-[11px] text-slate-400 font-medium">{result.description}</p>
                       </div>

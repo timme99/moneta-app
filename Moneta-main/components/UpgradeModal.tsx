@@ -1,19 +1,18 @@
 /**
- * UpgradeModal – Paywall-Dialog für Premium-Features.
+ * UpgradeModal – Wartelisten-Dialog für kommende Premium-Features.
  *
- * Wird angezeigt wenn ein Free-User ein Premium-Feature aufrufen will.
- * Listet die Vorteile auf und leitet zu Stripe Checkout weiter.
+ * Premium ist aktuell noch nicht verfügbar. Nutzer können sich auf die
+ * Warteliste eintragen und werden informiert, sobald Premium startet.
  *
  * Props:
  *  isOpen    – ob der Modal sichtbar ist
- *  onClose   – schließt den Modal
- *  feature   – Optional: welches Feature hat den Modal getriggert (für Headline)
- *  userId    – für Stripe Checkout Session
+ *  onClose   – schließt den Modal (X-Button, Backdrop-Klick, ESC)
+ *  feature   – Optional: welches Feature hat den Modal getriggert
+ *  userId    – für späteren Checkout (noch nicht aktiv)
  */
 
-import React from 'react';
-import { X, Zap, TrendingUp, Shield, Bell, FileText, BarChart3, CheckCircle2, Loader2 } from 'lucide-react';
-import { useState } from 'react';
+import React, { useEffect } from 'react';
+import { X, Zap, TrendingUp, Shield, Bell, FileText, BarChart3, CheckCircle2, Clock } from 'lucide-react';
 
 interface UpgradeModalProps {
   isOpen: boolean;
@@ -23,50 +22,40 @@ interface UpgradeModalProps {
 }
 
 const PREMIUM_FEATURES = [
-  { icon: TrendingUp,  label: 'Historische Performance',   desc: 'Depotwert-Chart über 12 Monate' },
-  { icon: Shield,      label: 'Steuer-Optimierer',          desc: 'FIFO-Berechnung + Verlustverrechnung' },
-  { icon: Bell,        label: 'Kurs-Alerts',                desc: 'Email-Benachrichtigung bei Kursänderungen' },
-  { icon: BarChart3,   label: 'Unbegrenzte KI-Analysen',   desc: 'Kein Tageslimit mehr' },
-  { icon: FileText,    label: 'Broker-Imports',             desc: 'Trade Republic, Scalable & mehr' },
-  { icon: Zap,         label: 'Unbegrenzte Holdings',       desc: 'Mehr als 5 Positionen verwalten' },
+  { icon: TrendingUp, label: 'Historische Performance',  desc: 'Depotwert-Chart über 12 Monate' },
+  { icon: Shield,     label: 'Steuer-Optimierer',         desc: 'FIFO-Berechnung + Verlustverrechnung' },
+  { icon: Bell,       label: 'Kurs-Alerts',               desc: 'Email-Benachrichtigung bei Kursänderungen' },
+  { icon: BarChart3,  label: 'Unbegrenzte KI-Analysen',  desc: 'Kein Tageslimit – alle Szenarien mit KI' },
+  { icon: FileText,   label: 'Broker-Imports',            desc: 'Trade Republic, Scalable & mehr' },
+  { icon: Zap,        label: 'Unbegrenzte Holdings',      desc: 'Mehr als 5 Positionen verwalten' },
 ];
 
-const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, feature, userId }) => {
-  const [isLoading, setIsLoading] = useState(false);
+const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, feature }) => {
+  // ESC-Taste schließt den Modal
+  useEffect(() => {
+    if (!isOpen) return;
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
-  const handleUpgrade = async (plan: 'monthly' | 'yearly') => {
-    setIsLoading(true);
-    try {
-      const resp = await fetch('/api/stripe-checkout', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ plan, userId }),
-      });
-      if (resp.ok) {
-        const { url } = await resp.json();
-        if (url) window.location.href = url;
-      } else {
-        // Fallback: Kontakt-Mail wenn Stripe noch nicht konfiguriert
-        window.open('mailto:hello@moneta.app?subject=Premium%20Upgrade', '_blank');
-      }
-    } catch {
-      window.open('mailto:hello@moneta.app?subject=Premium%20Upgrade', '_blank');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
-      <div className="bg-white rounded-[32px] w-full max-w-md shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-[32px] w-full max-w-md shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="bg-gradient-to-br from-blue-600 to-blue-700 px-6 pt-8 pb-6 text-white relative">
           <button
             onClick={onClose}
             className="absolute top-4 right-4 p-2 hover:bg-white/20 rounded-xl transition-colors"
+            aria-label="Schließen"
           >
             <X className="w-4 h-4" />
           </button>
@@ -74,14 +63,14 @@ const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, feature, u
             <Zap className="w-5 h-5" />
           </div>
           <h2 className="text-lg font-black leading-tight">
-            {feature ? `${feature} ist Premium` : 'Upgrade auf Premium'}
+            {feature ? `${feature} – Premium-Feature` : 'Premium-Features'}
           </h2>
           <p className="text-blue-100 text-xs font-medium mt-1">
-            Alle Features – für weniger als ein Kaffee im Monat.
+            Diese Funktionen sind bald verfügbar – trage dich jetzt ein.
           </p>
         </div>
 
-        {/* Features */}
+        {/* Feature-Liste */}
         <div className="px-6 py-4 space-y-3">
           {PREMIUM_FEATURES.map(({ icon: Icon, label, desc }) => (
             <div key={label} className="flex items-start gap-3">
@@ -97,41 +86,29 @@ const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, feature, u
           ))}
         </div>
 
-        {/* Pricing */}
+        {/* Warteliste CTA */}
         <div className="px-6 pb-6 space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <button
-              onClick={() => handleUpgrade('monthly')}
-              disabled={isLoading}
-              className="flex flex-col items-center justify-center py-4 px-3 border-2 border-slate-200 hover:border-blue-300 rounded-[20px] transition-all group disabled:opacity-50"
-            >
-              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Monatlich</span>
-              <span className="text-2xl font-black text-slate-900 mt-1">4,99€</span>
-              <span className="text-[9px] text-slate-400 font-medium">pro Monat</span>
-            </button>
-            <button
-              onClick={() => handleUpgrade('yearly')}
-              disabled={isLoading}
-              className="flex flex-col items-center justify-center py-4 px-3 border-2 border-blue-600 bg-blue-50 hover:bg-blue-100 rounded-[20px] transition-all relative disabled:opacity-50"
-            >
-              <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 bg-blue-600 text-white text-[8px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-widest whitespace-nowrap">
-                2 Monate gratis
-              </span>
-              <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest">Jährlich</span>
-              <span className="text-2xl font-black text-blue-700 mt-1">39€</span>
-              <span className="text-[9px] text-blue-500 font-medium">pro Jahr</span>
-            </button>
+          {/* Status-Hinweis */}
+          <div className="flex items-center gap-2 bg-amber-50 border border-amber-100 rounded-2xl px-4 py-3">
+            <Clock className="w-4 h-4 text-amber-500 shrink-0" />
+            <p className="text-[11px] text-amber-700 font-medium leading-snug">
+              <strong>Bezahlte Funktionen sind aktuell noch nicht verfügbar.</strong><br />
+              Wir arbeiten daran – trage dich auf die Warteliste ein und wir melden uns als Erste.
+            </p>
           </div>
 
-          {isLoading && (
-            <div className="flex items-center justify-center gap-2 py-2 text-xs text-slate-500">
-              <Loader2 className="w-4 h-4 animate-spin" />
-              Weiterleitung zu Stripe…
-            </div>
-          )}
+          <a
+            href="mailto:hello@moneta.app?subject=Warteliste%20Premium&body=Ich%20m%C3%B6chte%20auf%20die%20Warteliste%20f%C3%BCr%20Moneta%20Premium."
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center justify-center gap-2 w-full py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-black text-sm uppercase tracking-widest shadow-lg shadow-blue-600/20 transition-all hover:shadow-blue-600/30 hover:-translate-y-0.5 active:translate-y-0"
+          >
+            <Zap className="w-4 h-4" />
+            Hier auf Warteliste eintragen
+          </a>
 
           <p className="text-center text-[9px] text-slate-400 font-medium">
-            Jederzeit kündbar · Keine versteckten Kosten · DSGVO-konform
+            Kein Spam · Nur eine Nachricht wenn Premium startet · DSGVO-konform
           </p>
         </div>
       </div>

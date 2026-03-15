@@ -709,7 +709,7 @@ const App: React.FC = () => {
                   <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
                   <p className="text-[10px] text-amber-700 font-bold">Keine Anlageberatung. KI-generierte Informationen dienen ausschließlich Bildungszwecken.</p>
                 </div>
-                <ScenarioAnalysis key={holdings.map(h => h.symbol).sort().join(',')} holdings={holdings} report={analysisReport} />
+                <ScenarioAnalysis key={holdings.map(h => h.symbol).sort().join(',')} holdings={holdings} report={analysisReport} isPremium={subscription.isPremium} />
               </div>
             ) : activeView === 'settings' ? (
                <Settings account={userAccount} onOpenAuth={() => setShowAuthModal(true)} onProfileRefresh={refreshProfile} />
