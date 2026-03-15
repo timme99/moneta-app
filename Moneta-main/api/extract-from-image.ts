@@ -61,32 +61,49 @@ export default async function handler(req: any, res: any) {
     const isCsv = mimeType === 'text/csv';
 
 
-    const brokerPrompt = `Extrahiere Investment-Positionen aus diesem Dokument (Broker-Export, Depotauszug, PDF oder Screenshot).
+    const brokerPrompt = `Extrahiere Investment-Positionen aus diesem Dokument (Broker-Export, Depotauszug, eigene Excel-Tabelle, PDF oder Screenshot).
 
 KRITISCHE FELDNAMEN – verwende exakt diese Keys im JSON:
-  "shares"    → Stückzahl / Nominal / Anzahl / Qty (z.B. 13.612357 oder 15)
-  "buy_price" → Einstandskurs / Einstand / Einstandskurs inkl. NK / Kaufkurs / Purchase Price PRO STÜCK
-               Falls nur Gesamtbetrag vorhanden: buy_price = Gesamtbetrag ÷ shares
-  "symbol"    → Yahoo Finance Ticker (z.B. "EUNL.DE", "IWDA.AS", "AAPL") – NIEMALS die ISIN hier eintragen!
+  "shares"    → Stückzahl / Nominal / Anzahl / Qty / Bestand / Menge / Units / Number of Shares
+               (z.B. 13.612357 oder 15)
+  "buy_price" → Einstandskurs / Einstand / Einstandskurs inkl. NK / Kaufkurs / Kaufpreis /
+               Kurs / Preis / Einstandspreis / Durchschnittspreis / Purchase Price /
+               Buy Price / Avg Price / Average Price / Kurs in EUR / Preis in EUR
+               → PRO STÜCK. Falls nur Gesamtbetrag/Wert vorhanden: buy_price = Gesamtbetrag ÷ shares
+  "symbol"    → Yahoo Finance Ticker (z.B. "EUNL.DE", "IWDA.AS", "AAPL")
+               Quell-Spalten: Ticker / Symbol / Kürzel / WKN / ISIN (als letztes Mittel)
+               NIEMALS die ISIN als symbol eintragen wenn ein echter Ticker erkennbar ist!
   "isin"      → 12-stelliger ISIN-Code (z.B. "IE00B4L5Y983") – leer lassen wenn nicht vorhanden
-  "name"      → Wertpapiername
+  "name"      → Wertpapiername / Bezeichnung / Titel / Aktie / Security / Asset / Instrument / Wertpapier
+  "buy_date"  → Kaufdatum / Datum / Date / Transaktionsdatum / Trade Date (ISO-Format YYYY-MM-DD,
+               aus DD.MM.YYYY oder MM/DD/YYYY umrechnen)
 
 ZAHLENFORMAT:
 - Konvertiere ALLE deutschen Kommas zu Punkten: "13,612357" → 13.612357, "1.200,50" → 1200.50
 - Gib Zahlen IMMER als JSON-Number aus, NIEMALS als String
+- Währungssymbole (€, $, %) und Tausendertrennzeichen entfernen
 
-SPALTEN-ERKENNUNG (Scalable Capital / Finanzen.net Depotauszug):
-- "Stück/Nominal", "Stück", "Anzahl"   → shares
-- "Einstandskurs inkl. NK", "Einstand", "Einstandskurs", "Kurs (Kauf)" → buy_price
-- "ISIN"                                → isin
-- "Bezeichnung", "Name", "Wertpapier"  → name
+SPALTEN-ERKENNUNG – TYPISCHE FORMATE:
+Broker-Exporte (Scalable Capital / Trade Republic / Finanzen.net / Comdirect):
+  "Stück/Nominal", "Stück", "Anzahl"                        → shares
+  "Einstandskurs inkl. NK", "Einstand", "Einstandskurs"     → buy_price
+  "ISIN"                                                     → isin
+  "Bezeichnung", "Name", "Wertpapier", "Titel"              → name
+
+Eigene Tabellen / sonstige Formate:
+  "Aktie", "Ticker", "Symbol", "Kürzel", "WKN"              → symbol (→ Yahoo Finance)
+  "Stückzahl", "Stück", "Anzahl", "Menge", "Bestand", "Qty" → shares
+  "Kaufpreis", "Kurs", "Preis", "Ø Preis", "Avg", "∅"       → buy_price
+  "Kaufdatum", "Datum", "Date", "gekauft am"                 → buy_date
+  "Gesamtwert", "Marktwert", "Wert", "Total", "Betrag"       → Gesamtbetrag (buy_price = ÷ shares)
 
 Ausgabe-Format:
-[{"name":"iShares MSCI World","symbol":"IWDA.AS","isin":"IE00B4L5Y983","shares":13.612357,"buy_price":89.34}]
+[{"name":"iShares MSCI World","symbol":"IWDA.AS","isin":"IE00B4L5Y983","shares":13.612357,"buy_price":89.34,"buy_date":"2023-04-15"}]
 
 Regeln:
-- symbol: Yahoo Finance Format ("BEI.DE", "AAPL", "IWDA.AS"). Leer ("") wenn nicht erkennbar.
-- buy_price: Einstandskurs PRO STÜCK. 0 wenn nicht erkennbar.
+- symbol: Yahoo Finance Format ("BEI.DE", "AAPL", "IWDA.AS"). Leer ("") wenn nur ISIN bekannt.
+- buy_price: Einstandskurs PRO STÜCK (nicht Gesamtwert!). 0 wenn nicht erkennbar.
+- buy_date: ISO YYYY-MM-DD oder leer wenn nicht vorhanden.
 - Nur echte Bestands-Positionen – keine Verkäufe, Dividenden, Gebühren, Summenzeilen.
 - Falls keine Positionen erkennbar: []
 
@@ -111,18 +128,18 @@ Antworte NUR mit dem JSON-Array – kein anderer Text!`;
       });
     }
 
-    let positions: Array<{ symbol: string; isin: string; shares: number; price: number | null; name?: string }> = [];
+    let positions: Array<{ symbol: string; isin: string; shares: number; price: number | null; name?: string; buy_date?: string }> = [];
     try {
       const parsed = JSON.parse(stripJsonFences(response.text ?? '[]'));
       positions = Array.isArray(parsed)
         ? parsed
             .map((p: any) => ({
-              symbol: String(p.symbol ?? '').trim(),
-              isin:   String(p.isin   ?? '').trim(),
-              // Accept new canonical keys (shares/buy_price) AND old fallback keys
-              shares: toFloat(p.shares    ?? p.quantity),
-              price:  toFloat(p.buy_price ?? p.averagePrice ?? p.price) || null,
-              name:   p.name ? String(p.name).trim() : undefined,
+              symbol:   String(p.symbol ?? '').trim(),
+              isin:     String(p.isin   ?? '').trim(),
+              shares:   toFloat(p.shares    ?? p.quantity),
+              price:    toFloat(p.buy_price ?? p.averagePrice ?? p.price) || null,
+              name:     p.name     ? String(p.name).trim()     : undefined,
+              buy_date: p.buy_date ? String(p.buy_date).trim() : undefined,
             }))
             .filter((p: any) => p.symbol || p.isin)
         : [];

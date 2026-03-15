@@ -451,51 +451,110 @@ const App: React.FC = () => {
                   </p>
                 </div>
 
-                <div className="divide-y divide-slate-50 overflow-x-auto">
-                  {holdings.slice(0, 6).map((h) => (
-                    <div key={h.id} className="flex items-center gap-4 px-4 sm:px-6 py-3 hover:bg-slate-50/50 transition-colors min-w-0">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-sm font-bold text-slate-900 truncate">
-                            {h.ticker?.company_name ?? h.symbol}
-                          </span>
-                          <span className="text-[10px] text-slate-400 font-mono">{h.symbol}</span>
-                          {h.watchlist && (
-                            <span className="text-[9px] font-black text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded-full uppercase tracking-widest">
-                              Watchlist
-                            </span>
-                          )}
-                          {h.ticker?.sector && (
-                            <span className="text-[9px] text-slate-400 font-medium">{h.ticker.sector}</span>
-                          )}
+                <div className="divide-y divide-slate-50">
+                  {holdings.slice(0, 6).map((h) => {
+                    // Aktuellen Kurs aus dem Analyse-Report auslesen (kein extra API-Aufruf)
+                    const reportEntry = analysisReport?.holdings?.find(
+                      (rh) => rh.ticker === h.symbol || rh.ticker === h.ticker?.symbol
+                    );
+                    const rawPrice = reportEntry?.currentPrice ?? '';
+                    const currentPrice = (() => {
+                      const cleaned = String(rawPrice).replace(/[€$£\s]/g, '').replace(/[A-Za-z]/g, '').trim();
+                      const n = parseFloat(cleaned.replace(',', '.'));
+                      return isFinite(n) && n > 0 ? n : null;
+                    })();
+                    const perfPct = (currentPrice && h.buy_price && h.buy_price > 0)
+                      ? ((currentPrice - h.buy_price) / h.buy_price) * 100
+                      : null;
+                    const fmt = (n: number, d = 2) =>
+                      n.toLocaleString('de-DE', { minimumFractionDigits: d, maximumFractionDigits: d });
+
+                    return (
+                      <div key={h.id} className="px-4 sm:px-6 py-3.5 hover:bg-slate-50/50 transition-colors">
+                        <div className="flex items-start gap-2">
+                          {/* Linke Seite: Name + Metazeile */}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-sm font-bold text-slate-900 truncate">
+                                {h.ticker?.company_name ?? h.symbol}
+                              </span>
+                              {h.watchlist && (
+                                <span className="text-[9px] font-black text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded-full uppercase tracking-widest shrink-0">
+                                  Watchlist
+                                </span>
+                              )}
+                            </div>
+                            {/* Metazeile: Symbol · Sektor · Stückzahl · Kaufpreis */}
+                            <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                              <span className="text-[10px] text-slate-400 font-mono">{h.symbol}</span>
+                              {h.ticker?.sector && (
+                                <>
+                                  <span className="text-[10px] text-slate-300">·</span>
+                                  <span className="text-[9px] text-slate-400 font-medium">{h.ticker.sector}</span>
+                                </>
+                              )}
+                              {!h.watchlist && h.shares != null && (
+                                <>
+                                  <span className="text-[10px] text-slate-300">·</span>
+                                  <span className="text-[10px] text-slate-600 font-semibold">{h.shares} Stk.</span>
+                                </>
+                              )}
+                              {!h.watchlist && h.buy_price != null && (
+                                <>
+                                  <span className="text-[10px] text-slate-300">·</span>
+                                  <span className="text-[10px] text-slate-500 font-medium">∅ {fmt(h.buy_price)} €</span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Rechte Seite: aktueller Kurs + Entwicklung + Buttons */}
+                          <div className="flex items-center gap-2 shrink-0">
+                            {currentPrice != null ? (
+                              <div className="text-right">
+                                <div className="text-sm font-bold text-slate-800 tabular-nums">
+                                  {fmt(currentPrice)} €
+                                </div>
+                                {perfPct != null && (
+                                  <div className={`text-[10px] font-black tabular-nums ${perfPct >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                    {perfPct >= 0 ? '+' : ''}{fmt(perfPct, 1)} %
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              /* Kein aktueller Kurs → nur Gesamteinstand zeigen */
+                              !h.watchlist && h.shares != null && h.buy_price != null && (
+                                <span className="text-[11px] font-bold text-slate-500 tabular-nums">
+                                  {fmt(h.shares * h.buy_price)} €
+                                </span>
+                              )
+                            )}
+                            <div className="flex items-center gap-0.5">
+                              <button
+                                onClick={() => setShowDepotDrawer(true)}
+                                className="p-1.5 rounded-lg text-slate-300 hover:text-blue-500 hover:bg-blue-50 transition-colors"
+                                title="Im Drawer bearbeiten"
+                              >
+                                <ChevronRight className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  if (!window.confirm(`„${h.symbol}" wirklich aus dem Depot entfernen?`)) return;
+                                  await deleteHolding(h.id, userAccount?.id ?? '');
+                                  await fetchHoldings();
+                                }}
+                                className="p-1.5 rounded-lg text-slate-300 hover:text-rose-500 hover:bg-rose-50 transition-colors"
+                                title="Löschen"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
                         </div>
                       </div>
-                      {!h.watchlist && h.shares != null && (
-                        <span className="text-sm font-bold text-slate-500 shrink-0">{h.shares} Stk.</span>
-                      )}
-                      <div className="flex items-center gap-1 shrink-0">
-                        <button
-                          onClick={() => setShowDepotDrawer(true)}
-                          className="p-1.5 rounded-lg text-slate-300 hover:text-blue-500 hover:bg-blue-50 transition-colors"
-                          title="Im Drawer bearbeiten"
-                        >
-                          <ChevronRight className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={async (e) => {
-                            e.stopPropagation();
-                            if (!window.confirm(`„${h.symbol}" wirklich aus dem Depot entfernen?`)) return;
-                            await deleteHolding(h.id, userAccount?.id ?? '');
-                            await fetchHoldings();
-                          }}
-                          className="p-1.5 rounded-lg text-slate-300 hover:text-rose-500 hover:bg-rose-50 transition-colors"
-                          title="Löschen"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                   {holdings.length > 6 && (
                     <div className="px-6 py-3 text-center">
                       <button
