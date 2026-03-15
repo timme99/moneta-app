@@ -32,6 +32,65 @@ interface PortfolioInputProps {
   onRefresh?: () => Promise<void>;
 }
 
+// ── Excel-Engine: Synonyme ────────────────────────────────────────────────────
+const EXCEL_SYNONYMS = {
+  symbol: [
+    'ticker', 'symbol', 'isin', 'wkn', 'wertpapier', 'kürzel', 'aktie',
+    'bezeichnung', 'name', 'security', 'asset', 'instrument', 'valor',
+  ],
+  shares: [
+    'stückzahl', 'stück', 'stck', 'anzahl', 'menge', 'bestand',
+    'qty', 'quantity', 'shares', 'units', 'number of shares', 'nominal',
+  ],
+  price: [
+    'kurs', 'preis', 'kaufpreis', 'kaufkurs', 'einstandskurs', 'einstandspreis',
+    'price', 'buy price', 'purchase price', 'avg price', 'average price',
+    'kurs in eur', 'preis in eur',
+  ],
+  total: [
+    'gesamtwert', 'gesamtbetrag', 'wert', 'marktwert',
+    'total', 'total value', 'market value', 'betrag', 'position value',
+  ],
+} as const;
+
+function normalizeCell(v: any): string {
+  return String(v ?? '').toLowerCase().trim().replace(/[^a-zäöüß0-9\s]/g, '').trim();
+}
+
+function scoreHeaderRow(row: any[]): number {
+  const cells = row.map(normalizeCell);
+  return Object.values(EXCEL_SYNONYMS).filter((syns) =>
+    cells.some((c) => syns.some((s) => c === s || c.includes(s) || s.includes(c)))
+  ).length;
+}
+
+function fuzzyFindCol(headers: string[], syns: readonly string[]): number | undefined {
+  let bestIdx: number | undefined;
+  let bestScore = 0;
+  headers.forEach((h, i) => {
+    for (const s of syns) {
+      const score = h === s ? 3 : h.includes(s) ? 2 : s.includes(h) && h.length > 2 ? 1 : 0;
+      if (score > bestScore) { bestScore = score; bestIdx = i; }
+    }
+  });
+  return bestScore > 0 ? bestIdx : undefined;
+}
+
+/** Parst europäische Zahlen: '1.200,50' → 1200.50, '1,200.50' → 1200.50 */
+function parseEuNumber(val: any): number {
+  if (typeof val === 'number' && isFinite(val)) return val;
+  const s = String(val ?? '').trim().replace(/\s/g, '');
+  if (!s) return 0;
+  // Europäisches Format: Punkt = Tausendertrennzeichen, Komma = Dezimal
+  if (/^-?[\d.]+,\d{1,4}$/.test(s)) return parseFloat(s.replace(/\./g, '').replace(',', '.')) || 0;
+  // US-Format: Komma = Tausender, Punkt = Dezimal
+  if (/^-?[\d,]+\.\d{1,4}$/.test(s)) return parseFloat(s.replace(/,/g, '')) || 0;
+  // Fallback
+  return parseFloat(s.replace(',', '.').replace(/[^0-9.-]/g, '')) || 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, isLoading, userAccount, onSendToAssistant, onRefresh }) => {
   const sb = getSupabaseBrowser();
 
@@ -59,6 +118,12 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Command Dock Focus-State
+  const [isFocused, setIsFocused] = useState(false);
+
+  // Excel-Import: Anreicherungs-Modus
+  const [enrichMode, setEnrichMode] = useState(false);
 
   // Bulk-Import (Screenshot / Excel)
   const [importState, setImportState] = useState<{ loading: boolean; message: string; error: string }>({
@@ -609,13 +674,58 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
         clearTimeout(timeoutId);
       }
       if (!resp.ok) throw new Error('Bild-Analyse fehlgeschlagen');
-      const { tickers } = await resp.json();
-      if (!tickers || tickers.length === 0) {
+      const { positions } = await resp.json();
+
+      if (!positions || positions.length === 0) {
         setImportState({ loading: false, message: '', error: 'Keine Aktien erkannt. Bitte stelle sicher, dass der Screenshot gut lesbar ist und Aktien-/ETF-Positionen enthält.' });
         return;
       }
-      const count = await bulkAddTickers(tickers);
-      setImportState({ loading: false, message: `${count} Ticker aus Screenshot importiert.`, error: '' });
+
+      // Positionen mit Stückzahl + Kurs → direkt als vollständige Depot-Positionen
+      const fullPositions: BrokerPosition[] = positions
+        .filter((p: any) => safeFloat(p.shares) > 0 && safeFloat(p.price) > 0)
+        .map((p: any) => ({
+          rawSymbol: (p.symbol || p.isin || '').trim(),
+          name:      p.name,
+          shares:    safeFloat(p.shares),
+          avgPrice:  safeFloat(p.price),
+        }))
+        .filter((bp: BrokerPosition) => bp.rawSymbol);
+
+      // Positionen ohne Finanzdaten → Watchlist
+      const watchlistSymbols: string[] = positions
+        .filter((p: any) => !(safeFloat(p.shares) > 0 && safeFloat(p.price) > 0))
+        .map((p: any) => (p.symbol || p.isin || p.name || '').trim())
+        .filter(Boolean);
+
+      let effectiveUserId = userId;
+      if (sb) {
+        const { data: sessionData } = await sb.auth.getSession();
+        effectiveUserId = sessionData?.session?.user?.id ?? userId;
+      }
+      if (!effectiveUserId) throw new Error('Nicht eingeloggt – bitte zuerst anmelden.');
+
+      const parts: string[] = [];
+
+      if (fullPositions.length > 0) {
+        const { count, skipped, error } = await addBrokerHoldings(fullPositions, effectiveUserId);
+        if (error) throw new Error(error);
+        parts.push(`${count} Position${count !== 1 ? 'en' : ''} mit Einstandskurs importiert${skipped > 0 ? ` (${skipped} übersprungen)` : ''}`);
+      }
+
+      if (watchlistSymbols.length > 0) {
+        const count = await bulkAddTickers(watchlistSymbols);
+        parts.push(`${count} Ticker als Watchlist hinzugefügt`);
+      } else {
+        await onRefresh?.();
+      }
+
+      if (effectiveUserId !== userId) setUserId(effectiveUserId);
+      setImportState({
+        loading: false,
+        message: parts.length > 0 ? parts.join(' · ') + '.' : 'Import abgeschlossen.',
+        error: '',
+      });
     } catch (e: any) {
       setImportState({ loading: false, message: '', error: e?.message ?? 'Fehler beim Bild-Import.' });
     }
@@ -693,66 +803,71 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
     }
   };
 
-  // ── Excel / CSV-Import ───────────────────────────────────────────────────
+  // ── Excel / CSV-Import (Resilient Engine) ────────────────────────────────
   const handleExcelImport = async (file: File) => {
     setImportState({ loading: true, message: '', error: '' });
     try {
       const XLSX = await import('xlsx');
       let wb: ReturnType<typeof XLSX.read>;
+
       if (file.name.toLowerCase().endsWith('.csv')) {
-        // Detect delimiter from first line (German exports often use semicolons)
         const text = await file.text();
         const firstLine = text.split('\n')[0] ?? '';
-        const commas = (firstLine.match(/,/g) ?? []).length;
-        const semis  = (firstLine.match(/;/g) ?? []).length;
-        const delim  = semis > commas ? ';' : ',';
+        const delim = (firstLine.match(/;/g) ?? []).length > (firstLine.match(/,/g) ?? []).length ? ';' : ',';
         wb = XLSX.read(text, { type: 'string', FS: delim });
       } else {
-        const buffer = await file.arrayBuffer();
-        wb = XLSX.read(buffer, { type: 'array' });
+        wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
       }
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const rows: any[] = XLSX.utils.sheet_to_json(ws, { defval: '' });
 
-      if (rows.length === 0) {
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      // Raw array-of-arrays – no header assumption
+      const allRows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+
+      if (allRows.length === 0) {
         setImportState({ loading: false, message: '', error: 'Keine Daten in der Datei gefunden.' });
         return;
       }
 
-      // Dynamic column mapping – find best matching header for symbol, shares, price
-      const headers = Object.keys(rows[0]);
-      const findCol = (...candidates: string[]) =>
-        headers.find((h) => candidates.includes(h.trim().toLowerCase()));
+      // ── Smart Header Discovery: scan first 30 rows ────────────────────
+      const SCAN_LIMIT = Math.min(30, allRows.length);
+      let headerIdx = 0, bestScore = 0;
+      for (let i = 0; i < SCAN_LIMIT; i++) {
+        const s = scoreHeaderRow(allRows[i]);
+        if (s > bestScore) { bestScore = s; headerIdx = i; }
+      }
 
-      const symbolCol = findCol(
-        'ticker', 'symbol', 'isin', 'wkn', 'symbol/ticker',
-        'kürzel', 'wertpapier', 'name',
-      );
-      const sharesCol = findCol(
-        'stückzahl', 'stck', 'anzahl', 'shares', 'qty', 'menge', 'stück',
-      );
-      const priceCol = findCol(
-        'kurs', 'preis', 'price', 'kaufkurs', 'kauf', 'buy price',
-        'kurs (€)', 'preis (€)', 'kurs in eur', 'preis in eur',
-      );
+      const headers = allRows[headerIdx].map(normalizeCell);
+      const dataRows = allRows
+        .slice(headerIdx + 1)
+        .filter((r) => r.some((c) => String(c).trim() !== ''));
 
-      if (!symbolCol) {
-        const found = headers.join(', ') || 'keine Spalten erkannt';
+      if (dataRows.length === 0) {
+        setImportState({ loading: false, message: '', error: 'Keine Datenzeilen nach Header-Erkennung gefunden.' });
+        return;
+      }
+
+      // ── Fuzzy Column Mapping ──────────────────────────────────────────
+      const symbolColIdx = fuzzyFindCol(headers, EXCEL_SYNONYMS.symbol);
+      const sharesColIdx = fuzzyFindCol(headers, EXCEL_SYNONYMS.shares);
+      const priceColIdx  = fuzzyFindCol(headers, EXCEL_SYNONYMS.price);
+
+      if (symbolColIdx === undefined) {
+        const found = headers.filter(Boolean).join(', ') || 'keine Spalten erkannt';
         setImportState({
           loading: false, message: '',
-          error: `Keine Ticker-Spalte gefunden. Erkannte Spalten: ${found}. Bitte benenne eine Spalte "Ticker", "Symbol" oder "ISIN".`,
+          error: `Keine Ticker-Spalte gefunden (Header in Zeile ${headerIdx + 1} erkannt). Gefundene Spalten: ${found}`,
         });
         return;
       }
 
-      // If we have shares + price columns, treat as full broker positions
-      if (sharesCol && priceCol) {
-        const positions: BrokerPosition[] = rows
-          .map((r: any) => {
-            const sym = String(r[symbolCol] ?? '').trim().replace(/\s/g, '');
-            const sh  = parseFloat(String(r[sharesCol] ?? '').replace(',', '.').replace(/[^0-9.]/g, ''));
-            const pr  = parseFloat(String(r[priceCol]  ?? '').replace(',', '.').replace(/[^0-9.]/g, ''));
-            if (!sym || isNaN(sh) || sh <= 0 || isNaN(pr) || pr <= 0) return null;
+      // ── Broker-Positionen (Stückzahl + Kurs vorhanden) ────────────────
+      if (sharesColIdx !== undefined && priceColIdx !== undefined) {
+        const positions: BrokerPosition[] = dataRows
+          .map((r) => {
+            const sym = String(r[symbolColIdx] ?? '').trim().replace(/\s/g, '');
+            const sh  = parseEuNumber(r[sharesColIdx]);
+            const pr  = parseEuNumber(r[priceColIdx]);
+            if (!sym || sh <= 0 || pr <= 0) return null;
             return { rawSymbol: sym, shares: sh, avgPrice: pr } as BrokerPosition;
           })
           .filter((p): p is BrokerPosition => p !== null);
@@ -769,26 +884,28 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
         }
         if (!effectiveUserId) throw new Error('Nicht eingeloggt – bitte zuerst anmelden.');
 
-        const { count, skipped, error } = await addBrokerHoldings(positions, effectiveUserId);
+        const { count, skipped, error } = await addBrokerHoldings(positions, effectiveUserId, enrichMode);
         if (error) throw new Error(error);
 
         if (effectiveUserId !== userId) setUserId(effectiveUserId);
         await onRefresh?.();
         setImportState({
           loading: false,
-          message: `${count} Position${count !== 1 ? 'en' : ''} importiert${skipped > 0 ? ` (${skipped} übersprungen)` : ''}.`,
+          message: enrichMode
+            ? `${count} Position${count !== 1 ? 'en' : ''} angereichert${skipped > 0 ? ` · ${skipped} bereits vollständig (übersprungen)` : ''}.`
+            : `${count} Position${count !== 1 ? 'en' : ''} importiert${skipped > 0 ? ` (${skipped} übersprungen)` : ''}.`,
           error: '',
         });
         return;
       }
 
-      // Ticker-only import (watchlist)
-      const values = rows
-        .map((r: any) => String(r[symbolCol] ?? '').trim())
+      // ── Ticker-only (Watchlist) ───────────────────────────────────────
+      const values = dataRows
+        .map((r) => String(r[symbolColIdx] ?? '').trim())
         .filter((v) => v.length >= 1);
 
       if (values.length === 0) {
-        setImportState({ loading: false, message: '', error: 'Keine Aktien erkannt. Bitte stelle sicher, dass die Datei Ticker- oder ISIN-Symbole enthält.' });
+        setImportState({ loading: false, message: '', error: 'Keine Ticker-Symbole in der Datei gefunden.' });
         return;
       }
 
@@ -820,16 +937,22 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
   return (
     <div className="max-w-3xl mx-auto space-y-5">
 
-      {/* ── Suchfeld ────────────────────────────────────────────────────── */}
+      {/* ── Command Dock (sticky) ────────────────────────────────────────── */}
+      <div className="sticky top-0 z-20 -mx-0 pt-3 pb-2 bg-white/95 backdrop-blur-md">
       <div className="relative" ref={dropRef}>
-        <div className="bg-white border border-slate-200 rounded-[24px] p-4 shadow-sm">
+        <div className={`bg-white border rounded-[24px] p-4 shadow-sm transition-all duration-300 ${
+          isFocused
+            ? 'border-blue-300 shadow-blue-500/15 shadow-xl ring-2 ring-blue-500/20'
+            : 'border-slate-200 hover:border-slate-300 hover:shadow-md'
+        }`}>
           <div className="flex items-center gap-3">
-            <Search className="w-5 h-5 text-slate-400 shrink-0" />
+            <Search className={`w-5 h-5 shrink-0 transition-colors duration-200 ${isFocused ? 'text-blue-500' : 'text-slate-400'}`} />
             <input
               type="text"
               value={query}
               onChange={handleQueryChange}
-              onFocus={() => suggestions.length > 0 && setShowDrop(true)}
+              onFocus={() => { setIsFocused(true); suggestions.length > 0 && setShowDrop(true); }}
+              onBlur={() => setIsFocused(false)}
               placeholder="Aktie oder ETF suchen (z. B. SAP, Apple, MSCI World…)"
               className="flex-1 bg-transparent border-none focus:ring-0 text-sm font-medium text-slate-900 placeholder:text-slate-400"
             />
@@ -1031,6 +1154,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
           </div>
         )}
       </div>
+      </div>{/* end sticky Command Dock */}
 
       {/* ── Schnell-Import (Screenshot / PDF / Excel / Broker) ──────────── */}
       <div className="bg-slate-50 border border-slate-200 rounded-[24px] p-4 space-y-3">
@@ -1057,6 +1181,32 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
             Excel / CSV
           </button>
         </div>
+
+        {/* Enrich-Mode Toggle */}
+        <button
+          type="button"
+          onClick={() => setEnrichMode((v) => !v)}
+          className={`w-full flex items-center justify-between px-4 py-2.5 rounded-[14px] border transition-colors text-[10px] font-bold ${
+            enrichMode
+              ? 'bg-emerald-50 border-emerald-300 text-emerald-700'
+              : 'bg-slate-50 border-slate-200 text-slate-500 hover:border-slate-300'
+          }`}
+        >
+          <span className="flex items-center gap-2">
+            <Zap className={`w-3.5 h-3.5 ${enrichMode ? 'text-emerald-500' : 'text-slate-400'}`} />
+            Nur fehlende Daten ergänzen
+          </span>
+          <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${
+            enrichMode ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-400'
+          }`}>
+            {enrichMode ? 'AN' : 'AUS'}
+          </span>
+        </button>
+        {enrichMode && (
+          <p className="text-[9px] text-emerald-600 font-medium px-1">
+            Aktien, die bereits Stückzahl + Kurs haben, werden übersprungen. Nur Watchlist-Einträge und unvollständige Positionen werden angereichert.
+          </p>
+        )}
 
         {/* Row 2: PDF Broker statement */}
         <button

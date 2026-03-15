@@ -60,23 +60,6 @@ export default async function handler(req: any, res: any) {
     const isPdf = mimeType === 'application/pdf';
     const isCsv = mimeType === 'text/csv';
 
-    const imagePrompt = `Du bist ein Börsen-Experte für Ticker-Symbole. Deine einzige Aufgabe: Extrahiere alle Aktien, ETFs und Fonds aus diesem Bild und gib AUSSCHLIESSLICH die offiziellen Börsenkürzel zurück.
-
-KRITISCH: NIEMALS Firmennamen oder Wörter zurückgeben – nur Börsensymbole!
-Übersetze Namen ZWINGEND in Kürzel:
-  "Allianz" → "ALV.DE"
-  "Mercedes", "Daimler" → "MBG.DE"
-  "Volkswagen", "VW" → "VOW3.DE"
-  "Apple" → "AAPL"
-  "Microsoft" → "MSFT"
-  "MSCI World" → "EUNL"
-  "Vanguard All-World" → "VWRL"
-  "S&P 500 ETF" → "SXR8"
-
-Antworte NUR mit einem JSON-Array der Börsenkürzel – kein anderer Text:
-["AAPL","ALV.DE","EUNL"]
-
-Falls nichts Erkennbares im Bild: []`;
 
     const brokerPrompt = `Extrahiere Investment-Daten aus diesem Dokument (Bild/PDF/CSV). WICHTIG:
 1. Erkenne Bruchstücke (z.B. 0.784621 oder "13,612357"). Konvertiere ALLE deutschen Kommas zu Punkten (13,612357 → 13.612357). Gib Zahlen IMMER als JSON-Number aus, niemals als String.
@@ -100,78 +83,41 @@ Antworte NUR mit dem JSON-Array!`;
     let response: any;
 
     if (isCsv) {
-      // CSV: imageBase64 enthält den rohen Text – kein inlineData nötig
-      const csvText = imageBase64;
       response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              { text: `${brokerPrompt}\n\nCSV-Inhalt:\n${csvText}` },
-            ],
-          },
-        ],
-        config: {
-          temperature: 0.1,
-          maxOutputTokens: 2048,
-        },
+        contents: [{ role: 'user', parts: [{ text: `${brokerPrompt}\n\nCSV-Inhalt:\n${imageBase64}` }] }],
+        config: { temperature: 0.1, maxOutputTokens: 2048 },
       });
     } else {
       response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              { text: isPdf ? brokerPrompt : imagePrompt },
-              { inlineData: { mimeType: mimeType as string, data: imageBase64 } },
-            ],
-          },
-        ],
-        config: {
-          temperature: 0.1,
-          maxOutputTokens: isPdf ? 2048 : 512,
-        },
+        contents: [{ role: 'user', parts: [
+          { text: brokerPrompt },
+          { inlineData: { mimeType: mimeType as string, data: imageBase64 } },
+        ]}],
+        config: { temperature: 0.1, maxOutputTokens: 2048 },
       });
     }
 
-    if (isPdf || isCsv) {
-      // Parse broker positions from PDF or CSV
-      let positions: Array<{ symbol: string; isin: string; shares: number; price: number | null; name?: string }> = [];
-      try {
-        const parsed = JSON.parse(stripJsonFences(response.text ?? '[]'));
-        positions = Array.isArray(parsed)
-          ? parsed
-              .map((p: any) => ({
-                symbol:   String(p.symbol   ?? '').trim(),
-                isin:     String(p.isin     ?? '').trim(),
-                // Accept both old field names (shares/price) and new (quantity/averagePrice).
-                // toFloat() handles German comma decimals that Number() would turn into NaN.
-                shares:   toFloat(p.quantity ?? p.shares),
-                price:    toFloat(p.averagePrice ?? p.price) || null,
-                name:     p.name ? String(p.name).trim() : undefined,
-              }))
-              .filter((p: any) => (p.symbol || p.isin) && p.shares > 0)
-          : [];
-      } catch {
-        positions = [];
-      }
-      console.log('[extract-from-image] KI Ergebnis:', JSON.stringify(positions));
-      return res.status(200).json({ positions });
-    }
-
-    let tickers: string[] = [];
+    let positions: Array<{ symbol: string; isin: string; shares: number; price: number | null; name?: string }> = [];
     try {
       const parsed = JSON.parse(stripJsonFences(response.text ?? '[]'));
-      tickers = Array.isArray(parsed)
-        ? parsed.filter((t: any) => typeof t === 'string' && t.trim().length > 0)
+      positions = Array.isArray(parsed)
+        ? parsed
+            .map((p: any) => ({
+              symbol: String(p.symbol ?? '').trim(),
+              isin:   String(p.isin   ?? '').trim(),
+              shares: toFloat(p.quantity ?? p.shares),
+              price:  toFloat(p.averagePrice ?? p.price) || null,
+              name:   p.name ? String(p.name).trim() : undefined,
+            }))
+            .filter((p: any) => p.symbol || p.isin)
         : [];
     } catch {
-      tickers = [];
+      positions = [];
     }
-
-    return res.status(200).json({ tickers });
+    console.log('[extract-from-image] KI Ergebnis:', JSON.stringify(positions));
+    return res.status(200).json({ positions });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[extract-from-image]', msg);

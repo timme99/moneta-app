@@ -805,8 +805,8 @@ const App: React.FC = () => {
             onClick={() => setShowDepotDrawer(false)}
           />
           {/* Drawer Panel */}
-          <div className="fixed top-0 right-0 h-full w-full max-w-xl bg-white z-50 overflow-y-auto shadow-2xl border-l border-slate-200 flex flex-col">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 sticky top-0 bg-white z-10 shrink-0">
+          <div className="fixed top-0 right-0 h-full w-full max-w-xl bg-white z-50 overflow-hidden shadow-2xl border-l border-slate-200 flex flex-col">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 shrink-0 bg-white">
               <div>
                 <h2 className="text-sm font-black text-slate-900 uppercase tracking-widest">Depot verwalten</h2>
                 <p className="text-[9px] text-slate-400 font-medium mt-0.5">Aktien & ETFs hinzufügen · Watchlist pflegen · KI-Analyse starten</p>
@@ -819,28 +819,30 @@ const App: React.FC = () => {
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div className="p-4 flex-1 overflow-y-auto">
-              <div className="flex items-center gap-2 bg-amber-50 border border-amber-100 rounded-2xl px-5 py-3 mb-4">
+            <div className="flex-1 overflow-y-auto">
+              <div className="flex items-center gap-2 bg-amber-50 border border-amber-100 rounded-2xl px-5 py-3 mx-4 mt-4 mb-0">
                 <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
                 <p className="text-[10px] text-amber-700 font-bold">
                   Keine Anlageberatung. KI-generierte Informationen dienen ausschließlich Bildungszwecken.
                 </p>
               </div>
-              <PortfolioInput
-                holdings={holdings}
-                onAnalyze={(text) => {
-                  setShowDepotDrawer(false);
-                  handlePortfolioAnalysis(text);
-                }}
-                isLoading={isGlobalLoading}
-                userAccount={userAccount}
-                onRefresh={fetchHoldings}
-                onSendToAssistant={(text) => {
-                  setShowDepotDrawer(false);
-                  setAssistantSeed(text);
-                  setActiveView('assistant');
-                }}
-              />
+              <div className="px-4 pb-4">
+                <PortfolioInput
+                  holdings={holdings}
+                  onAnalyze={(text) => {
+                    setShowDepotDrawer(false);
+                    handlePortfolioAnalysis(text);
+                  }}
+                  isLoading={isGlobalLoading}
+                  userAccount={userAccount}
+                  onRefresh={fetchHoldings}
+                  onSendToAssistant={(text) => {
+                    setShowDepotDrawer(false);
+                    setAssistantSeed(text);
+                    setActiveView('assistant');
+                  }}
+                />
+              </div>
             </div>
           </div>
         </>

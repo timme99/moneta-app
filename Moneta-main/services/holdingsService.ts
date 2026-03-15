@@ -308,10 +308,15 @@ export interface AddBrokerResult {
  * Ablauf:
  *  1. ISINs → Ticker auflösen (via Gemini, falls Symbol kein gültiger Ticker)
  *  2. Jede Position via addHolding speichern
+ *
+ * enrichOnly=true: überspringt Einträge, die bereits shares UND buy_price haben.
+ *   Nützlich um Watchlist-Einträge nachträglich mit Kursdaten anzureichern,
+ *   ohne bestehende vollständige Positionen zu überschreiben.
  */
 export async function addBrokerHoldings(
   positions: BrokerPosition[],
-  userId: string
+  userId: string,
+  enrichOnly = false,
 ): Promise<AddBrokerResult> {
   if (!positions.length) return { count: 0, skipped: 0 };
 
@@ -371,6 +376,20 @@ export async function addBrokerHoldings(
     } else {
       skipped++;
       continue;
+    }
+
+    // enrichOnly: bestehende vollständige Positionen nicht überschreiben
+    if (enrichOnly) {
+      const { data: existing } = await sb
+        .from('holdings')
+        .select('shares, buy_price')
+        .eq('user_id', userId)
+        .eq('symbol', symbol)
+        .maybeSingle();
+      if (existing && existing.shares != null && existing.buy_price != null) {
+        skipped++;
+        continue;
+      }
     }
 
     const result = await addHolding({
