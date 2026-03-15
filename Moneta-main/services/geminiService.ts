@@ -1,9 +1,37 @@
 
-/** Entfernt Markdown-Code-Fences aus der Gemini-Antwort, falls vorhanden. */
-function stripJsonFences(text: string): string {
-  const m = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-  return m ? m[1].trim() : text.trim();
+/**
+ * Extrahiert den JSON-Block aus einer Gemini-Antwort – robust gegen
+ * konversationellen Text, Markdown-Fences und führende/trailing Sätze.
+ *
+ * Strategie:
+ *  1. Markdown-Code-Fence (```json … ```) → nimmt Inhalt der ersten Fence
+ *  2. Sucht den ersten '{' oder '[' und schneidet bis zum zugehörigen
+ *     letzten '}' bzw. ']' → entfernt vorangehenden / nachfolgenden Text
+ *  3. Fallback: getrimmter Originaltext
+ */
+function extractJson(text: string): string {
+  // 1. Markdown code-fence
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  if (fenced) return fenced[1].trim();
+
+  // 2. Outermost JSON object or array
+  const firstBrace   = text.indexOf('{');
+  const firstBracket = text.indexOf('[');
+  const hasObj = firstBrace   !== -1;
+  const hasArr = firstBracket !== -1;
+
+  if (!hasObj && !hasArr) return text.trim();
+
+  const useObj = hasObj && (!hasArr || firstBrace < firstBracket);
+  const [open, close] = useObj ? ['{', '}'] : ['[', ']'];
+  const start = useObj ? firstBrace : firstBracket;
+  const end   = text.lastIndexOf(close);
+
+  if (end > start) return text.slice(start, end + 1).trim();
+  return text.trim();
 }
+/** @deprecated use extractJson */
+const stripJsonFences = extractJson;
 
 const wait = (ms: number) => new Promise(res => setTimeout(res, ms));
 
@@ -268,9 +296,8 @@ export const analyzeScenario = async (
     contents: [{ parts: [{ text: SCENARIO_ANALYSIS_PROMPT(scenario, scenarioDesc, holdings) }] }],
     config: { temperature: 0.3, maxOutputTokens: 1500 }
   });
-  const raw = stripJsonFences(result.text);
   try {
-    return JSON.parse(raw);
+    return JSON.parse(extractJson(result.text));
   } catch {
     throw new Error('PARSE_ERROR:Gemini hat kein gültiges JSON zurückgegeben. Bitte erneut versuchen.');
   }
@@ -316,7 +343,11 @@ export const analyzeScenarioFallback = async (
     contents: [{ parts: [{ text: SCENARIO_FALLBACK_PROMPT(scenario, scenarioDesc, holdings) }] }],
     config: { temperature: 0.4, maxOutputTokens: 1200 }
   });
-  return JSON.parse(stripJsonFences(result.text));
+  try {
+    return JSON.parse(extractJson(result.text));
+  } catch {
+    throw new Error('PARSE_ERROR:Gemini hat kein gültiges JSON zurückgegeben. Bitte erneut versuchen.');
+  }
 };
 
 // ── Dividends Fallback ───────────────────────────────────────────────────────
