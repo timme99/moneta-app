@@ -65,10 +65,10 @@ export default async function handler(req: any, res: any): Promise<void> {
   const admin = getSupabaseAdmin();
 
   // ── 1. Lade alle vorhandenen Zeilen für diese Symbole ────────────────────────
-  const { data: allRows, error: dbErr } = await admin
+  const { data: allRows, error: dbErr } = await (admin as any)
     .from('stock_events')
     .select('symbol, event_type, event_date, quarter, details, last_updated')
-    .in('symbol', symbols) as any;
+    .in('symbol', symbols);
 
   if (dbErr) {
     console.error('[earnings] DB-Fehler beim Lesen:', dbErr.message);

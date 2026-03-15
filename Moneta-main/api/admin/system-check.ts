@@ -12,8 +12,8 @@
  *   Authorization: Bearer <CRON_SECRET>
  *   ?secret=<CRON_SECRET>   ← directly callable from the browser
  */
-import { getSupabaseAdmin } from '../lib/supabaseClient';
-import { sendEmail, buildDigestHtml, getResendClient } from '../lib/email';
+import { getSupabaseAdmin } from '../../lib/supabaseClient';
+import { sendEmail, buildDigestHtml, getResendClient } from '../../lib/email';
 
 function requireSecret(req: any, res: any): boolean {
   const secret = process.env.CRON_SECRET ?? '';
