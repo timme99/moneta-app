@@ -465,7 +465,7 @@ ON CONFLICT (symbol, event_type, event_date) DO UPDATE
 -- ============================================================
 
 INSERT INTO public.stock_events (symbol, event_type, event_date, details, last_updated)
-SELECT DISTINCT symbol, '_scanned', '1970-01-01', '{"seeded":true}', NOW()
+SELECT DISTINCT symbol, '_scanned', '1970-01-01'::date, '{"seeded":true}'::jsonb, NOW()
 FROM public.stock_events
 WHERE event_type IN ('earnings', 'dividend')
 ON CONFLICT (symbol, event_type, event_date) DO UPDATE
