@@ -61,51 +61,62 @@ export default async function handler(req: any, res: any) {
     const isCsv = mimeType === 'text/csv';
 
 
-    const brokerPrompt = `Extrahiere Investment-Positionen aus diesem Dokument (Broker-Export, Depotauszug, eigene Excel-Tabelle, PDF oder Screenshot).
+    const brokerPrompt = `Du bist ein Finanz-Daten-Extraktor. Analysiere das folgende Dokument und extrahiere ALLE Investment-Positionen (Aktien, ETFs, Fonds).
 
-KRITISCHE FELDNAMEN – verwende exakt diese Keys im JSON:
-  "shares"    → Stückzahl / Nominal / Anzahl / Qty / Bestand / Menge / Units / Number of Shares
-               (z.B. 13.612357 oder 15)
-  "buy_price" → Einstandskurs / Einstand / Einstandskurs inkl. NK / Kaufkurs / Kaufpreis /
-               Kurs / Preis / Einstandspreis / Durchschnittspreis / Purchase Price /
-               Buy Price / Avg Price / Average Price / Kurs in EUR / Preis in EUR
-               → PRO STÜCK. Falls nur Gesamtbetrag/Wert vorhanden: buy_price = Gesamtbetrag ÷ shares
-  "symbol"    → Yahoo Finance Ticker (z.B. "EUNL.DE", "IWDA.AS", "AAPL")
-               Quell-Spalten: Ticker / Symbol / Kürzel / WKN / ISIN (als letztes Mittel)
-               NIEMALS die ISIN als symbol eintragen wenn ein echter Ticker erkennbar ist!
-  "isin"      → 12-stelliger ISIN-Code (z.B. "IE00B4L5Y983") – leer lassen wenn nicht vorhanden
-  "name"      → Wertpapiername / Bezeichnung / Titel / Aktie / Security / Asset / Instrument / Wertpapier
-  "buy_date"  → Kaufdatum / Datum / Date / Transaktionsdatum / Trade Date (ISO-Format YYYY-MM-DD,
-               aus DD.MM.YYYY oder MM/DD/YYYY umrechnen)
+═══ SCHRITT 1: SPALTEN DURCH INHALT ERKENNEN ═══
+Ignoriere zunächst die Spaltenüberschriften. Analysiere den ZELLENINHALT jeder Spalte:
+
+• Firmennamen / ETF-Bezeichnungen (z. B. "Apple Inc.", "iShares MSCI World", "Volkswagen") → name
+• Ticker-Kürzel (z. B. "AAPL", "SAP", "EUNL.DE", "BEI.DE") → symbol
+• ISIN-Codes (2 Großbuchstaben + 10 Zeichen, z. B. "IE00B4L5Y983") → isin
+• Ganze Zahlen oder Dezimalzahlen typisch für Stückzahlen (1–100.000) → shares
+• Preise / Kurswerte (typisch 5–5.000, z. B. "89,34", "1.234,56") → buy_price
+• Gesamtwerte (größere Beträge) → Gesamtbetrag → buy_price = Gesamtbetrag ÷ shares
+• Datumsangaben (DD.MM.YYYY, YYYY-MM-DD, MM/DD/YYYY) → buy_date
+
+Bekannte Spaltenbezeichnungen (als Hilfe, nicht als Pflicht):
+  Stück / Nominal / Anzahl / Qty / Bestand / Menge / Units    → shares
+  Einstand / Einstandskurs / Kaufkurs / Kaufpreis / Kurs / Preis / Avg Price → buy_price
+  Bezeichnung / Name / Wertpapier / Titel / Aktie / Security  → name
+  Ticker / Symbol / Kürzel / WKN                               → symbol
+  ISIN                                                          → isin
+  Kaufdatum / Datum / Date / Trade Date                        → buy_date
+
+═══ SCHRITT 2: YAHOO FINANCE TICKER ABLEITEN ═══
+Nutze dein Wissen um aus Firmennamen den Yahoo Finance Ticker abzuleiten:
+  "Apple" / "Apple Inc."           → "AAPL"
+  "SAP" / "SAP SE"                 → "SAP.DE"
+  "iShares MSCI World"             → "IWDA.AS"  (oder "EUNL.DE" je nach ISIN)
+  "Volkswagen" / "VW"              → "VOW3.DE"
+  "Tesla"                          → "TSLA"
+  "Microsoft"                      → "MSFT"
+  "Allianz"                        → "ALV.DE"
+  "Deutsche Telekom"               → "DTE.DE"
+  Bei ISIN vorhanden: Ticker daraus ableiten
+  Bei Unsicherheit: symbol = "" lassen, name IMMER befüllen
+
+═══ AUSGABE-FORMAT ═══
+Exakt diese JSON-Keys verwenden:
+  "name"      → Wertpapiername (immer ausfüllen wenn erkennbar)
+  "symbol"    → Yahoo Finance Ticker oder "" wenn unklar
+  "isin"      → ISIN-Code oder ""
+  "shares"    → Stückzahl als Zahl (0 wenn nicht vorhanden)
+  "buy_price" → Einstandskurs PRO STÜCK als Zahl (0 wenn nicht vorhanden)
+  "buy_date"  → ISO YYYY-MM-DD oder ""
 
 ZAHLENFORMAT:
-- Konvertiere ALLE deutschen Kommas zu Punkten: "13,612357" → 13.612357, "1.200,50" → 1200.50
-- Gib Zahlen IMMER als JSON-Number aus, NIEMALS als String
-- Währungssymbole (€, $, %) und Tausendertrennzeichen entfernen
+- Deutsche Kommas zu Punkten: "1.200,50" → 1200.50, "89,34" → 89.34
+- Zahlen immer als JSON-Number, NIEMALS als String
+- Währungssymbole (€, $) und Tausendertrennzeichen entfernen
 
-SPALTEN-ERKENNUNG – TYPISCHE FORMATE:
-Broker-Exporte (Scalable Capital / Trade Republic / Finanzen.net / Comdirect):
-  "Stück/Nominal", "Stück", "Anzahl"                        → shares
-  "Einstandskurs inkl. NK", "Einstand", "Einstandskurs"     → buy_price
-  "ISIN"                                                     → isin
-  "Bezeichnung", "Name", "Wertpapier", "Titel"              → name
+Beispiel-Ausgabe:
+[{"name":"iShares MSCI World","symbol":"IWDA.AS","isin":"IE00B4L5Y983","shares":13.612357,"buy_price":89.34,"buy_date":"2023-04-15"},{"name":"Apple Inc.","symbol":"AAPL","isin":"","shares":10,"buy_price":150.00,"buy_date":""}]
 
-Eigene Tabellen / sonstige Formate:
-  "Aktie", "Ticker", "Symbol", "Kürzel", "WKN"              → symbol (→ Yahoo Finance)
-  "Stückzahl", "Stück", "Anzahl", "Menge", "Bestand", "Qty" → shares
-  "Kaufpreis", "Kurs", "Preis", "Ø Preis", "Avg", "∅"       → buy_price
-  "Kaufdatum", "Datum", "Date", "gekauft am"                 → buy_date
-  "Gesamtwert", "Marktwert", "Wert", "Total", "Betrag"       → Gesamtbetrag (buy_price = ÷ shares)
-
-Ausgabe-Format:
-[{"name":"iShares MSCI World","symbol":"IWDA.AS","isin":"IE00B4L5Y983","shares":13.612357,"buy_price":89.34,"buy_date":"2023-04-15"}]
-
-Regeln:
-- symbol: Yahoo Finance Format ("BEI.DE", "AAPL", "IWDA.AS"). Leer ("") wenn nur ISIN bekannt.
-- buy_price: Einstandskurs PRO STÜCK (nicht Gesamtwert!). 0 wenn nicht erkennbar.
-- buy_date: ISO YYYY-MM-DD oder leer wenn nicht vorhanden.
-- Nur echte Bestands-Positionen – keine Verkäufe, Dividenden, Gebühren, Summenzeilen.
-- Falls keine Positionen erkennbar: []
+REGELN:
+- Jeden erkennbaren Wertpapier-Eintrag ausgeben – auch wenn nur name ODER nur symbol bekannt ist
+- Nur echte Bestands-Positionen (keine Verkäufe, Dividenden, Gebühren, Summenzeilen)
+- NIEMALS ISIN als symbol eintragen wenn ein Ticker erkennbar ist
+- Falls wirklich nichts erkennbar ist: []
 
 Antworte NUR mit dem JSON-Array – kein anderer Text!`;
 
@@ -128,9 +139,11 @@ Antworte NUR mit dem JSON-Array – kein anderer Text!`;
       });
     }
 
+    const rawText = response.text ?? '';
     let positions: Array<{ symbol: string; isin: string; shares: number; price: number | null; name?: string; buy_date?: string }> = [];
+    let parseError: string | undefined;
     try {
-      const parsed = JSON.parse(stripJsonFences(response.text ?? '[]'));
+      const parsed = JSON.parse(stripJsonFences(rawText));
       positions = Array.isArray(parsed)
         ? parsed
             .map((p: any) => ({
@@ -141,13 +154,16 @@ Antworte NUR mit dem JSON-Array – kein anderer Text!`;
               name:     p.name     ? String(p.name).trim()     : undefined,
               buy_date: p.buy_date ? String(p.buy_date).trim() : undefined,
             }))
-            .filter((p: any) => p.symbol || p.isin)
+            .filter((p: any) => p.symbol || p.isin || p.name)
         : [];
-    } catch {
+    } catch (e) {
+      parseError = String(e);
       positions = [];
     }
-    console.log('[extract-from-image] KI Ergebnis:', JSON.stringify(positions));
-    return res.status(200).json({ positions });
+    console.log('[extract-from-image] raw:', rawText.slice(0, 500));
+    console.log('[extract-from-image] positions:', JSON.stringify(positions));
+    if (parseError) console.warn('[extract-from-image] parse error:', parseError);
+    return res.status(200).json({ positions, _debug: { rawLength: rawText.length, parseError } });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[extract-from-image]', msg);

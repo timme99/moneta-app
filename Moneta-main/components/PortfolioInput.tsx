@@ -843,7 +843,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
       const fullPositions: BrokerPosition[] = positions
         .filter((p: any) => safeFloat(p.shares) > 0 && safeFloat(p.price) > 0)
         .map((p: any) => ({
-          rawSymbol: (p.symbol || p.isin || '').trim(),
+          rawSymbol: (p.symbol || p.isin || p.name || '').trim(),
           name:      p.name,
           shares:    safeFloat(p.shares),
           avgPrice:  safeFloat(p.price),
@@ -961,59 +961,151 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
     }
   };
 
-  // ── Excel / CSV-Import (KI-gestützt) ────────────────────────────────────
+  // ── Excel / CSV-Import (KI + regelbasierter Fallback) ───────────────────
   const handleExcelImport = async (file: File) => {
     setImportState({ loading: true, message: 'Datei wird analysiert …', error: '' });
     try {
-      // 1. Datei in CSV-Text konvertieren (Excel → CSV; CSV direkt lesen)
       const XLSX = await import('xlsx');
+
+      // ── 1. Datei einlesen (Excel + CSV) ────────────────────────────────
+      let wb: ReturnType<typeof XLSX.read>;
       let csvText: string;
+
       if (file.name.toLowerCase().endsWith('.csv')) {
         csvText = await file.text();
+        const firstLine = csvText.split('\n')[0] ?? '';
+        const delim = (firstLine.match(/;/g) ?? []).length >= (firstLine.match(/,/g) ?? []).length ? ';' : ',';
+        wb = XLSX.read(csvText, { type: 'string', FS: delim });
       } else {
-        const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        csvText = XLSX.utils.sheet_to_csv(ws, { FS: ';' });
+        const buf = await file.arrayBuffer();
+        wb = XLSX.read(buf, { type: 'array' });
+        const ws0 = wb.Sheets[wb.SheetNames[0]];
+        csvText = XLSX.utils.sheet_to_csv(ws0, { FS: ';' });
       }
 
-      if (!csvText.trim()) {
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const allRows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+
+      if (allRows.length === 0) {
         setImportState({ loading: false, message: '', error: 'Keine Daten in der Datei gefunden.' });
         return;
       }
 
-      // 2. KI-Analyse: Gemini erkennt Spalten unabhängig von Schreibweise/Sprache
-      const MAX_CHARS = 30_000;
-      const payload = csvText.length > MAX_CHARS ? csvText.slice(0, MAX_CHARS) : csvText;
-
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 45_000);
-      let resp: Response;
+      // ── 2. KI-Analyse (primärer Weg) ────────────────────────────────────
+      let aiPositions: any[] = [];
       try {
-        resp = await fetch('/api/extract-from-image', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ imageBase64: payload, mimeType: 'text/csv' }),
-          signal: controller.signal,
-        });
-      } finally {
-        clearTimeout(timeoutId);
+        const MAX_CHARS = 30_000;
+        const payload = csvText.length > MAX_CHARS ? csvText.slice(0, MAX_CHARS) : csvText;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 45_000);
+        let resp: Response;
+        try {
+          resp = await fetch('/api/extract-from-image', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ imageBase64: payload, mimeType: 'text/csv' }),
+            signal: controller.signal,
+          });
+        } finally {
+          clearTimeout(timeoutId);
+        }
+        if (resp.ok) {
+          const data = await resp.json();
+          aiPositions = Array.isArray(data.positions) ? data.positions : [];
+        }
+      } catch {
+        // KI nicht erreichbar → Fallback
       }
-      if (!resp.ok) throw new Error('Datei-Analyse fehlgeschlagen');
-      const { positions } = await resp.json();
 
-      if (!positions || positions.length === 0) {
+      // ── 3. Regelbasierter Fallback wenn KI nichts liefert ───────────────
+      if (aiPositions.length === 0) {
+        const SCAN_LIMIT = Math.min(30, allRows.length);
+        let headerIdx = 0, bestScore = 0;
+        for (let i = 0; i < SCAN_LIMIT; i++) {
+          const s = scoreHeaderRow(allRows[i]);
+          if (s > bestScore) { bestScore = s; headerIdx = i; }
+        }
+
+        const headers = allRows[headerIdx].map(normalizeCell);
+        const dataRows = allRows
+          .slice(headerIdx + 1)
+          .filter((r) => r.some((c) => String(c).trim() !== ''));
+
+        let symbolColIdx = fuzzyFindCol(headers, EXCEL_SYNONYMS.symbol);
+        const sharesColIdx = fuzzyFindCol(headers, EXCEL_SYNONYMS.shares);
+        const priceColIdx  = fuzzyFindCol(headers, EXCEL_SYNONYMS.price);
+
+        // ── Letzter Ausweg: erste Spalte mit Text-Inhalten = Namen/Symbole ──
+        if (symbolColIdx === undefined && dataRows.length > 0) {
+          for (let c = 0; c < (allRows[headerIdx]?.length ?? 0); c++) {
+            const hasText = dataRows.some((r) => {
+              const v = String(r[c] ?? '').trim();
+              return v.length > 0 && isNaN(Number(v.replace(',', '.')));
+            });
+            if (hasText) { symbolColIdx = c; break; }
+          }
+        }
+
+        if (symbolColIdx !== undefined && dataRows.length > 0) {
+          if (sharesColIdx !== undefined && priceColIdx !== undefined) {
+            // Vollständige Positionen
+            const positions: BrokerPosition[] = dataRows
+              .map((r) => {
+                const sym = String(r[symbolColIdx!] ?? '').trim().replace(/\s/g, '');
+                const sh  = parseEuNumber(r[sharesColIdx]);
+                const pr  = parseEuNumber(r[priceColIdx]);
+                if (!sym || sh <= 0 || pr <= 0) return null;
+                return { rawSymbol: sym, shares: sh, avgPrice: pr } as BrokerPosition;
+              })
+              .filter((p): p is BrokerPosition => p !== null);
+
+            if (positions.length > 0) {
+              let effectiveUserId = userId;
+              if (sb) {
+                const { data: sessionData } = await sb.auth.getSession();
+                effectiveUserId = sessionData?.session?.user?.id ?? userId;
+              }
+              if (!effectiveUserId) throw new Error('Nicht eingeloggt – bitte zuerst anmelden.');
+              const { count, skipped, error } = await addBrokerHoldings(positions, effectiveUserId, enrichMode);
+              if (error) throw new Error(error);
+              if (effectiveUserId !== userId) setUserId(effectiveUserId);
+              await onRefresh?.();
+              setImportState({
+                loading: false,
+                message: enrichMode
+                  ? `${count} Position${count !== 1 ? 'en' : ''} angereichert${skipped > 0 ? ` · ${skipped} übersprungen` : ''}.`
+                  : `${count} Position${count !== 1 ? 'en' : ''} importiert${skipped > 0 ? ` (${skipped} übersprungen)` : ''}.`,
+                error: '',
+              });
+              return;
+            }
+          }
+
+          // Nur Symbole/Namen → Watchlist
+          const values = dataRows
+            .map((r) => String(r[symbolColIdx!] ?? '').trim())
+            .filter((v) => v.length >= 1);
+
+          if (values.length > 0) {
+            const count = await bulkAddTickers(values);
+            setImportState({ loading: false, message: `${count} Ticker aus Datei importiert.`, error: '' });
+            return;
+          }
+        }
+
+        // Wirklich gar nichts erkennbar
         setImportState({
           loading: false, message: '',
-          error: 'Keine Positionen erkannt. Die Datei muss mindestens eine Spalte mit Aktiennamen oder Ticker-Symbolen enthalten.',
+          error: 'Die Datei konnte nicht verarbeitet werden. Bitte prüfe ob die Datei Wertpapierdaten enthält.',
         });
         return;
       }
 
-      // 3. Vollständige Positionen (Stückzahl + Kaufpreis) vs. Watchlist trennen
-      const fullPositions: BrokerPosition[] = positions
+      // ── 4. KI-Ergebnis verarbeiten → Supabase ───────────────────────────
+      const fullPositions: BrokerPosition[] = aiPositions
         .filter((p: any) => safeFloat(p.shares) > 0 && safeFloat(p.price) > 0)
         .map((p: any) => ({
-          rawSymbol: (p.symbol || p.isin || '').trim(),
+          rawSymbol: (p.symbol || p.isin || p.name || '').trim(),
           name:      p.name,
           shares:    safeFloat(p.shares),
           avgPrice:  safeFloat(p.price),
@@ -1021,12 +1113,11 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
         }))
         .filter((bp: BrokerPosition) => bp.rawSymbol);
 
-      const watchlistSymbols: string[] = positions
+      const watchlistSymbols: string[] = aiPositions
         .filter((p: any) => !(safeFloat(p.shares) > 0 && safeFloat(p.price) > 0))
         .map((p: any) => (p.symbol || p.isin || p.name || '').trim())
         .filter(Boolean);
 
-      // 4. Eingeloggten User holen
       let effectiveUserId = userId;
       if (sb) {
         const { data: sessionData } = await sb.auth.getSession();
@@ -1034,7 +1125,6 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
       }
       if (!effectiveUserId) throw new Error('Nicht eingeloggt – bitte zuerst anmelden.');
 
-      // 5. In Supabase speichern
       const parts: string[] = [];
 
       if (fullPositions.length > 0) {
