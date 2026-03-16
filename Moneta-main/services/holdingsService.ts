@@ -63,6 +63,69 @@ export async function loadUserHoldings(userId: string): Promise<HoldingRow[]> {
   }));
 }
 
+// ── WKN-Symbole im Depot automatisch korrigieren ──────────────────────────────
+
+/**
+ * Erkennt Holdings, bei denen das gespeicherte Symbol einer deutschen WKN entspricht
+ * (genau 6 alphanumerische Zeichen, kein Punkt → kein Yahoo-Ticker wie "SAP.DE").
+ * Löst diese via Gemini resolve_ticker auf und aktualisiert holdings.symbol sowie
+ * ticker_mapping, wenn Gemini einen abweichenden Yahoo-Ticker zurückgibt.
+ *
+ * @returns Anzahl erfolgreich korrigierter Holdings
+ */
+const WKN_RE = /^[A-Z0-9]{6}$/i;
+
+export async function fixWknHoldings(rows: HoldingRow[], userId: string): Promise<number> {
+  const sb = getSupabaseBrowser();
+  if (!sb || !userId) return 0;
+
+  const wknRows = rows.filter(h => WKN_RE.test(h.symbol));
+  if (wknRows.length === 0) return 0;
+
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session?.access_token) return 0;
+
+  let resolved: Array<{ name: string; ticker: string }> = [];
+  try {
+    const resp = await fetch('/api/gemini', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type:    'resolve_ticker',
+        payload: { names: wknRows.map(h => h.symbol) },
+        userId,
+      }),
+    });
+    if (!resp.ok) return 0;
+    const data = await resp.json();
+    resolved = data.tickers ?? [];
+  } catch {
+    return 0;
+  }
+
+  let fixed = 0;
+  for (const h of wknRows) {
+    const resolution = resolved.find(
+      r => (r.name ?? '').toUpperCase() === h.symbol.toUpperCase(),
+    );
+    if (!resolution) continue;
+
+    const newTicker = (resolution.ticker ?? '').trim().toUpperCase();
+    // Nur aktualisieren wenn: anderer Wert, kein Leerzeichen, max. 12 Zeichen
+    if (!newTicker || newTicker === h.symbol || newTicker.includes(' ') || newTicker.length > 12) continue;
+
+    const { error } = await sb
+      .from('holdings')
+      .update({ symbol: newTicker })
+      .eq('id', h.id)
+      .eq('user_id', userId);
+
+    if (!error) fixed++;
+  }
+
+  return fixed;
+}
+
 // ── Einzelne Holding speichern ────────────────────────────────────────────────
 
 export interface AddHoldingOptions {

@@ -21,7 +21,7 @@ import { PortfolioAnalysisReport, PortfolioHealthReport, PortfolioSavingsReport,
 import { analyzePortfolio } from './services/geminiService';
 import { userService } from './services/userService';
 import { getSupabaseBrowser } from './lib/supabaseBrowser';
-import { loadUserHoldings, addTickersByName, deleteHolding } from './services/holdingsService';
+import { loadUserHoldings, addTickersByName, deleteHolding, fixWknHoldings } from './services/holdingsService';
 import { useSubscription, PLAN_LIMITS } from './lib/useSubscription';
 import { Clock, AlertTriangle, ShieldCheck, BarChart3, Loader2, BookMarked, Calendar, FlaskConical, Lock, Plus, X, Trash2, ChevronRight, Sparkles } from 'lucide-react';
 
@@ -68,11 +68,20 @@ const App: React.FC = () => {
   });
 
   /** Lädt Holdings des Nutzers aus Supabase und speichert sie im State.
+   *  Erkennt und korrigiert automatisch WKN-Symbole (z. B. A3GSUD → SXRMEX.DE).
    *  Nutzt den zentralen holdingsService – einzige Quelle für Holdings-Daten. */
   const loadHoldingsForUser = useCallback(async (uid: string) => {
     if (!uid) return;
     const rows = await loadUserHoldings(uid);
     setHoldings(rows);
+
+    // WKN-Symbole im Hintergrund automatisch auflösen (fire & forget)
+    const wknCount = rows.filter(h => /^[A-Z0-9]{6}$/i.test(h.symbol)).length;
+    if (wknCount > 0) {
+      fixWknHoldings(rows, uid).then(fixed => {
+        if (fixed > 0) loadUserHoldings(uid).then(setHoldings);
+      });
+    }
   }, []);
 
   /** Lädt Holdings aus Supabase und aktualisiert den zentralen State (Single Source of Truth).
