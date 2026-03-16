@@ -204,12 +204,21 @@ export default async function handler(req: any, res: any) {
         ? payload.names
         : [String(payload?.names || '').trim()].filter(Boolean);
       // Erweiterter Prompt: Ticker + Metadaten für ticker_mapping-Upsert
-      const prompt = `Wandle jede Bezeichnung in das offizielle Börsenticker-Symbol um und ergänze Metadaten.
+      const prompt = `Wandle jede Bezeichnung in das offizielle Yahoo Finance Börsenticker-Symbol um und ergänze Metadaten.
+
+EINGABE-TYPEN – erkenne anhand des Formats:
+• Firmenname / ETF-Name  (z. B. "Apple", "iShares MSCI World") → Ticker ableiten
+• ISIN  (2 Buchstaben + 10 Zeichen, z. B. "IE00B4L5Y983") → exakter Ticker
+• WKN  (genau 6 alphanumerische Zeichen, z. B. "716460", "A0F602", "515100"):
+  WICHTIG: WKN ist ein deutsches Wertpapierkürzel – NICHT als Ticker verwenden!
+  Beispiele: 716460→AAPL, 515100→ALV.DE, 710000→MBG.DE, 855681→MSFT, A0F602→EUNL.DE
+• Yahoo-Ticker  (z. B. "AAPL", "SAP.DE") → direkt übernehmen + Metadaten ergänzen
+
 Antworte NUR mit diesem JSON (kein anderer Text):
 {"tickers":[{"name":"Original","ticker":"SYMBOL","company_name":"Vollständiger Firmenname","sector":"Sektor auf Englisch","industry":"Industrie auf Englisch","description":"Kurzbeschreibung auf Deutsch, max. 30 Wörter","competitors":"Kommagetrennte Hauptwettbewerber, z. B. MSFT, GOOGL"}]}
 
 Bezeichnungen: ${names.join('; ')}
-Beispiele: Apple→AAPL (Technology/Consumer Electronics), Microsoft→MSFT, Mercedes/Daimler→MBG.DE, MSCI World→EUNL, Vanguard All-World→VWRL.`;
+Weitere Beispiele: Apple→AAPL, Microsoft→MSFT, Mercedes/Daimler→MBG.DE, MSCI World→EUNL.DE, Vanguard All-World→VWRL.L`;
       contents = [{ role: 'user', parts: [{ text: prompt }] }];
       config = { temperature: 0.1 };
     }

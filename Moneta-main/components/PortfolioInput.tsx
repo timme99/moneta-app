@@ -414,13 +414,13 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
     if (text) onSendToAssistant(text);
   };
 
-  // ── Bild-Resize (Canvas, max. 1024 px) ───────────────────────────────────
+  // ── Bild-Resize (Canvas, max. 1920 px für lesbare Broker-Screenshots) ──────
   const resizeImage = (file: File): Promise<{ base64: string; mimeType: string }> =>
     new Promise((resolve, reject) => {
       const img = new Image();
       const objectUrl = URL.createObjectURL(file);
       img.onload = () => {
-        const MAX = 1024;
+        const MAX = 1920; // höher als vorher (1024) – Gemini braucht mehr Auflösung für kleine Schrift
         let { width, height } = img;
         if (width > MAX || height > MAX) {
           if (width > height) { height = Math.round((height * MAX) / width); width = MAX; }
@@ -433,7 +433,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
         if (!ctx) { URL.revokeObjectURL(objectUrl); reject(new Error('Canvas nicht verfügbar')); return; }
         ctx.drawImage(img, 0, 0, width, height);
         URL.revokeObjectURL(objectUrl);
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.92); // höhere Qualität für OCR
         resolve({ base64: dataUrl.split(',')[1], mimeType: 'image/jpeg' });
       };
       img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error('Bild konnte nicht geladen werden')); };
@@ -815,11 +815,11 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
 
   // ── Screenshot-Import ────────────────────────────────────────────────────
   const handleImageImport = async (file: File) => {
-    setImportState({ loading: true, message: '', error: '' });
+    setImportState({ loading: true, message: 'Screenshot wird analysiert …', error: '' });
     try {
       const { base64, mimeType } = await resizeImage(file);
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 30_000);
+      const timeoutId = setTimeout(() => controller.abort(), 60_000);
       let resp: Response;
       try {
         resp = await fetch('/api/extract-from-image', {
@@ -1222,39 +1222,51 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
           )}
 
           {/* Dropdown – Nicht in DB: KI-Vorschlag */}
-          {showDrop && !isFetching && suggestions.length === 0 && query.trim().length >= 2 && (
-            <div className="mt-3 border-t border-slate-100 pt-3">
-              <button
-                onClick={async () => {
-                  const q = query.trim();
-                  setShowDrop(false);
-                  setImportState({ loading: true, message: '', error: '' });
-                  try {
-                    const count = await bulkAddTickers([q]);
-                    setQuery('');
-                    setImportState({
-                      loading: false,
-                      message: count > 0 ? `„${q}" wurde erkannt und ins Depot übernommen.` : `„${q}" konnte nicht aufgelöst werden.`,
-                      error: '',
-                    });
-                  } catch (e: any) {
-                    setImportState({ loading: false, message: '', error: e?.message ?? 'KI-Auflösung fehlgeschlagen.' });
-                  }
-                }}
-                className="w-full flex items-center gap-3 px-3 py-3 hover:bg-blue-50 rounded-xl text-left transition-colors group"
-              >
-                <div className="w-7 h-7 bg-blue-50 rounded-lg flex items-center justify-center text-blue-600 shrink-0 group-hover:bg-blue-600 group-hover:text-white transition-colors">
-                  <Zap className="w-3.5 h-3.5" />
-                </div>
-                <div>
-                  <span className="text-sm font-bold text-slate-700">„{query.trim()}" mit KI hinzufügen</span>
-                  <p className="text-[9px] text-slate-400 font-medium mt-0.5">
-                    Nicht in Datenbank – Gemini löst Ticker auf und speichert ihn
+          {showDrop && !isFetching && suggestions.length === 0 && query.trim().length >= 2 && (() => {
+            const q = query.trim();
+            const isWkn = /^[A-Z0-9]{6}$/i.test(q);
+            return (
+              <div className="mt-3 border-t border-slate-100 pt-3">
+                {isWkn && (
+                  <p className="text-[9px] text-amber-600 font-bold px-3 pb-2">
+                    WKN erkannt – wird über Gemini zum Ticker aufgelöst
                   </p>
-                </div>
-              </button>
-            </div>
-          )}
+                )}
+                <button
+                  onClick={async () => {
+                    setShowDrop(false);
+                    setImportState({ loading: true, message: '', error: '' });
+                    try {
+                      const count = await bulkAddTickers([q]);
+                      setQuery('');
+                      setImportState({
+                        loading: false,
+                        message: count > 0 ? `„${q}" wurde erkannt und ins Depot übernommen.` : `„${q}" konnte nicht aufgelöst werden.`,
+                        error: '',
+                      });
+                    } catch (e: any) {
+                      setImportState({ loading: false, message: '', error: e?.message ?? 'KI-Auflösung fehlgeschlagen.' });
+                    }
+                  }}
+                  className="w-full flex items-center gap-3 px-3 py-3 hover:bg-blue-50 rounded-xl text-left transition-colors group"
+                >
+                  <div className="w-7 h-7 bg-blue-50 rounded-lg flex items-center justify-center text-blue-600 shrink-0 group-hover:bg-blue-600 group-hover:text-white transition-colors">
+                    <Zap className="w-3.5 h-3.5" />
+                  </div>
+                  <div>
+                    <span className="text-sm font-bold text-slate-700">
+                      {isWkn ? `WKN ${q} auflösen & hinzufügen` : `„${q}" mit KI hinzufügen`}
+                    </span>
+                    <p className="text-[9px] text-slate-400 font-medium mt-0.5">
+                      {isWkn
+                        ? 'WKN → Yahoo Finance Ticker via Gemini'
+                        : 'Nicht in Datenbank – Gemini löst Ticker auf und speichert ihn'}
+                    </p>
+                  </div>
+                </button>
+              </div>
+            );
+          })()}
         </div>
 
         {/* ── Kaufdaten-Formular ─────────────────────────────────────────── */}

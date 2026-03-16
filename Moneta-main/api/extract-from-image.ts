@@ -67,8 +67,11 @@ export default async function handler(req: any, res: any) {
 Ignoriere zunächst die Spaltenüberschriften. Analysiere den ZELLENINHALT jeder Spalte:
 
 • Firmennamen / ETF-Bezeichnungen (z. B. "Apple Inc.", "iShares MSCI World", "Volkswagen") → name
-• Ticker-Kürzel (z. B. "AAPL", "SAP", "EUNL.DE", "BEI.DE") → symbol
+• Ticker-Kürzel (z. B. "AAPL", "SAP", "EUNL.DE", "BEI.DE") → symbol (Yahoo Finance Format)
 • ISIN-Codes (2 Großbuchstaben + 10 Zeichen, z. B. "IE00B4L5Y983") → isin
+• WKN-Codes (genau 6 alphanumerische Zeichen, z. B. "716460", "A0F602"):
+  WKN NIEMALS direkt als symbol eintragen! Leite den Yahoo-Ticker daraus ab.
+  Wenn nicht sicher: isin-Feld nutzen oder symbol leer lassen, name IMMER befüllen.
 • Ganze Zahlen oder Dezimalzahlen typisch für Stückzahlen (1–100.000) → shares
 • Preise / Kurswerte (typisch 5–5.000, z. B. "89,34", "1.234,56") → buy_price
 • Gesamtwerte (größere Beträge) → Gesamtbetrag → buy_price = Gesamtbetrag ÷ shares
@@ -126,7 +129,7 @@ Antworte NUR mit dem JSON-Array – kein anderer Text!`;
       response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
         contents: [{ role: 'user', parts: [{ text: `${brokerPrompt}\n\nCSV-Inhalt:\n${imageBase64}` }] }],
-        config: { temperature: 0.1, maxOutputTokens: 2048 },
+        config: { temperature: 0.1, maxOutputTokens: 8192 },
       });
     } else {
       response = await ai.models.generateContent({
@@ -135,7 +138,7 @@ Antworte NUR mit dem JSON-Array – kein anderer Text!`;
           { text: brokerPrompt },
           { inlineData: { mimeType: mimeType as string, data: imageBase64 } },
         ]}],
-        config: { temperature: 0.1, maxOutputTokens: 2048 },
+        config: { temperature: 0.1, maxOutputTokens: 8192 },
       });
     }
 

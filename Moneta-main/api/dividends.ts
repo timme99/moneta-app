@@ -2,7 +2,7 @@
  * api/dividends.ts  –  Vercel Serverless Function (Node.js runtime)
  *
  * Ruft Dividenden-Informationen für eine Liste von Ticker-Symbolen via
- * Alpha Vantage OVERVIEW ab und gibt sie zurück.
+ * Alpha Vantage OVERVIEW ab, cacht sie in stock_events und gibt sie zurück.
  *
  * GET /api/dividends?symbols=AAPL,MSFT,SAP.DE
  * Header: Authorization: Bearer <supabase-access-token>
@@ -10,9 +10,12 @@
  * Response: DividendInfo[]
  */
 
-import { createClientWithToken } from '../lib/supabaseClient.js';
+import { createClientWithToken, getSupabaseAdmin } from '../lib/supabaseClient.js';
 
-const AV_BASE_URL = 'https://www.alphavantage.co/query';
+const AV_BASE_URL        = 'https://www.alphavantage.co/query';
+const DIVIDEND_EVENT_TYPE = 'dividend_info';
+const SENTINEL_DATE       = '1970-01-01';
+const CACHE_TTL_MS        = 7 * 24 * 60 * 60 * 1000; // 7 Tage
 
 export interface DividendInfo {
   symbol: string;
@@ -80,17 +83,49 @@ export default async function handler(req: any, res: any): Promise<void> {
     return res.status(500).json({ error: 'ALPHA_VANTAGE_API_KEY nicht konfiguriert.' });
   }
 
-  // ── Dividenden-Daten für jedes Symbol abrufen ─────────────────────────────────
-  // Sequenziell, um Alpha Vantage Rate-Limit (5 Req/Min, 25 Req/Tag) zu schonen.
-  const results: DividendInfo[] = [];
+  // ── Cache aus stock_events lesen ──────────────────────────────────────────────
+  const adminSb = getSupabaseAdmin();
+  const { data: cachedRows } = await adminSb
+    .from('stock_events')
+    .select('symbol, details, last_updated')
+    .in('symbol', symbols)
+    .eq('event_type', DIVIDEND_EVENT_TYPE)
+    .eq('event_date', SENTINEL_DATE);
 
-  for (const symbol of symbols) {
+  const now = Date.now();
+  const freshCache = new Map<string, DividendInfo>();
+  for (const row of (cachedRows ?? [])) {
+    const age = now - new Date(row.last_updated).getTime();
+    if (age < CACHE_TTL_MS) {
+      freshCache.set(row.symbol, { symbol: row.symbol, ...(row.details as object) } as DividendInfo);
+    }
+  }
+
+  // ── Nur veraltete / fehlende Symbole via Alpha Vantage abrufen ───────────────
+  const staleSymbols = symbols.filter(s => !freshCache.has(s));
+  const freshResults: DividendInfo[] = [];
+
+  for (const symbol of staleSymbols) {
     try {
       const info = await fetchDividendInfo(symbol, apiKey);
-      results.push(info);
-    } catch (err) {
-      // Bei Fehler: noData-Eintrag zurückgeben (nicht den ganzen Request abbrechen)
-      results.push({
+      freshResults.push(info);
+
+      // ── Ergebnis in stock_events speichern (für zukünftige Cache-Reads) ─────
+      const { symbol: sym, ...details } = info;
+      await adminSb.from('stock_events').upsert(
+        {
+          symbol:       sym,
+          event_type:   DIVIDEND_EVENT_TYPE,
+          event_date:   SENTINEL_DATE,
+          quarter:      null,
+          details,
+          last_updated: new Date().toISOString(),
+        },
+        { onConflict: 'symbol,event_type,event_date' },
+      );
+    } catch {
+      // Bei Fehler: noData-Eintrag (nicht den ganzen Request abbrechen)
+      freshResults.push({
         symbol,
         dividendPerShare: 0,
         exDividendDate: '',
@@ -101,10 +136,19 @@ export default async function handler(req: any, res: any): Promise<void> {
       });
     }
     // Kurze Pause zwischen Requests (Alpha Vantage Free-Tier: 5 Req/Min)
-    if (symbols.length > 1) {
+    if (staleSymbols.length > 1) {
       await new Promise(r => setTimeout(r, 300));
     }
   }
+
+  // ── Reihenfolge der Eingabe-Symbole wiederherstellen ─────────────────────────
+  const results = symbols.map(s =>
+    freshCache.get(s) ??
+    freshResults.find(r => r.symbol === s) ?? {
+      symbol: s, dividendPerShare: 0, exDividendDate: '',
+      dividendDate: '', dividendYield: 0, price: 0, noData: true,
+    }
+  );
 
   return res.status(200).json(results);
 }

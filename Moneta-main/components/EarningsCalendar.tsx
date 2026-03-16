@@ -1,8 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Calendar, Clock, TrendingUp, Loader2, RefreshCcw, AlertTriangle, Info, DollarSign, TrendingDown, Database } from 'lucide-react';
+import { Calendar, Clock, TrendingUp, Loader2, RefreshCcw, AlertTriangle, Info, DollarSign, TrendingDown, Database, Lock, Star } from 'lucide-react';
 import { fetchDividendsFallback } from '../services/geminiService';
 import { EarningsEvent, HoldingRow } from '../types';
 import { supabase as sb } from '../lib/supabaseClient';
+
+const DIVIDEND_EVENT_TYPE = 'dividend_info';
+const SENTINEL_DATE       = '1970-01-01';
+const CACHE_TTL_MS        = 7 * 24 * 60 * 60 * 1000; // 7 Tage
 
 interface EarningsCalendarProps {
   holdings: HoldingRow[];
@@ -75,6 +79,8 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
   const [isDivLoading, setIsDivLoading] = useState(false);
   const [divError, setDivError] = useState<string | null>(null);
   const [isDivFallback, setIsDivFallback] = useState(false);
+  // Positionen ohne Supabase-Cache → Premium-gesperrt
+  const [lockedHoldings, setLockedHoldings] = useState<HoldingRow[]>([]);
 
   // Alle Positionen inkl. Watchlist – die KI braucht nur das Symbol für Earnings-Termine
   const tickers = holdings
@@ -122,7 +128,7 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
     }
   };
 
-  // ── Dividenden laden ────────────────────────────────────────────────────────
+  // ── Dividenden: erst Supabase-Cache, dann API für fehlende Symbole ─────────
 
   const loadDividends = async () => {
     if (portfolioHoldings.length === 0) return;
@@ -133,41 +139,55 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
     const portfolioTickers = portfolioHoldings
       .map(h => h.ticker?.symbol ?? h.symbol)
       .filter(Boolean)
-      .slice(0, 10);
+      .slice(0, 20);
 
-    try {
-      const { data: { session } } = await sb.auth.getSession();
-      if (!session?.access_token) throw new Error('Nicht angemeldet.');
+    // ── Schritt 1: Supabase-Cache lesen (sofort, kostenlos) ──────────────────
+    const cutoff = new Date(Date.now() - CACHE_TTL_MS).toISOString();
+    const { data: cachedRows } = await sb
+      .from('stock_events')
+      .select('symbol, details, last_updated')
+      .in('symbol', portfolioTickers)
+      .eq('event_type', DIVIDEND_EVENT_TYPE)
+      .eq('event_date', SENTINEL_DATE)
+      .gte('last_updated', cutoff);
 
-      const res = await fetch(`/api/dividends?symbols=${encodeURIComponent(portfolioTickers.join(','))}`, {
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      });
+    const cachedSet = new Set((cachedRows ?? []).map(r => r.symbol as string));
+    const cachedData: DividendInfo[] = (cachedRows ?? []).map(r => ({
+      symbol: r.symbol as string,
+      ...(r.details as Omit<DividendInfo, 'symbol'>),
+    }));
 
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err?.error ?? `HTTP ${res.status}`);
-      }
+    // Positionen ohne Cache-Eintrag → Premium-gesperrt anzeigen
+    const locked = portfolioHoldings.filter(h => {
+      const sym = h.ticker?.symbol ?? h.symbol;
+      return !cachedSet.has(sym);
+    });
+    setLockedHoldings(locked);
+    setDividendData(cachedData);
 
-      const json: DividendInfo[] = await res.json();
-      setDividendData(json);
-    } catch {
-      // Offizielle Quelle fehlgeschlagen → Gemini-Fallback
+    // ── Schritt 2: Falls Cache leer → Gemini-Fallback für gecachte Werte ────
+    // (nur wenn gar keine Daten im Cache – kein Alpha-Vantage-Call ohne Premium)
+    if (cachedData.length === 0 && locked.length > 0) {
       try {
-        const fallback = await fetchDividendsFallback(portfolioTickers);
+        const fallback = await fetchDividendsFallback(portfolioTickers.slice(0, 5));
         setDividendData(fallback as DividendInfo[]);
+        setLockedHoldings([]);
         setIsDivFallback(true);
       } catch {
-        setDivError('Dividenden-Daten vorübergehend nicht verfügbar.');
+        // Kein Fallback verfügbar – alle Positionen bleiben gesperrt
       }
-    } finally {
-      setIsDivLoading(false);
     }
+
+    setIsDivLoading(false);
   };
 
   useEffect(() => {
     if (tickers.length > 0) {
       loadEarnings();
       loadDividends();
+    } else {
+      setLockedHoldings([]);
+      setDividendData([]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tickerKey]);
@@ -344,12 +364,20 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
           )}
 
           {/* Per-Position-Liste */}
-          {holdingDividends.length > 0 && !isDivLoading && (
+          {(holdingDividends.length > 0 || lockedHoldings.length > 0) && !isDivLoading && (
             <div className="bg-white border border-slate-200 rounded-[24px] overflow-hidden shadow-sm">
-              <div className="px-6 py-4 border-b border-slate-100">
+              <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
                 <p className="text-[10px] font-black text-slate-900 uppercase tracking-widest">Dividenden je Position</p>
+                {lockedHoldings.length > 0 && (
+                  <span className="flex items-center gap-1 text-[9px] font-black text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-lg uppercase tracking-widest">
+                    <Lock className="w-2.5 h-2.5" />
+                    {lockedHoldings.length} nur Premium
+                  </span>
+                )}
               </div>
+
               <div className="divide-y divide-slate-100">
+                {/* ── Freigeschaltete Positionen (Daten im Cache) ─────────────── */}
                 {holdingDividends.map((h, i) => (
                   <div key={i} className="px-6 py-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
                     <div className="flex items-center gap-3">
@@ -376,7 +404,45 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
                     </div>
                   </div>
                 ))}
+
+                {/* ── Premium-gesperrte Positionen (kein Cache-Eintrag) ────────── */}
+                {lockedHoldings.map((h, i) => {
+                  const sym = h.ticker?.symbol ?? h.symbol;
+                  const name = h.ticker?.company_name ?? sym;
+                  return (
+                    <div key={`locked-${i}`} className="px-6 py-4 flex items-center justify-between bg-slate-50/60 relative overflow-hidden">
+                      {/* Linker Inhalt – Name + Symbol sichtbar */}
+                      <div className="flex items-center gap-3">
+                        <div className="w-2 h-2 rounded-full bg-slate-300" />
+                        <div>
+                          <div className="flex items-center gap-1.5">
+                            <p className="text-sm font-bold text-slate-500">{name}</p>
+                            <span className="flex items-center gap-0.5 text-[8px] font-black bg-amber-100 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded uppercase tracking-widest">
+                              <Star className="w-2 h-2" /> Premium
+                            </span>
+                          </div>
+                          <p className="text-[10px] font-mono text-slate-400">
+                            {sym} · {h.shares ?? '–'} Stk
+                          </p>
+                        </div>
+                      </div>
+                      {/* Rechter Inhalt – Dividendenzahlen unscharf */}
+                      <div className="text-right select-none">
+                        <p className="text-sm font-black text-slate-300 blur-[5px] pointer-events-none">
+                          {formatCurrency(12.34)} €
+                        </p>
+                        <div className="flex items-center justify-end gap-1 mt-0.5">
+                          <Lock className="w-3 h-3 text-amber-500" />
+                          <p className="text-[9px] font-black text-amber-600 uppercase tracking-widest">
+                            Nur Premium
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
+
               <div className="px-6 py-3 bg-slate-50 border-t border-slate-100">
                 <p className="text-[10px] text-slate-400 italic">
                   {isDivFallback
@@ -384,6 +450,29 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
                     : '* Schätzungen basierend auf Alpha Vantage OVERVIEW-Daten (jährliche Dividende). Keine Garantie für zukünftige Zahlungen. Angaben in lokaler Währung des jeweiligen Börsenplatzes.'}
                 </p>
               </div>
+            </div>
+          )}
+
+          {/* Premium-Upsell-Banner (wenn mind. 1 Position gesperrt) */}
+          {lockedHoldings.length > 0 && !isDivLoading && (
+            <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-[20px] p-5 flex items-center gap-4">
+              <div className="w-10 h-10 bg-amber-100 rounded-2xl flex items-center justify-center shrink-0">
+                <Star className="w-5 h-5 text-amber-600" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-black text-slate-800">
+                  {lockedHoldings.length} weitere Position{lockedHoldings.length !== 1 ? 'en' : ''} mit Premium freischalten
+                </p>
+                <p className="text-[10px] text-slate-500 font-medium mt-0.5">
+                  Dividendendaten für{' '}
+                  {lockedHoldings.slice(0, 3).map(h => h.ticker?.symbol ?? h.symbol).join(', ')}
+                  {lockedHoldings.length > 3 ? ` +${lockedHoldings.length - 3} weitere` : ''}{' '}
+                  sind noch nicht im Cache verfügbar – Premium lädt sie live.
+                </p>
+              </div>
+              <span className="text-[10px] font-black text-amber-700 bg-amber-100 border border-amber-200 px-3 py-1.5 rounded-xl uppercase tracking-widest whitespace-nowrap shrink-0">
+                Bald verfügbar
+              </span>
             </div>
           )}
         </div>
