@@ -139,9 +139,11 @@ Antworte NUR mit dem JSON-Array – kein anderer Text!`;
       });
     }
 
+    const rawText = response.text ?? '';
     let positions: Array<{ symbol: string; isin: string; shares: number; price: number | null; name?: string; buy_date?: string }> = [];
+    let parseError: string | undefined;
     try {
-      const parsed = JSON.parse(stripJsonFences(response.text ?? '[]'));
+      const parsed = JSON.parse(stripJsonFences(rawText));
       positions = Array.isArray(parsed)
         ? parsed
             .map((p: any) => ({
@@ -154,11 +156,14 @@ Antworte NUR mit dem JSON-Array – kein anderer Text!`;
             }))
             .filter((p: any) => p.symbol || p.isin || p.name)
         : [];
-    } catch {
+    } catch (e) {
+      parseError = String(e);
       positions = [];
     }
-    console.log('[extract-from-image] KI Ergebnis:', JSON.stringify(positions));
-    return res.status(200).json({ positions });
+    console.log('[extract-from-image] raw:', rawText.slice(0, 500));
+    console.log('[extract-from-image] positions:', JSON.stringify(positions));
+    if (parseError) console.warn('[extract-from-image] parse error:', parseError);
+    return res.status(200).json({ positions, _debug: { rawLength: rawText.length, parseError } });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[extract-from-image]', msg);
