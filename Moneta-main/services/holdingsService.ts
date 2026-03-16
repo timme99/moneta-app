@@ -324,15 +324,16 @@ export async function addBrokerHoldings(
   if (!sb)     return { count: 0, skipped: 0, error: 'Supabase nicht konfiguriert.' };
   if (!userId) return { count: 0, skipped: 0, error: 'Nicht eingeloggt.' };
 
-  const ISIN_RE = /^[A-Z]{2}[A-Z0-9]{10}$/i;
+  const ISIN_RE   = /^[A-Z]{2}[A-Z0-9]{10}$/i;
   const TICKER_RE = /^[A-Z0-9.]{1,7}$/;
 
-  // Symbole klassifizieren
-  const isinPositions  = positions.filter((p) => ISIN_RE.test(p.rawSymbol.trim()));
-  const tickerPositions = positions.filter((p) => !ISIN_RE.test(p.rawSymbol.trim()));
+  // Positionen klassifizieren: ISIN / gültiger Ticker / nur Name
+  const isinPositions   = positions.filter((p) =>  ISIN_RE.test(p.rawSymbol.trim()));
+  const tickerPositions = positions.filter((p) => !ISIN_RE.test(p.rawSymbol.trim()) &&  TICKER_RE.test(p.rawSymbol.trim().toUpperCase()));
+  const namePositions   = positions.filter((p) => !ISIN_RE.test(p.rawSymbol.trim()) && !TICKER_RE.test(p.rawSymbol.trim().toUpperCase()));
 
-  // ISINs über Gemini auflösen
-  const resolvedMap = new Map<string, string>(); // ISIN → ticker
+  // ISINs über Gemini auflösen → ticker
+  const resolvedMap = new Map<string, string>(); // rawSymbol.toUpperCase() → ticker
 
   if (isinPositions.length > 0) {
     try {
@@ -356,7 +357,34 @@ export async function addBrokerHoldings(
         });
       }
     } catch {
-      // Weiter ohne ISIN-Auflösung – Skip-Counter erhöhen
+      // Weiter ohne ISIN-Auflösung
+    }
+  }
+
+  // Namen ohne erkennbaren Ticker über Gemini auflösen → ticker
+  if (namePositions.length > 0) {
+    try {
+      const resp = await fetch('/api/gemini', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type:    'resolve_ticker',
+          payload: { names: namePositions.map((p) => p.rawSymbol) },
+          userId,
+        }),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        const tickers: Array<{ input?: string; ticker: string }> = data.tickers ?? [];
+        tickers.forEach((t, i) => {
+          const original = namePositions[i]?.rawSymbol ?? t.input ?? '';
+          if (t.ticker && TICKER_RE.test(t.ticker.trim().toUpperCase())) {
+            resolvedMap.set(original.toUpperCase(), t.ticker.trim().toUpperCase());
+          }
+        });
+      }
+    } catch {
+      // Namen konnten nicht aufgelöst werden
     }
   }
 
@@ -368,14 +396,14 @@ export async function addBrokerHoldings(
     let symbol: string;
 
     if (ISIN_RE.test(raw)) {
-      const resolved = resolvedMap.get(raw);
-      // Fallback: ISIN direkt als Symbol speichern, damit die Position nicht verloren geht
-      symbol = resolved ?? raw;
+      symbol = resolvedMap.get(raw) ?? raw;
     } else if (TICKER_RE.test(raw)) {
       symbol = raw;
     } else {
-      skipped++;
-      continue;
+      // Name-Position: aufgelöster Ticker oder überspringen
+      const resolved = resolvedMap.get(raw);
+      if (!resolved) { skipped++; continue; }
+      symbol = resolved;
     }
 
     // enrichOnly: bestehende vollständige Positionen nicht überschreiben
@@ -402,6 +430,27 @@ export async function addBrokerHoldings(
 
     if (result.success) count++;
     else skipped++;
+  }
+
+  // ticker_mapping für alle gespeicherten Ticker-Positionen befüllen
+  // (ISINs wurden bereits via resolve_ticker oben angereichert)
+  const tickerNamesToEnrich = tickerPositions.map((p) =>
+    p.name?.trim() || p.rawSymbol.trim().toUpperCase()
+  );
+  if (tickerNamesToEnrich.length > 0) {
+    try {
+      await fetch('/api/gemini', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type:    'resolve_ticker',
+          payload: { names: tickerNamesToEnrich },
+          userId,
+        }),
+      });
+    } catch {
+      // ticker_mapping-Anreicherung ist best-effort
+    }
   }
 
   return { count, skipped };
