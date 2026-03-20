@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Calendar, Clock, TrendingUp, Loader2, RefreshCcw, AlertTriangle, Info, DollarSign, TrendingDown, Database, Lock, Star } from 'lucide-react';
 import { fetchDividendsFallback } from '../services/geminiService';
 import { EarningsEvent, HoldingRow } from '../types';
@@ -73,6 +73,8 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
   const [lastFetch, setLastFetch] = useState<Date | null>(null);
   const [scannedSymbol, setScannedSymbol] = useState<string | null>(null);
   const [cacheStats, setCacheStats] = useState<{ total: number; cached: number; stale: number } | null>(null);
+  const autoScanTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isScanningRef = useRef(false);
 
   // Dividenden-State
   const [dividendData, setDividendData] = useState<DividendInfo[]>([]);
@@ -95,8 +97,10 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
 
   // ── Earnings laden (Cache-First via /api/earnings) ──────────────────────────
 
-  const loadEarnings = async () => {
+  const loadEarnings = async (isAutoScan = false) => {
     if (tickers.length === 0) return;
+    if (isAutoScan && isScanningRef.current) return; // Kein paralleler Aufruf
+    isScanningRef.current = true;
     setIsLoading(true);
     setError(null);
     try {
@@ -121,7 +125,18 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
       setScannedSymbol(json.scannedSymbol ?? null);
       setCacheStats(json.cacheStats ?? null);
       setLastFetch(new Date());
+
+      // Noch unbekannte Symbole? → automatisch nächsten Scan auslösen (1,5 s Pause)
+      if ((json.cacheStats?.stale ?? 0) > 0) {
+        autoScanTimerRef.current = setTimeout(() => {
+          isScanningRef.current = false;
+          loadEarnings(true);
+        }, 1500);
+      } else {
+        isScanningRef.current = false;
+      }
     } catch (e: any) {
+      isScanningRef.current = false;
       setError(e?.message?.includes(':') ? e.message.split(':')[1] : 'Earnings-Daten konnten nicht geladen werden.');
     } finally {
       setIsLoading(false);
@@ -182,6 +197,10 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
   };
 
   useEffect(() => {
+    // Laufenden Auto-Scan stoppen wenn sich Holdings ändern
+    if (autoScanTimerRef.current) clearTimeout(autoScanTimerRef.current);
+    isScanningRef.current = false;
+
     if (tickers.length > 0) {
       loadEarnings();
       loadDividends();
@@ -189,6 +208,9 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
       setLockedHoldings([]);
       setDividendData([]);
     }
+    return () => {
+      if (autoScanTimerRef.current) clearTimeout(autoScanTimerRef.current);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tickerKey]);
 
@@ -515,14 +537,29 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
       )}
 
       {isLoading && (
-        <div className="flex justify-center py-16">
-          <div className="bg-white px-6 py-4 rounded-2xl shadow-xl border border-slate-100 flex items-center gap-3">
+        <div className="flex justify-center py-8">
+          <div className="bg-white px-6 py-4 rounded-2xl shadow-xl border border-slate-100 flex items-center gap-3 max-w-sm w-full">
             <Loader2 className="w-5 h-5 animate-spin text-blue-600 shrink-0" />
-            <div>
-              <span className="text-xs font-black text-slate-900 uppercase tracking-widest block">Lade Earnings-Kalender…</span>
-              <span className="text-[10px] text-slate-400 font-mono mt-0.5 block">
-                Cache wird geprüft · ggf. 1 neue Aktie gescannt
+            <div className="flex-1 min-w-0">
+              <span className="text-xs font-black text-slate-900 uppercase tracking-widest block">
+                {cacheStats && cacheStats.stale > 0
+                  ? `Scanne Symbol ${cacheStats.cached + 1} von ${cacheStats.total}…`
+                  : 'Lade Earnings-Kalender…'}
               </span>
+              {cacheStats && cacheStats.total > 0 && (
+                <div className="mt-2">
+                  <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-blue-500 rounded-full transition-all duration-500"
+                      style={{ width: `${Math.round((cacheStats.cached / cacheStats.total) * 100)}%` }}
+                    />
+                  </div>
+                  <span className="text-[10px] text-slate-400 font-mono mt-1 block">
+                    {cacheStats.cached}/{cacheStats.total} gecacht
+                    {scannedSymbol ? ` · ${scannedSymbol} gescannt` : ''}
+                  </span>
+                </div>
+              )}
             </div>
           </div>
         </div>
