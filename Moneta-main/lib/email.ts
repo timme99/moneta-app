@@ -154,6 +154,15 @@ function fmtEur(n: number): string {
 
 // ── buildDailySnapshotHtml ────────────────────────────────────────────────────
 
+export interface StockNewsItem {
+  title: string;
+  source: string;
+  snippet: string;
+  importance: 'hoch' | 'mittel' | 'niedrig';
+  impact_emoji: string;
+  ticker?: string;
+}
+
 export function buildDailySnapshotHtml(options: {
   userName?: string;
   totalValue: number;
@@ -165,6 +174,8 @@ export function buildDailySnapshotHtml(options: {
   macroNews?: string[];
   /** Top-Positionen im Depot (Symbol + optionaler Firmenname) */
   topHoldings?: { symbol: string; name?: string }[];
+  /** Aktuelle Aktien-News zu den Holdings (max. 4), generiert via Gemini */
+  stockNews?: StockNewsItem[];
 }): string {
   const {
     userName,
@@ -177,6 +188,7 @@ export function buildDailySnapshotHtml(options: {
     }),
     macroNews = [],
     topHoldings = [],
+    stockNews = [],
   } = options;
 
   const pos   = dailyChange >= 0;
@@ -217,6 +229,40 @@ export function buildDailySnapshotHtml(options: {
   </td></tr>
 
   <tr><td style="height:12px;">&nbsp;</td></tr>
+
+  ${stockNews.length > 0 ? `
+  <!-- ─ AKTIEN-NEWS ─ -->
+  <tr><td style="background:rgba(255,255,255,0.03);border:1px solid ${CARD_BDR};border-radius:20px;padding:24px;">
+    <p style="margin:0 0 14px;font-size:10px;color:${LABEL_CLR};font-weight:700;letter-spacing:0.18em;text-transform:uppercase;">Aktien-News</p>
+    <table width="100%" cellpadding="0" cellspacing="0" border="0">
+      ${stockNews.map((item, i) => {
+        const importanceBg  = item.importance === 'hoch' ? '#450a0a' : item.importance === 'mittel' ? '#0c1a3a' : '#0f172a';
+        const importanceBdr = item.importance === 'hoch' ? '#991b1b' : item.importance === 'mittel' ? '#1e40af' : '#334155';
+        const importanceTxt = item.importance === 'hoch' ? '#ef4444' : item.importance === 'mittel' ? '#60a5fa' : '#94a3b8';
+        const importanceLbl = item.importance === 'hoch' ? 'Wichtig' : item.importance === 'mittel' ? 'Mittel' : 'Info';
+        return `
+      <tr><td style="padding:12px 0;${i < stockNews.length - 1 ? `border-bottom:1px solid ${CARD_BDR};` : ''}">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+          <td style="width:28px;vertical-align:top;padding-top:2px;font-size:18px;">${item.impact_emoji}</td>
+          <td style="padding-left:10px;vertical-align:top;">
+            <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+              <td>
+                <p style="margin:0 0 4px;font-size:13px;font-weight:700;color:#e2e8f0;line-height:1.4;">${item.title}</p>
+                <p style="margin:0 0 6px;font-size:12px;color:#94a3b8;line-height:1.5;">${item.snippet}</p>
+                <table cellpadding="0" cellspacing="0" border="0"><tr>
+                  <td style="font-size:10px;color:#64748b;font-weight:500;">${item.source}</td>
+                  ${item.ticker ? `<td style="padding-left:8px;"><span style="display:inline-block;background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.25);color:#a5b4fc;border-radius:5px;padding:1px 6px;font-size:10px;font-weight:700;">${item.ticker}</span></td>` : ''}
+                  <td style="padding-left:8px;"><span style="display:inline-block;background:${importanceBg};border:1px solid ${importanceBdr};color:${importanceTxt};border-radius:5px;padding:1px 6px;font-size:10px;font-weight:600;">${importanceLbl}</span></td>
+                </tr></table>
+              </td>
+            </tr></table>
+          </td>
+        </tr></table>
+      </td></tr>`;
+      }).join('')}
+    </table>
+  </td></tr>
+  <tr><td style="height:12px;">&nbsp;</td></tr>` : ''}
 
   ${macroNews.length > 0 ? `
   <!-- ─ MAKROLAGE ─ -->

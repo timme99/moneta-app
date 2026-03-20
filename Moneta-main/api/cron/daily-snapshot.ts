@@ -32,6 +32,67 @@ const GEMINI_MODEL      = 'gemini-2.5-flash';
 const priceCache = new Map<string, { price: number; fetchedAt: number }>();
 const PRICE_TTL  = 30 * 60 * 1000;
 
+// ── Gemini: Aktien-News für Holdings ─────────────────────────────────────────
+
+export interface StockNewsItem {
+  title: string;
+  source: string;
+  snippet: string;
+  importance: 'hoch' | 'mittel' | 'niedrig';
+  impact_emoji: string;
+  ticker?: string;
+}
+
+async function fetchStockNewsForHoldings(symbols: string[]): Promise<StockNewsItem[]> {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key || symbols.length === 0) return [];
+
+  const symbolList = symbols.slice(0, 10).join(', ');
+  const prompt =
+`Du bist ein Finanzinformations-Assistent. Liefere 4 aktuelle Nachrichten zu diesen Aktien/ETFs: ${symbolList}.
+
+Antworte NUR mit einem JSON-Array aus genau 4 Objekten. Jedes Objekt hat folgende Felder:
+- title: Kurze Überschrift (max. 80 Zeichen, auf Deutsch)
+- source: Nachrichtenquelle (z.B. "Reuters", "Bloomberg", "Handelsblatt")
+- snippet: Ein Satz mit dem Kerninhalt der Meldung (max. 120 Zeichen, auf Deutsch)
+- importance: "hoch", "mittel" oder "niedrig"
+- impact_emoji: Ein passendes Emoji (z.B. "📈", "📉", "⚠️", "💰", "🏭")
+- ticker: Das betroffene Börsensymbol aus der Liste oben (oder null)
+
+Keine Anlageberatung. Nur sachliche, aktuelle Marktinformationen.
+[{"title":"...","source":"...","snippet":"...","importance":"mittel","impact_emoji":"📈","ticker":"AAPL"}]`;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const resp = await fetch(
+      `https://generativelanguage.googleapis.com/v1/models/${GEMINI_MODEL}:generateContent?key=${key}`,
+      {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { temperature: 0.3, maxOutputTokens: 600 },
+        }),
+        signal: controller.signal,
+      }
+    );
+    if (!resp.ok) return [];
+    const data = await resp.json();
+    const raw  = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '[]';
+    const stripped = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/)?.[1]?.trim() ?? raw.trim();
+    const parsed = JSON.parse(stripped);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.slice(0, 4).filter((item: any) =>
+      typeof item?.title === 'string' && typeof item?.snippet === 'string'
+    ) as StockNewsItem[];
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ── Gemini: Makrolage-News ────────────────────────────────────────────────────
 
 async function fetchMacroNews(dateLabel: string): Promise<string[]> {
@@ -240,6 +301,10 @@ export default async function handler(req: any, res: any) {
         const macroNews = await fetchMacroNews(dateLabel);
         console.log(`[daily-snapshot] Makro-News: ${macroNews.length} Punkte`);
 
+        // Aktien-News: EINMALIG für alle User (1 Gemini-Call mit allen Symbolen)
+        const stockNews = await fetchStockNewsForHoldings(allSymbols);
+        console.log(`[daily-snapshot] Aktien-News: ${stockNews.length} Artikel`);
+
         let emailsSent = 0, emailsFailed = 0;
 
         for (const sub of subscribers) {
@@ -264,6 +329,13 @@ export default async function handler(req: any, res: any) {
           const sign    = dailyChange >= 0 ? '+' : '';
           const subject = `📊 Depot heute: ${sign}${dailyChangePct.toFixed(1)} % | Moneta`;
 
+          // Für diesen User relevante News (passende Ticker zuerst, Rest dahinter)
+          const userSymbols = new Set(userPositions.map(p => p.symbol));
+          const relevantNews = [
+            ...stockNews.filter(n => n.ticker && userSymbols.has(n.ticker)),
+            ...stockNews.filter(n => !n.ticker || !userSymbols.has(n.ticker)),
+          ].slice(0, 4);
+
           const html = buildDailySnapshotHtml({
             userName:   sub.name,
             totalValue,
@@ -273,6 +345,7 @@ export default async function handler(req: any, res: any) {
             dateLabel,
             macroNews,
             topHoldings: userPositions,
+            stockNews: relevantNews,
           });
 
           const result = await sendEmail({ to: sub.email, subject, html });
