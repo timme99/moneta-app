@@ -219,7 +219,7 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
 
         return {
           symbol: sym,
-          name: h.ticker?.company_name ?? sym,
+          name: h.ticker?.company_name ?? h.name ?? sym,
           shares,
           dividendPerShare: divInfo.dividendPerShare,
           annualIncome,
@@ -408,7 +408,7 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
                 {/* ── Premium-gesperrte Positionen (kein Cache-Eintrag) ────────── */}
                 {lockedHoldings.map((h, i) => {
                   const sym = h.ticker?.symbol ?? h.symbol;
-                  const name = h.ticker?.company_name ?? sym;
+                  const name = h.ticker?.company_name ?? h.name ?? sym;
                   return (
                     <div key={`locked-${i}`} className="px-6 py-4 flex items-center justify-between bg-slate-50/60 relative overflow-hidden">
                       {/* Linker Inhalt – Name + Symbol sichtbar */}

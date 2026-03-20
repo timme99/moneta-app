@@ -297,6 +297,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
     const result = await addHolding({
       userId:    effectiveUserId,
       symbol:    selected.symbol,
+      name:      selected.company_name !== selected.symbol ? selected.company_name : null,
       shares:    sharesNum,
       buyPrice:  priceNum,
     });
@@ -352,14 +353,15 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
     setEditingId(h.id);
     // Falls kein ticker_mapping-Eintrag vorhanden, minimales Objekt erstellen
     // damit handleAdd() nicht durch `if (!selected) return` blockiert wird
+    const displayName = h.ticker?.company_name ?? h.name ?? h.symbol;
     const tickerOrStub = h.ticker ?? ({
-      id: 0, symbol: h.symbol, company_name: h.symbol,
+      id: 0, symbol: h.symbol, company_name: displayName,
       sector: null, industry: null, description_static: null,
       pe_ratio_static: null, competitors: null,
       created_at: '', updated_at: '',
     } as TickerEntry);
     setSelected(tickerOrStub);
-    setQuery(h.ticker ? `${h.ticker.company_name} (${h.ticker.symbol})` : h.symbol);
+    setQuery(h.ticker ? `${h.ticker.company_name} (${h.ticker.symbol})` : displayName);
     setShares(h.shares != null ? String(h.shares) : '');
     setBuyPrice(h.buy_price != null ? String(h.buy_price) : '');
     setTotalValue('');
@@ -373,7 +375,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
     if (holdings.length === 0) return '';
     const lines = holdings.map((h, i) => {
       const t   = h.ticker;
-      const displayName = t?.company_name ?? h.symbol;
+      const displayName = t?.company_name ?? h.name ?? h.symbol;
       const pos = h.watchlist
         ? 'Watchlist'
         : `${h.shares} Stück | Kaufpreis: ${h.buy_price?.toFixed(2)} €`;
@@ -1538,7 +1540,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-sm font-bold text-slate-900 truncate">
-                      {h.ticker?.company_name ?? h.symbol}
+                      {h.ticker?.company_name ?? h.name ?? h.symbol}
                     </span>
                     {h.watchlist && (
                       <span className="shrink-0 text-[9px] font-black text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full uppercase tracking-widest">

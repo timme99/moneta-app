@@ -7,6 +7,8 @@ export interface HoldingRow {
   id: string;
   /** Börsensymbol, z. B. "AAPL", "SAP.DE" – direkt in holdings gespeichert */
   symbol: string;
+  /** Firmenname, direkt in holdings gespeichert – z. B. "Apple Inc." */
+  name: string | null;
   /** Metadaten aus ticker_mapping (Name, Sektor, …) – null wenn nicht in DB */
   ticker: TickerEntry | null;
   shares: number | null;

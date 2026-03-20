@@ -30,7 +30,7 @@ export async function loadUserHoldings(userId: string): Promise<HoldingRow[]> {
   // Schritt 1: Holdings laden
   const { data: holdingsData, error } = await sb
     .from('holdings')
-    .select('id, symbol, shares, buy_price, buy_date, notes')
+    .select('id, symbol, name, shares, buy_price, buy_date, notes')
     .eq('user_id', userId)
     .order('created_at', { ascending: false });
 
@@ -54,6 +54,7 @@ export async function loadUserHoldings(userId: string): Promise<HoldingRow[]> {
   return (holdingsData as any[]).map((row) => ({
     id:        row.id as string,
     symbol:    row.symbol as string,
+    name:      (row.name as string | null) ?? tickerMap.get(row.symbol)?.company_name ?? null,
     ticker:    tickerMap.get(row.symbol) ?? null,
     shares:    row.shares as number | null,
     buy_price: row.buy_price as number | null,
@@ -66,12 +67,13 @@ export async function loadUserHoldings(userId: string): Promise<HoldingRow[]> {
 // ── Einzelne Holding speichern ────────────────────────────────────────────────
 
 export interface AddHoldingOptions {
-  userId:   string;
-  symbol:   string;
-  shares?:  number | null;
+  userId:    string;
+  symbol:    string;
+  name?:     string | null;
+  shares?:   number | null;
   buyPrice?: number | null;
-  buyDate?: string | null;
-  notes?:   string | null;
+  buyDate?:  string | null;
+  notes?:    string | null;
 }
 
 export interface AddHoldingResult {
@@ -99,6 +101,7 @@ export async function addHolding(opts: AddHoldingOptions): Promise<AddHoldingRes
   const row = {
     user_id:   opts.userId,
     symbol,
+    name:      opts.name?.trim() || null,
     shares:    opts.shares   ?? null,
     buy_price: opts.buyPrice ?? null,
     buy_date:  opts.buyDate  ?? null,
@@ -137,6 +140,7 @@ export async function addHolding(opts: AddHoldingOptions): Promise<AddHoldingRes
       const { error: updateErr } = await sb
         .from('holdings')
         .update({
+          name:      row.name,
           shares:    row.shares,
           buy_price: row.buy_price,
           buy_date:  row.buy_date,
@@ -423,6 +427,7 @@ export async function addBrokerHoldings(
     const result = await addHolding({
       userId,
       symbol,
+      name:     pos.name?.trim() || null,
       shares:   pos.shares,
       buyPrice: pos.avgPrice,
       buyDate:  pos.date ?? null,
