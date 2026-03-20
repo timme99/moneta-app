@@ -93,7 +93,7 @@ const DashboardSummary: React.FC<Props> = ({ report, healthReport, savingsReport
 
   // KI-Einschätzungen
   const inputs = (holdings ?? []).filter(h => !h.watchlist).map(h => ({
-    name:     h.ticker?.company_name ?? h.symbol,
+    name:     h.ticker?.company_name ?? h.name ?? h.symbol,
     ticker:   h.symbol,
     shares:   h.shares,
     buyPrice: h.buy_price,

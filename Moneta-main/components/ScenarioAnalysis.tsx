@@ -246,7 +246,7 @@ const ScenarioAnalysis: React.FC<ScenarioAnalysisProps> = ({ holdings, report, i
 
   const allWithTicker = holdings.filter(h => h.ticker?.symbol);
   const rawHoldings = allWithTicker.map(h => ({
-    name: h.ticker!.company_name ?? h.symbol,
+    name: h.ticker!.company_name ?? h.name ?? h.symbol,
     ticker: h.ticker!.symbol,
     weight: report?.holdings?.find(rh => rh.ticker === h.ticker!.symbol)?.weight ?? 0,
   }));

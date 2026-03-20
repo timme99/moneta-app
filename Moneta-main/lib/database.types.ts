@@ -104,6 +104,7 @@ export interface Database {
           id: string;
           user_id: string;
           symbol: string;
+          name: string | null;
           shares: number | null;
           buy_price: number | null;
           buy_date: string | null;
@@ -115,6 +116,7 @@ export interface Database {
           id?: string;
           user_id: string;
           symbol: string;
+          name?: string | null;
           shares?: number | null;
           buy_price?: number | null;
           buy_date?: string | null;
@@ -123,6 +125,7 @@ export interface Database {
           updated_at?: string;
         };
         Update: {
+          name?: string | null;
           shares?: number | null;
           buy_price?: number | null;
           buy_date?: string | null;

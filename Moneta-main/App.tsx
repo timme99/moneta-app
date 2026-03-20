@@ -104,7 +104,7 @@ const App: React.FC = () => {
     if (holds.length === 0) return '';
     const lines = holds.map((h, i) => {
       const t = h.ticker;
-      const displayName = t?.company_name ?? h.symbol;
+      const displayName = t?.company_name ?? h.name ?? h.symbol;
       const pos = h.watchlist
         ? 'Watchlist'
         : `${h.shares} Stück | Kaufpreis: ${h.buy_price?.toFixed(2)} €`;
@@ -476,7 +476,7 @@ const App: React.FC = () => {
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className="text-sm font-bold text-slate-900 truncate">
-                                {h.ticker?.company_name ?? h.symbol}
+                                {h.ticker?.company_name ?? h.name ?? h.symbol}
                               </span>
                               {h.watchlist && (
                                 <span className="text-[9px] font-black text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded-full uppercase tracking-widest shrink-0">
