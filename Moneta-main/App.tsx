@@ -14,6 +14,7 @@ import AuthModal from './components/AuthModal';
 import PortfolioInput from './components/PortfolioInput';
 import EarningsCalendar from './components/EarningsCalendar';
 import ScenarioAnalysis from './components/ScenarioAnalysis';
+import TaxOptimizer from './components/TaxOptimizer';
 import NewsletterQuickToggle from './components/NewsletterQuickToggle';
 import PerformanceChart from './components/PerformanceChart';
 import UpgradeModal from './components/UpgradeModal';
@@ -769,6 +770,8 @@ const App: React.FC = () => {
                 </div>
                 <ScenarioAnalysis key={holdings.map(h => h.symbol).sort().join(',')} holdings={holdings} report={analysisReport} isPremium={subscription.isPremium} />
               </div>
+            ) : activeView === 'tax' ? (
+              <TaxOptimizer holdings={holdings} isPremium={subscription.isPremium} />
             ) : activeView === 'settings' ? (
                <Settings account={userAccount} onOpenAuth={() => setShowAuthModal(true)} onProfileRefresh={refreshProfile} />
             ) : activeView === 'portfolio' ? (
