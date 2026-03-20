@@ -50,7 +50,36 @@ export async function loadUserHoldings(userId: string): Promise<HoldingRow[]> {
   const tickerMap = new Map<string, TickerEntry>();
   (tickerData ?? []).forEach((t: any) => tickerMap.set(t.symbol, t as TickerEntry));
 
-  // Schritt 3: Daten zusammenführen
+  // Schritt 3: Fehlende Ticker-Metadaten synchron nachladen
+  const missingSymbols = symbols.filter((s) => {
+    const t = tickerMap.get(s);
+    return !t || t.company_name === s; // Kein Eintrag oder company_name = symbol (unvollständig)
+  });
+
+  if (missingSymbols.length > 0) {
+    const batch = missingSymbols.slice(0, 20);
+    try {
+      await fetch('/api/gemini', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'resolve_ticker',
+          payload: { names: batch },
+          userId,
+        }),
+      });
+      // Frisch angereicherte Ticker nachladen
+      const { data: freshTickers } = await sb
+        .from('ticker_mapping')
+        .select('*')
+        .in('symbol', batch);
+      (freshTickers ?? []).forEach((t: any) => tickerMap.set(t.symbol, t as TickerEntry));
+    } catch {
+      // Anreicherung ist best-effort – Holdings trotzdem zurückgeben
+    }
+  }
+
+  // Schritt 4: Daten zusammenführen
   return (holdingsData as any[]).map((row) => ({
     id:        row.id as string,
     symbol:    row.symbol as string,
