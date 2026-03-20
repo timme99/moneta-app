@@ -326,7 +326,6 @@ const App: React.FC = () => {
     setIsGlobalLoading(true);
     try {
       const masterData = await analyzePortfolio(input);
-      userService.useCredit();
       processMasterData(masterData);
     } catch (error: any) {
       // Anzeige der benutzerfreundlichen deutschen Fehlermeldung

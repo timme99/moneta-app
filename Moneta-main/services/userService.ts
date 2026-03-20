@@ -2,30 +2,7 @@
 import { getSupabaseBrowser } from '../lib/supabaseBrowser';
 import { UserAccount, PortfolioAnalysisReport, PortfolioHealthReport, PortfolioSavingsReport } from '../types';
 
-const LIMIT_KEY = 'moneta_daily_limit';
-
 export const userService = {
-  // ── Daily credit system (rate-limiting only, lives in localStorage) ──────
-
-  getDailyCredits(): number {
-    const data = localStorage.getItem(LIMIT_KEY);
-    if (!data) return 3;
-    const { date, credits } = JSON.parse(data);
-    if (date !== new Date().toDateString()) return 3;
-    return credits;
-  },
-
-  useCredit(): boolean {
-    let credits = this.getDailyCredits();
-    if (credits <= 0) return false;
-    credits -= 1;
-    localStorage.setItem(LIMIT_KEY, JSON.stringify({
-      date: new Date().toDateString(),
-      credits,
-    }));
-    return true;
-  },
-
   // ── User profile (always from Supabase, never localStorage) ─────────────
 
   /**

@@ -118,6 +118,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // Command Dock Focus-State
   const [isFocused, setIsFocused] = useState(false);
@@ -322,18 +323,19 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
 
   // ── Löschen ───────────────────────────────────────────────────────────────
   const handleDelete = async (id: string) => {
+    setDeleteError(null);
     let uid = userId;
     if (sb) {
       const { data: sessionData } = await sb.auth.getSession();
       uid = sessionData?.session?.user?.id ?? userId;
     }
     if (!uid) {
-      console.error('[PortfolioInput] Delete: keine gültige Session');
+      setDeleteError('Sitzung abgelaufen – bitte neu einloggen.');
       return;
     }
     const result = await deleteHolding(id, uid);
     if (!result.success) {
-      console.error('[PortfolioInput] Delete error:', result.error);
+      setDeleteError(`Löschen fehlgeschlagen: ${result.error}`);
       return;
     }
     if (editingId === id) {
@@ -729,7 +731,6 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
         }
         if (!resp.ok) throw new Error('CSV-Analyse fehlgeschlagen');
         const { positions } = await resp.json();
-        console.log('KI Ergebnis:', positions);
 
         if (!positions || positions.length === 0) {
           setImportState({ loading: false, message: '', error: 'Keine Positionen in der CSV erkannt. Bitte stelle sicher, dass die Datei ein Broker-Export mit Stückzahl und Kurs ist.' });
@@ -921,7 +922,6 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
       }
       if (!resp.ok) throw new Error('PDF-Analyse fehlgeschlagen');
       const { positions } = await resp.json();
-      console.log('KI Ergebnis:', positions);
 
       if (!positions || positions.length === 0) {
         setImportState({
@@ -1522,6 +1522,12 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
             {holdings.length} Position{holdings.length !== 1 ? 'en' : ''}
           </span>
         </div>
+        {deleteError && (
+          <div className="flex items-center gap-2 text-[10px] text-rose-600 font-bold bg-rose-50 px-6 py-3 border-b border-rose-100">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            {deleteError}
+          </div>
+        )}
 
         {holdings.length === 0 ? (
           <div className="py-12 text-center space-y-3">

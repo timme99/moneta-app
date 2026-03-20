@@ -112,15 +112,12 @@ async function saveNewsToCache(cacheKey: string, responseText: string): Promise<
 }
 
 export default async function handler(req: any, res: any) {
-  console.log("Check Key:", process.env.GEMINI_API_KEY ? "Vorhanden" : "FEHLT");
-
   if (req.method !== 'POST') return res.status(405).send('Method not allowed');
 
   // ── Auth-Check: CRON_SECRET oder regulärer User-Request ──────────────────
   const authHeader    = req.headers['authorization'] as string | undefined;
   const cronSecret    = process.env.CRON_SECRET;
   const isCronRequest = !!(cronSecret && cronSecret.length >= 16 && authHeader === `Bearer ${cronSecret}`);
-  console.log("[MONETA] Auth-Typ:", isCronRequest ? "CRON (bypass)" : "USER (regulär)");
   // Kein harter Reject – die Route bleibt für alle offen; CRON überspringt Rate-Limits.
 
   try {
@@ -347,10 +344,9 @@ Weitere Beispiele: Apple→AAPL, Microsoft→MSFT, Mercedes/Daimler→MBG.DE, MS
   }
 
   } catch (error: any) {
-    console.error('[MONETA OUTER ERROR]', error);
+    console.error('[MONETA OUTER ERROR]', error?.message);
     return res.status(500).json({
-      message: error?.message,
-      stack: error?.stack,
+      message: error?.message ?? 'Unbekannter Fehler',
       location: "API Route",
     });
   }
