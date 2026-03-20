@@ -163,10 +163,8 @@ Antworte NUR mit dem JSON-Array – kein anderer Text!`;
       parseError = String(e);
       positions = [];
     }
-    console.log('[extract-from-image] raw:', rawText.slice(0, 500));
-    console.log('[extract-from-image] positions:', JSON.stringify(positions));
     if (parseError) console.warn('[extract-from-image] parse error:', parseError);
-    return res.status(200).json({ positions, _debug: { rawLength: rawText.length, parseError } });
+    return res.status(200).json({ positions });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[extract-from-image]', msg);
