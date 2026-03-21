@@ -124,12 +124,12 @@ const AssistantChat: React.FC<AssistantChatProps> = ({ onAnalysisComplete, isPre
     <div className="flex flex-col h-[600px] bg-white rounded-[32px] shadow-2xl border border-slate-200 overflow-hidden">
       <div className="p-5 bg-slate-900 text-white flex justify-between items-center">
         <div className="flex items-center gap-3">
-          <div className="bg-blue-600 p-2 rounded-xl shadow-lg shadow-blue-500/20">
+          <div className="bg-emerald-600 p-2 rounded-xl shadow-lg shadow-emerald-600/20">
             <Bot className="w-5 h-5 text-white" />
           </div>
           <div>
             <h3 className="font-bold text-sm tracking-tight">Moneta AI</h3>
-            <p className="text-[9px] text-blue-400 font-black uppercase tracking-widest">Yahoo Finance Live Sync</p>
+            <p className="text-[9px] text-emerald-400 font-black uppercase tracking-widest">Yahoo Finance Live Sync</p>
           </div>
         </div>
       </div>
@@ -138,7 +138,7 @@ const AssistantChat: React.FC<AssistantChatProps> = ({ onAnalysisComplete, isPre
         {messages.map((msg, i) => (
           <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div className={`max-w-[85%] rounded-2xl p-4 text-xs shadow-sm ${
-              msg.role === 'user' ? 'bg-blue-600 text-white rounded-tr-none' : 'bg-white text-slate-800 border border-slate-200 rounded-tl-none'
+              msg.role === 'user' ? 'bg-emerald-600 text-white rounded-tr-none' : 'bg-white text-slate-800 border border-slate-200 rounded-tl-none'
             }`}>
               {msg.fileData && (
                 <div className="flex items-center gap-2 mb-2 p-2 bg-white/10 rounded-lg border border-white/5">
@@ -153,20 +153,20 @@ const AssistantChat: React.FC<AssistantChatProps> = ({ onAnalysisComplete, isPre
         
         {pendingFile && !isLoading && (
           <div className="animate-in fade-in slide-in-from-bottom-2">
-            <div className="bg-white border border-blue-100 rounded-2xl p-4 flex flex-col gap-3 shadow-lg">
+            <div className="bg-white border border-emerald-100 rounded-2xl p-4 flex flex-col gap-3 shadow-lg">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className="bg-blue-50 p-2.5 rounded-xl text-blue-600">
+                  <div className="bg-emerald-50 p-2.5 rounded-xl text-emerald-600">
                     {pendingFile.type.includes('image') ? <Camera className="w-5 h-5" /> : <FileText className="w-5 h-5" />}
                   </div>
                   <div>
                     <p className="text-[10px] font-black text-slate-900 truncate max-w-[150px] uppercase tracking-tight">{pendingFile.name}</p>
-                    <p className="text-[9px] text-blue-600 font-bold uppercase">Bereit zur Analyse</p>
+                    <p className="text-[9px] text-emerald-600 font-bold uppercase">Bereit zur Analyse</p>
                   </div>
                 </div>
                 <button onClick={() => setPendingFile(null)} className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors"><X className="w-4 h-4 text-slate-400" /></button>
               </div>
-              <button onClick={() => startAnalysis(false)} className="w-full bg-slate-900 text-white py-3 rounded-xl text-[10px] font-black uppercase tracking-[0.2em] flex items-center justify-center gap-2 hover:bg-blue-600 transition-all shadow-xl">
+              <button onClick={() => startAnalysis(false)} className="w-full bg-slate-900 text-white py-3 rounded-xl text-[10px] font-black uppercase tracking-[0.2em] flex items-center justify-center gap-2 hover:bg-emerald-600 transition-all shadow-xl">
                 <BarChart3 className="w-4 h-4" /> Start Yahoo Sync
               </button>
             </div>
@@ -177,9 +177,9 @@ const AssistantChat: React.FC<AssistantChatProps> = ({ onAnalysisComplete, isPre
           <div className="flex justify-start">
             <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex items-center gap-3">
               <div className="relative">
-                <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
+                <Loader2 className="w-5 h-5 animate-spin text-emerald-600" />
                 <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="w-1 h-1 bg-blue-600 rounded-full"></div>
+                  <div className="w-1 h-1 bg-emerald-600 rounded-full"></div>
                 </div>
               </div>
               <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">KI prüft Yahoo Finance Daten...</span>
@@ -207,9 +207,9 @@ const AssistantChat: React.FC<AssistantChatProps> = ({ onAnalysisComplete, isPre
             onChange={(e) => setInput(e.target.value)}
             onKeyPress={(e) => e.key === 'Enter' && handleSendText()}
             placeholder="Nachricht oder Depot-Liste..."
-            className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white text-xs transition-all"
+            className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:bg-white text-xs transition-all"
           />
-          <button onClick={handleSendText} disabled={isLoading || !input.trim()} className="p-3 bg-blue-600 text-white rounded-2xl hover:bg-blue-700 disabled:opacity-50 transition-all shadow-lg shadow-blue-500/20">
+          <button onClick={handleSendText} disabled={isLoading || !input.trim()} className="p-3 bg-emerald-600 text-white rounded-2xl hover:bg-emerald-700 disabled:opacity-50 transition-all shadow-lg shadow-emerald-600/20">
             <Send className="w-5 h-5" />
           </button>
         </div>

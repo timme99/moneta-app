@@ -546,7 +546,7 @@ const App: React.FC = () => {
                             <div className="flex items-center gap-0.5">
                               <button
                                 onClick={() => setShowDepotDrawer(true)}
-                                className="p-1.5 rounded-lg text-slate-300 hover:text-blue-500 hover:bg-blue-50 transition-colors"
+                                className="p-1.5 rounded-lg text-slate-300 hover:text-emerald-500 hover:bg-emerald-50 transition-colors"
                                 title="Im Drawer bearbeiten"
                               >
                                 <ChevronRight className="w-3.5 h-3.5" />
@@ -573,7 +573,7 @@ const App: React.FC = () => {
                     <div className="px-6 py-3 text-center">
                       <button
                         onClick={() => setShowDepotDrawer(true)}
-                        className="text-[10px] text-blue-500 font-bold hover:text-blue-600 transition-colors"
+                        className="text-[10px] text-emerald-500 font-bold hover:text-emerald-600 transition-colors"
                       >
                         + {holdings.length - 6} weitere Position{holdings.length - 6 !== 1 ? 'en' : ''} anzeigen
                       </button>
@@ -590,7 +590,7 @@ const App: React.FC = () => {
                         if (text) handleAnalysis({ text });
                       }}
                       disabled={isGlobalLoading}
-                      className="w-full bg-blue-600 text-white py-3 rounded-[14px] text-[10px] font-black uppercase tracking-widest hover:bg-slate-900 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+                      className="w-full bg-emerald-600 text-white py-3 rounded-[14px] text-[10px] font-black uppercase tracking-widest hover:bg-slate-900 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
                     >
                       {isGlobalLoading
                         ? <Loader2 className="w-4 h-4 animate-spin" />
@@ -614,9 +614,9 @@ const App: React.FC = () => {
 
             {/* ── Freemium-Gate ───────────────────────────────────────────── */}
             {!subscription.isPremium && holdings.length >= PLAN_LIMITS.free.maxHoldings && (
-              <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-[24px] p-5 flex items-center gap-4">
-                <div className="bg-blue-100 p-3 rounded-2xl shrink-0">
-                  <Lock className="w-5 h-5 text-blue-600" />
+              <div className="bg-gradient-to-r from-emerald-50 to-green-50 border border-emerald-200 rounded-[24px] p-5 flex items-center gap-4">
+                <div className="bg-emerald-100 p-3 rounded-2xl shrink-0">
+                  <Lock className="w-5 h-5 text-emerald-600" />
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-black text-slate-900">Limit erreicht: {PLAN_LIMITS.free.maxHoldings} Positionen</p>
@@ -626,7 +626,7 @@ const App: React.FC = () => {
                 </div>
                 <button
                   onClick={() => setShowUpgradeModal(true)}
-                  className="shrink-0 bg-blue-600 text-white text-[9px] font-black uppercase tracking-widest px-4 py-2.5 rounded-xl hover:bg-blue-700 transition-colors whitespace-nowrap"
+                  className="shrink-0 bg-emerald-600 text-white text-[9px] font-black uppercase tracking-widest px-4 py-2.5 rounded-xl hover:bg-emerald-700 transition-colors whitespace-nowrap"
                 >
                   Upgrade
                 </button>
@@ -698,32 +698,32 @@ const App: React.FC = () => {
                 <button
                   onClick={() => setActiveView('earnings')}
                   className={`flex items-center gap-4 p-5 rounded-[24px] border transition-all text-left group hover:shadow-md ${
-                    activeView === 'earnings' ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-slate-200 hover:border-blue-300'
+                    activeView === 'earnings' ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-white border-slate-200 hover:border-emerald-300'
                   }`}
                 >
                   <div className={`p-3 rounded-[14px] ${activeView === 'earnings' ? 'bg-white/20' : 'bg-emerald-50 group-hover:bg-emerald-100'}`}>
                     <Calendar className={`w-5 h-5 ${activeView === 'earnings' ? 'text-white' : 'text-emerald-600'}`} />
                   </div>
                   <div>
-                    <p className={`text-[10px] font-black uppercase tracking-widest ${activeView === 'earnings' ? 'text-blue-100' : 'text-slate-400'}`}>Quartalszahlen</p>
+                    <p className={`text-[10px] font-black uppercase tracking-widest ${activeView === 'earnings' ? 'text-emerald-100' : 'text-slate-400'}`}>Quartalszahlen</p>
                     <p className={`text-sm font-black mt-0.5 ${activeView === 'earnings' ? 'text-white' : 'text-slate-900'}`}>Earnings Calendar</p>
-                    <p className={`text-[10px] font-medium mt-0.5 ${activeView === 'earnings' ? 'text-blue-100' : 'text-slate-400'}`}>Nächste Termine deiner Aktien</p>
+                    <p className={`text-[10px] font-medium mt-0.5 ${activeView === 'earnings' ? 'text-emerald-100' : 'text-slate-400'}`}>Nächste Termine deiner Aktien</p>
                   </div>
                 </button>
 
                 <button
                   onClick={() => setActiveView('scenarios')}
                   className={`flex items-center gap-4 p-5 rounded-[24px] border transition-all text-left group hover:shadow-md ${
-                    activeView === 'scenarios' ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-slate-200 hover:border-blue-300'
+                    activeView === 'scenarios' ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-white border-slate-200 hover:border-emerald-300'
                   }`}
                 >
-                  <div className={`p-3 rounded-[14px] ${activeView === 'scenarios' ? 'bg-white/20' : 'bg-purple-50 group-hover:bg-purple-100'}`}>
-                    <FlaskConical className={`w-5 h-5 ${activeView === 'scenarios' ? 'text-white' : 'text-purple-600'}`} />
+                  <div className={`p-3 rounded-[14px] ${activeView === 'scenarios' ? 'bg-white/20' : 'bg-emerald-50 group-hover:bg-emerald-100'}`}>
+                    <FlaskConical className={`w-5 h-5 ${activeView === 'scenarios' ? 'text-white' : 'text-emerald-700'}`} />
                   </div>
                   <div>
-                    <p className={`text-[10px] font-black uppercase tracking-widest ${activeView === 'scenarios' ? 'text-blue-100' : 'text-slate-400'}`}>Simulation</p>
+                    <p className={`text-[10px] font-black uppercase tracking-widest ${activeView === 'scenarios' ? 'text-emerald-100' : 'text-slate-400'}`}>Simulation</p>
                     <p className={`text-sm font-black mt-0.5 ${activeView === 'scenarios' ? 'text-white' : 'text-slate-900'}`}>Szenario-Analyse</p>
-                    <p className={`text-[10px] font-medium mt-0.5 ${activeView === 'scenarios' ? 'text-blue-100' : 'text-slate-400'}`}>Was wäre wenn? · KI-Simulation</p>
+                    <p className={`text-[10px] font-medium mt-0.5 ${activeView === 'scenarios' ? 'text-emerald-100' : 'text-slate-400'}`}>Was wäre wenn? · KI-Simulation</p>
                   </div>
                 </button>
               </div>
@@ -843,9 +843,9 @@ const App: React.FC = () => {
               <div className="space-y-4">
                 <h4 className="text-[10px] font-black text-slate-900 uppercase tracking-[0.2em]">Rechtliches</h4>
                 <div className="flex flex-col gap-2">
-                  <button onClick={() => openLegal('impressum')} className="text-sm text-slate-500 hover:text-blue-600 transition-colors text-left font-medium">Impressum</button>
-                  <button onClick={() => openLegal('disclaimer')} className="text-sm text-slate-500 hover:text-blue-600 transition-colors text-left font-medium">Haftungsausschluss</button>
-                  <button onClick={() => openLegal('privacy')} className="text-sm text-slate-500 hover:text-blue-600 transition-colors text-left font-medium">Datenschutz</button>
+                  <button onClick={() => openLegal('impressum')} className="text-sm text-slate-500 hover:text-emerald-600 transition-colors text-left font-medium">Impressum</button>
+                  <button onClick={() => openLegal('disclaimer')} className="text-sm text-slate-500 hover:text-emerald-600 transition-colors text-left font-medium">Haftungsausschluss</button>
+                  <button onClick={() => openLegal('privacy')} className="text-sm text-slate-500 hover:text-emerald-600 transition-colors text-left font-medium">Datenschutz</button>
                 </div>
               </div>
               <div className="space-y-4">

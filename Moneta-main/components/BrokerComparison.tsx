@@ -3,7 +3,7 @@ import React from 'react';
 import { CheckCircle2, Star, ExternalLink, ShieldCheck, Zap } from 'lucide-react';
 
 const BrokerCard = ({ name, tags, color, promo, features, cta }: any) => (
-  <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col hover:border-blue-400 transition-all hover:shadow-xl group">
+  <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col hover:border-emerald-400 transition-all hover:shadow-xl group">
     <div className={`h-2 bg-${color}-500 w-full`}></div>
     <div className="p-6 flex-1">
       <div className="flex justify-between items-start mb-4">
@@ -22,9 +22,9 @@ const BrokerCard = ({ name, tags, color, promo, features, cta }: any) => (
         ))}
       </div>
 
-      <div className="bg-blue-50 rounded-xl p-3 mb-6">
-        <span className="text-xs font-bold text-blue-600 uppercase tracking-tighter block mb-1">Top Angebot</span>
-        <p className="text-sm font-bold text-blue-900">{promo}</p>
+      <div className="bg-emerald-50 rounded-xl p-3 mb-6">
+        <span className="text-xs font-bold text-emerald-600 uppercase tracking-tighter block mb-1">Top Angebot</span>
+        <p className="text-sm font-bold text-slate-900">{promo}</p>
       </div>
 
       <ul className="space-y-2 mb-8">
@@ -38,7 +38,7 @@ const BrokerCard = ({ name, tags, color, promo, features, cta }: any) => (
     </div>
     
     <div className="p-6 pt-0">
-      <button className="w-full bg-slate-900 text-white py-3 rounded-xl font-bold group-hover:bg-blue-600 transition-colors flex items-center justify-center gap-2">
+      <button className="w-full bg-slate-900 text-white py-3 rounded-xl font-bold group-hover:bg-emerald-600 transition-colors flex items-center justify-center gap-2">
         {cta} <ExternalLink className="w-4 h-4" />
       </button>
       <p className="text-[10px] text-slate-400 text-center mt-3">* Affiliate-Link. Sie unterstützen uns ohne Mehrkosten.</p>
@@ -82,14 +82,14 @@ const BrokerComparison: React.FC = () => {
       </div>
 
       <div className="bg-white p-8 rounded-3xl border border-slate-200 flex flex-col md:flex-row items-center gap-8">
-        <div className="bg-blue-100 p-4 rounded-2xl">
-          <ShieldCheck className="w-12 h-12 text-blue-600" />
+        <div className="bg-emerald-100 p-4 rounded-2xl">
+          <ShieldCheck className="w-12 h-12 text-emerald-600" />
         </div>
         <div className="flex-1">
           <h4 className="text-xl font-bold text-slate-900">Nicht sicher, welcher Broker passt?</h4>
           <p className="text-slate-500 mt-1">Fragen Sie unseren KI-Assistenten im Chat. Er kennt die Vor- und Nachteile jedes Anbieters basierend auf Ihrem Anlageprofil.</p>
         </div>
-        <button className="px-8 py-4 bg-blue-600 text-white rounded-2xl font-bold hover:bg-blue-700 transition-all shadow-xl shadow-blue-500/20">
+        <button className="px-8 py-4 bg-emerald-600 text-white rounded-2xl font-bold hover:bg-emerald-700 transition-all shadow-xl shadow-emerald-600/20">
           KI-Beratung starten
         </button>
       </div>

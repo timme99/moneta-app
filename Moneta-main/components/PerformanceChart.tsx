@@ -107,14 +107,14 @@ const PerformanceChart: React.FC<PerformanceChartProps> = ({ userId, onUpgradeCl
     return (
       <div className="bg-white border border-slate-200 rounded-[24px] p-6">
         <div className="flex items-center gap-3 mb-3">
-          <TrendingUp className="w-5 h-5 text-blue-600 shrink-0" />
+          <TrendingUp className="w-5 h-5 text-emerald-600 shrink-0" />
           <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-[0.15em]">
             Performance-Chart
           </h3>
         </div>
-        <div className="flex items-start gap-3 bg-blue-50 rounded-2xl p-4">
-          <Info className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
-          <p className="text-[10px] text-blue-600 font-medium leading-relaxed">
+        <div className="flex items-start gap-3 bg-emerald-50 rounded-2xl p-4">
+          <Info className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+          <p className="text-[10px] text-emerald-600 font-medium leading-relaxed">
             Dein erster Snapshot wird heute Nacht erstellt. Ab morgen siehst du hier
             die historische Entwicklung deines Depots.
           </p>
@@ -200,7 +200,7 @@ const PerformanceChart: React.FC<PerformanceChartProps> = ({ userId, onUpgradeCl
             </p>
             <button
               onClick={onUpgradeClick}
-              className="text-[9px] font-black text-white bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-xl transition-colors uppercase tracking-widest"
+              className="text-[9px] font-black text-white bg-emerald-600 hover:bg-emerald-700 px-4 py-2 rounded-xl transition-colors uppercase tracking-widest"
             >
               Jetzt upgraden
             </button>

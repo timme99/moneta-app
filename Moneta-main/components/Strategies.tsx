@@ -10,7 +10,7 @@ const ExplanationModal = ({ info, onClose }: { info: StrategyExplanation, onClos
       <div className="sticky top-0 bg-white/80 backdrop-blur-md px-10 py-6 border-b border-slate-100 flex items-center justify-between z-10">
         <div>
           <h2 className="text-2xl font-black text-slate-900 tracking-tight">{info.strategy_name}</h2>
-          <p className="text-[10px] font-black uppercase tracking-widest text-blue-600">Neutraler Bildungskanal</p>
+          <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600">Neutraler Bildungskanal</p>
         </div>
         <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full transition-colors"><X className="w-6 h-6 text-slate-400" /></button>
       </div>
@@ -26,7 +26,7 @@ const ExplanationModal = ({ info, onClose }: { info: StrategyExplanation, onClos
             {Object.entries(info.typical_allocation).map(([key, val]) => (
               <div key={key} className="flex justify-between items-center bg-white p-3 rounded-xl shadow-sm">
                 <span className="text-xs font-bold text-slate-700">{key}</span>
-                <span className="text-xs font-black text-blue-600">{val}</span>
+                <span className="text-xs font-black text-emerald-600">{val}</span>
               </div>
             ))}
           </div>
@@ -57,9 +57,9 @@ const ExplanationModal = ({ info, onClose }: { info: StrategyExplanation, onClos
           </div>
         </div>
 
-        <div className="bg-blue-600 p-8 rounded-[32px] text-white relative overflow-hidden">
+        <div className="bg-emerald-600 p-8 rounded-[32px] text-white relative overflow-hidden">
           <History className="absolute -bottom-6 -right-6 w-32 h-32 text-white/10 -rotate-12" />
-          <h4 className="text-[10px] font-black uppercase tracking-widest text-blue-200 mb-3 flex items-center gap-2">
+          <h4 className="text-[10px] font-black uppercase tracking-widest text-emerald-200 mb-3 flex items-center gap-2">
             <History className="w-4 h-4" /> Historischer Kontext
           </h4>
           <p className="text-sm font-medium leading-relaxed relative z-10">{info.historical_context}</p>
@@ -79,7 +79,7 @@ const ExplanationModal = ({ info, onClose }: { info: StrategyExplanation, onClos
 );
 
 const StrategyCard = ({ title, desc, risk, icon: Icon, color, returns, onLearnMore }: any) => (
-  <div className="bg-white p-8 rounded-[32px] border border-slate-200 hover:border-blue-400 transition-all cursor-pointer group shadow-sm flex flex-col h-full">
+  <div className="bg-white p-8 rounded-[32px] border border-slate-200 hover:border-emerald-400 transition-all cursor-pointer group shadow-sm flex flex-col h-full">
     <div className={`p-4 rounded-[20px] bg-${color}-50 w-fit mb-6 group-hover:scale-110 transition-transform`}>
       <Icon className={`w-8 h-8 text-${color}-600`} />
     </div>
@@ -93,7 +93,7 @@ const StrategyCard = ({ title, desc, risk, icon: Icon, color, returns, onLearnMo
       <div className="text-slate-500 font-black text-lg">{returns} <span className="text-[9px] text-slate-400 uppercase tracking-widest block font-bold">Hist. Ø p.a.*</span></div>
       <button 
         onClick={(e) => { e.stopPropagation(); onLearnMore(); }}
-        className="px-5 py-3 bg-slate-900 text-white text-[9px] font-black uppercase tracking-widest rounded-xl hover:bg-blue-600 transition-all flex items-center gap-2 shadow-xl shadow-slate-900/10"
+        className="px-5 py-3 bg-slate-900 text-white text-[9px] font-black uppercase tracking-widest rounded-xl hover:bg-emerald-600 transition-all flex items-center gap-2 shadow-xl shadow-slate-900/10"
       >
         Details <ArrowRight className="w-3 h-3" />
       </button>
@@ -120,7 +120,7 @@ const Strategies: React.FC = () => {
   return (
     <div className="space-y-8 animate-in slide-in-from-left-10 duration-500">
       <div className="bg-gradient-to-br from-slate-900 to-slate-800 p-12 rounded-[48px] text-white relative overflow-hidden shadow-2xl">
-        <div className="absolute top-0 right-0 w-96 h-96 bg-blue-500/10 rounded-full -mr-32 -mt-32 blur-3xl animate-pulse"></div>
+        <div className="absolute top-0 right-0 w-96 h-96 bg-emerald-500/10 rounded-full -mr-32 -mt-32 blur-3xl animate-pulse"></div>
         <div className="relative z-10 max-w-2xl">
           <div className="flex items-center gap-2 mb-6">
             <Star className="w-5 h-5 text-amber-400 fill-amber-400" />
@@ -134,7 +134,7 @@ const Strategies: React.FC = () => {
       {isLoading && (
         <div className="flex justify-center py-12">
           <div className="bg-white px-6 py-4 rounded-2xl shadow-xl border border-slate-100 flex items-center gap-3">
-            <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
+            <Loader2 className="w-5 h-5 animate-spin text-emerald-600" />
             <span className="text-xs font-black text-slate-900 uppercase tracking-widest">KI bereitet Daten vor...</span>
           </div>
         </div>

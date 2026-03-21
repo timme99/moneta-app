@@ -51,7 +51,7 @@ const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, feature })
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="bg-gradient-to-br from-blue-600 to-blue-700 px-6 pt-8 pb-6 text-white relative">
+        <div className="bg-gradient-to-br from-emerald-950 to-emerald-900 px-6 pt-8 pb-6 text-white relative">
           <button
             onClick={onClose}
             className="absolute top-4 right-4 p-2 hover:bg-white/20 rounded-xl transition-colors"
@@ -65,7 +65,7 @@ const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, feature })
           <h2 className="text-lg font-black leading-tight">
             {feature ? `${feature} – Premium-Feature` : 'Premium-Features'}
           </h2>
-          <p className="text-blue-100 text-xs font-medium mt-1">
+          <p className="text-emerald-100 text-xs font-medium mt-1">
             Diese Funktionen sind bald verfügbar – trage dich jetzt ein.
           </p>
         </div>
@@ -74,8 +74,8 @@ const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, feature })
         <div className="px-6 py-4 space-y-3">
           {PREMIUM_FEATURES.map(({ icon: Icon, label, desc }) => (
             <div key={label} className="flex items-start gap-3">
-              <div className="w-7 h-7 bg-blue-50 rounded-xl flex items-center justify-center shrink-0 mt-0.5">
-                <Icon className="w-3.5 h-3.5 text-blue-600" />
+              <div className="w-7 h-7 bg-emerald-50 rounded-xl flex items-center justify-center shrink-0 mt-0.5">
+                <Icon className="w-3.5 h-3.5 text-emerald-600" />
               </div>
               <div>
                 <span className="text-xs font-bold text-slate-900">{label}</span>
@@ -101,7 +101,7 @@ const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, feature })
             href="mailto:hello@moneta.app?subject=Warteliste%20Premium&body=Ich%20m%C3%B6chte%20auf%20die%20Warteliste%20f%C3%BCr%20Moneta%20Premium."
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center justify-center gap-2 w-full py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-black text-sm uppercase tracking-widest shadow-lg shadow-blue-600/20 transition-all hover:shadow-blue-600/30 hover:-translate-y-0.5 active:translate-y-0"
+            className="flex items-center justify-center gap-2 w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-black text-sm uppercase tracking-widest shadow-lg shadow-emerald-600/20 transition-all hover:shadow-emerald-600/20 hover:-translate-y-0.5 active:translate-y-0"
           >
             <Zap className="w-4 h-4" />
             Hier auf Warteliste eintragen

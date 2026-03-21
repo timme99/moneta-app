@@ -273,8 +273,8 @@ const Settings: React.FC<SettingsProps> = ({ account, onOpenAuth, onProfileRefre
   }) => (
     <div className="flex items-start justify-between px-5 py-5 sm:p-6 border-b border-slate-100 last:border-0">
       <div className="flex items-start gap-4 min-w-0">
-        <div className={`bg-white border p-3 rounded-2xl mt-0.5 transition-all shrink-0 ${isActive ? 'border-blue-300 bg-blue-50' : 'border-slate-200'}`}>
-          <Icon className={`w-5 h-5 ${isActive ? 'text-blue-600' : 'text-slate-400'}`} />
+        <div className={`bg-white border p-3 rounded-2xl mt-0.5 transition-all shrink-0 ${isActive ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200'}`}>
+          <Icon className={`w-5 h-5 ${isActive ? 'text-emerald-600' : 'text-slate-400'}`} />
         </div>
         <div className="min-w-0">
           <h4 className="font-black text-slate-900 text-sm tracking-tight">{label}</h4>
@@ -293,9 +293,9 @@ const Settings: React.FC<SettingsProps> = ({ account, onOpenAuth, onProfileRefre
         title={account ? (isActive ? 'Deaktivieren' : 'Aktivieren') : 'Bitte zuerst anmelden'}
       >
         {saving === prefKey
-          ? <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
+          ? <Loader2 className="w-5 h-5 animate-spin text-emerald-600" />
           : isActive
-            ? <ToggleRight className="w-7 h-7 text-blue-600" />
+            ? <ToggleRight className="w-7 h-7 text-emerald-600" />
             : <ToggleLeft  className="w-7 h-7 text-slate-300" />}
       </button>
     </div>
@@ -355,9 +355,9 @@ const Settings: React.FC<SettingsProps> = ({ account, onOpenAuth, onProfileRefre
                         onChange={(e) => setNameInput(e.target.value)}
                         onKeyDown={(e) => { if (e.key === 'Enter') saveName(); if (e.key === 'Escape') setEditingName(false); }}
                         placeholder={displayName}
-                        className="text-base border border-slate-300 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium w-44 min-h-[44px]"
+                        className="text-base border border-slate-300 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-600 font-medium w-44 min-h-[44px]"
                       />
-                      <button onClick={saveName} disabled={saving === 'name' || !nameInput.trim()} className="text-blue-600 hover:text-blue-800 disabled:opacity-40 transition-colors">
+                      <button onClick={saveName} disabled={saving === 'name' || !nameInput.trim()} className="text-emerald-600 hover:text-emerald-800 disabled:opacity-40 transition-colors">
                         {saving === 'name' ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
                       </button>
                       <button onClick={() => setEditingName(false)} className="text-slate-400 hover:text-slate-600 transition-colors">
@@ -399,9 +399,9 @@ const Settings: React.FC<SettingsProps> = ({ account, onOpenAuth, onProfileRefre
                           onChange={(e) => setEmailInput(e.target.value)}
                           onKeyDown={(e) => { if (e.key === 'Enter') saveEmail(); if (e.key === 'Escape') setEditingEmail(false); }}
                           placeholder="neue@email.de"
-                          className="text-base border border-slate-300 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium w-44 min-h-[44px]"
+                          className="text-base border border-slate-300 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-600 font-medium w-44 min-h-[44px]"
                         />
-                        <button onClick={saveEmail} disabled={saving === 'email' || !emailInput.trim()} className="text-blue-600 hover:text-blue-800 disabled:opacity-40 transition-colors">
+                        <button onClick={saveEmail} disabled={saving === 'email' || !emailInput.trim()} className="text-emerald-600 hover:text-emerald-800 disabled:opacity-40 transition-colors">
                           {saving === 'email' ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
                         </button>
                         <button onClick={() => setEditingEmail(false)} className="text-slate-400 hover:text-slate-600 transition-colors">
@@ -518,15 +518,15 @@ const Settings: React.FC<SettingsProps> = ({ account, onOpenAuth, onProfileRefre
             </button>
           </div>
         ) : (
-          <div className="bg-blue-600 p-8 rounded-[40px] text-white shadow-xl shadow-blue-500/20 text-center">
+          <div className="bg-emerald-600 p-8 rounded-[40px] text-white shadow-xl shadow-emerald-600/20 text-center">
             <h4 className="font-black text-lg mb-2">Cloud-Features nutzen</h4>
-            <p className="text-xs text-blue-100 mb-6 leading-relaxed">
+            <p className="text-xs text-emerald-100 mb-6 leading-relaxed">
               Registrieren Sie sich, um Ihr Portfolio auf allen Geräten zu synchronisieren
               und wöchentliche KI-Analysen per E-Mail zu erhalten.
             </p>
             <button
               onClick={onOpenAuth}
-              className="px-8 py-4 bg-white text-blue-600 rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-blue-50 transition-all"
+              className="px-8 py-4 bg-white text-emerald-600 rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-emerald-50 transition-all"
             >
               Jetzt Konto erstellen / Anmelden
             </button>

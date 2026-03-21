@@ -161,8 +161,8 @@ const SCENARIOS: PredefinedScenario[] = [
 const categoryColors: Record<string, string> = {
   Krise: 'bg-rose-50 text-rose-600 border-rose-100',
   Makro: 'bg-amber-50 text-amber-600 border-amber-100',
-  Sektor: 'bg-purple-50 text-purple-600 border-purple-100',
-  Geopolitik: 'bg-blue-50 text-blue-600 border-blue-100',
+  Sektor: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  Geopolitik: 'bg-emerald-50 text-emerald-600 border-emerald-100',
 };
 
 // ── Slider helper ─────────────────────────────────────────────────────────────
@@ -203,7 +203,7 @@ const SliderField = ({
       </div>
       <div className="relative h-2 bg-slate-100 rounded-full">
         <div
-          className="absolute h-2 rounded-full bg-gradient-to-r from-blue-500 to-blue-600 transition-all"
+          className="absolute h-2 rounded-full bg-gradient-to-r from-emerald-950 to-emerald-900 transition-all"
           style={{ width: `${pct}%` }}
         />
         <input
@@ -216,7 +216,7 @@ const SliderField = ({
           className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
         />
         <div
-          className="absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-white border-2 border-blue-600 rounded-full shadow-sm transition-all pointer-events-none"
+          className="absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-white border-2 border-emerald-600 rounded-full shadow-sm transition-all pointer-events-none"
           style={{ left: `calc(${pct}% - 8px)` }}
         />
       </div>
@@ -331,12 +331,12 @@ const ScenarioAnalysis: React.FC<ScenarioAnalysisProps> = ({ holdings, report, i
     <div className="space-y-6 animate-in fade-in duration-500">
 
       {/* Header */}
-      <div className="bg-gradient-to-br from-slate-900 to-purple-950 p-8 md:p-12 rounded-[40px] text-white relative overflow-hidden shadow-2xl">
-        <div className="absolute top-0 right-0 w-64 h-64 bg-purple-500/10 rounded-full -mr-16 -mt-16 blur-3xl" />
+      <div className="bg-gradient-to-br from-slate-900 to-emerald-950 p-8 md:p-12 rounded-[40px] text-white relative overflow-hidden shadow-2xl">
+        <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-500/10 rounded-full -mr-16 -mt-16 blur-3xl" />
         <div className="relative z-10">
           <div className="flex items-center gap-2 mb-4">
-            <FlaskConical className="w-5 h-5 text-purple-400" />
-            <span className="text-purple-400 font-black text-[10px] uppercase tracking-[0.3em]">Was wäre wenn</span>
+            <FlaskConical className="w-5 h-5 text-emerald-700" />
+            <span className="text-emerald-700 font-black text-[10px] uppercase tracking-[0.3em]">Was wäre wenn</span>
           </div>
           <h2 className="text-3xl md:text-4xl font-black mb-3 tracking-tighter">Szenario-Analyse</h2>
           <p className="text-slate-400 font-medium leading-relaxed text-sm max-w-xl">
@@ -355,9 +355,9 @@ const ScenarioAnalysis: React.FC<ScenarioAnalysisProps> = ({ holdings, report, i
 
       {/* Free-User: Holdings-Cap-Hinweis */}
       {holdingsTrimmed && (
-        <div className="bg-blue-50 border border-blue-100 p-4 rounded-[20px] flex items-start gap-3">
-          <Info className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
-          <p className="text-[11px] text-blue-700 font-medium leading-relaxed">
+        <div className="bg-emerald-50 border border-emerald-100 p-4 rounded-[20px] flex items-start gap-3">
+          <Info className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+          <p className="text-[11px] text-emerald-700 font-medium leading-relaxed">
             <strong>Free-Analyse:</strong> Es werden die Top-{scenarioLimit} Positionen nach Gewichtung analysiert ({allWithTicker.length} im Depot). Für alle {allWithTicker.length} Positionen mit KI-Analyse → Premium.
           </p>
         </div>
@@ -376,8 +376,8 @@ const ScenarioAnalysis: React.FC<ScenarioAnalysisProps> = ({ holdings, report, i
           {/* ── Makro-Regler ──────────────────────────────────────────────────── */}
           <div className="bg-white border border-slate-200 rounded-[32px] p-6 md:p-8 shadow-sm">
             <div className="flex items-center gap-3 mb-6">
-              <div className="w-9 h-9 bg-blue-50 rounded-2xl flex items-center justify-center shrink-0">
-                <Sparkles className="w-4 h-4 text-blue-600" />
+              <div className="w-9 h-9 bg-emerald-50 rounded-2xl flex items-center justify-center shrink-0">
+                <Sparkles className="w-4 h-4 text-emerald-600" />
               </div>
               <div>
                 <h3 className="text-base font-black text-slate-900 tracking-tight">Eigenes Makro-Szenario</h3>
@@ -432,7 +432,7 @@ const ScenarioAnalysis: React.FC<ScenarioAnalysisProps> = ({ holdings, report, i
             <button
               onClick={runCustomScenario}
               disabled={isLoading}
-              className="w-full py-4 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed text-white rounded-2xl font-black text-sm uppercase tracking-widest flex items-center justify-center gap-2.5 shadow-lg shadow-blue-600/20 transition-all hover:shadow-blue-600/30 hover:-translate-y-0.5 active:translate-y-0"
+              className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 disabled:cursor-not-allowed text-white rounded-2xl font-black text-sm uppercase tracking-widest flex items-center justify-center gap-2.5 shadow-lg shadow-emerald-600/20 transition-all hover:shadow-emerald-600/20 hover:-translate-y-0.5 active:translate-y-0"
             >
               {isLoading ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -456,7 +456,7 @@ const ScenarioAnalysis: React.FC<ScenarioAnalysisProps> = ({ holdings, report, i
                   disabled={isLoading}
                   className={`w-full text-left p-5 rounded-[20px] border transition-all hover:shadow-md disabled:opacity-60 ${
                     selectedScenario?.id === scenario.id
-                      ? 'border-blue-300 bg-blue-50 shadow-md ring-1 ring-blue-200'
+                      ? 'border-emerald-300 bg-emerald-50 shadow-md ring-1 ring-emerald-600'
                       : 'border-slate-200 bg-white hover:border-slate-300'
                   }`}
                 >
@@ -481,7 +481,7 @@ const ScenarioAnalysis: React.FC<ScenarioAnalysisProps> = ({ holdings, report, i
             <div className="lg:col-span-3">
               {isLoading && (
                 <div className="bg-white border border-slate-200 rounded-[28px] p-16 flex flex-col items-center justify-center shadow-sm h-full min-h-[400px]">
-                  <Loader2 className="w-10 h-10 animate-spin text-blue-600 mb-4" />
+                  <Loader2 className="w-10 h-10 animate-spin text-emerald-600 mb-4" />
                   <p className="text-sm font-black text-slate-900 uppercase tracking-widest">KI analysiert historische Daten…</p>
                   <p className="text-[11px] text-slate-400 mt-2">Investieren mit Durchblick – Bitte kurz warten</p>
                 </div>
@@ -509,7 +509,7 @@ const ScenarioAnalysis: React.FC<ScenarioAnalysisProps> = ({ holdings, report, i
                         <div className="flex items-center gap-2 flex-wrap mb-0.5">
                           <h3 className="font-black text-slate-900 text-lg">{result.scenario}</h3>
                           {!isPremium && selectedScenario && (
-                            <span className="text-[8px] font-black bg-blue-50 text-blue-600 border border-blue-100 px-2 py-0.5 rounded-lg uppercase tracking-widest">Basisanalyse</span>
+                            <span className="text-[8px] font-black bg-emerald-50 text-emerald-600 border border-emerald-100 px-2 py-0.5 rounded-lg uppercase tracking-widest">Basisanalyse</span>
                           )}
                         </div>
                         <p className="text-[11px] text-slate-400 font-medium">{result.description}</p>
@@ -528,12 +528,12 @@ const ScenarioAnalysis: React.FC<ScenarioAnalysisProps> = ({ holdings, report, i
                     {result.affectedHoldings?.length > 0 && (
                       <div>
                         <h4 className="text-[10px] font-black text-slate-900 uppercase tracking-[0.2em] mb-3 flex items-center gap-2">
-                          <BarChart3 className="w-4 h-4 text-blue-600" /> Betroffene Positionen
+                          <BarChart3 className="w-4 h-4 text-emerald-600" /> Betroffene Positionen
                         </h4>
                         <div className="space-y-2">
                           {result.affectedHoldings.map((h, i) => (
                             <div key={i} className="flex items-start gap-3 bg-slate-50 p-4 rounded-xl border border-slate-100">
-                              <span className="text-[10px] font-mono font-black text-blue-600 bg-blue-50 border border-blue-100 px-2 py-1 rounded-lg shrink-0">{h.ticker}</span>
+                              <span className="text-[10px] font-mono font-black text-emerald-600 bg-emerald-50 border border-emerald-100 px-2 py-1 rounded-lg shrink-0">{h.ticker}</span>
                               <div>
                                 <p className="text-xs font-bold text-slate-800 mb-0.5">{h.name}</p>
                                 <p className="text-[11px] text-slate-500 leading-relaxed">{h.impact}</p>

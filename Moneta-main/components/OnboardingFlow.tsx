@@ -26,7 +26,7 @@ const OnboardingFlow: React.FC<Props> = ({ onComplete }) => {
         return (
           <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className="text-center mb-8">
-              <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 text-blue-600">
+              <div className="bg-emerald-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 text-emerald-600">
                 <Target className="w-8 h-8" />
               </div>
               <h2 className="text-2xl font-bold text-slate-900">Wie alt sind Sie?</h2>
@@ -36,9 +36,9 @@ const OnboardingFlow: React.FC<Props> = ({ onComplete }) => {
               type="range" min="18" max="80" 
               value={profile.age} 
               onChange={e => setProfile({...profile, age: parseInt(e.target.value)})}
-              className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+              className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
             />
-            <div className="text-center text-4xl font-bold text-blue-600">{profile.age} Jahre</div>
+            <div className="text-center text-4xl font-bold text-emerald-600">{profile.age} Jahre</div>
           </div>
         );
       case 2:
@@ -86,14 +86,14 @@ const OnboardingFlow: React.FC<Props> = ({ onComplete }) => {
                 type="number" 
                 value={profile.monthlyInvestment}
                 onChange={e => setProfile({...profile, monthlyInvestment: parseInt(e.target.value)})}
-                className="w-full p-4 text-2xl font-bold text-center border-2 border-slate-200 rounded-xl focus:border-blue-500 outline-none"
+                className="w-full p-4 text-2xl font-bold text-center border-2 border-slate-200 rounded-xl focus:border-emerald-500 outline-none"
               />
               <label className="block text-sm font-medium text-slate-700">Anlagehorizont (Jahre)</label>
               <input 
                 type="range" min="1" max="40" 
                 value={profile.investmentHorizon}
                 onChange={e => setProfile({...profile, investmentHorizon: parseInt(e.target.value)})}
-                className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
               />
               <div className="text-center text-xl font-bold text-slate-700">{profile.investmentHorizon} Jahre</div>
             </div>
@@ -109,7 +109,7 @@ const OnboardingFlow: React.FC<Props> = ({ onComplete }) => {
       <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden border border-white/20">
         <div className="h-2 bg-slate-100 w-full">
           <div 
-            className="h-full bg-blue-600 transition-all duration-500" 
+            className="h-full bg-emerald-600 transition-all duration-500" 
             style={{ width: `${(step / 3) * 100}%` }}
           />
         </div>
@@ -129,7 +129,7 @@ const OnboardingFlow: React.FC<Props> = ({ onComplete }) => {
             {step < 3 ? (
               <button 
                 onClick={next}
-                className="flex items-center gap-2 px-8 py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-500/20"
+                className="flex items-center gap-2 px-8 py-3 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-600/20"
               >
                 Weiter <ChevronRight className="w-5 h-5" />
               </button>

@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Calendar, Clock, TrendingUp, Loader2, RefreshCcw, AlertTriangle, Info, DollarSign, TrendingDown, Database, Lock, Star } from 'lucide-react';
-import { fetchDividendsFallback } from '../services/geminiService';
+import { Calendar, Clock, TrendingUp, Loader2, RefreshCcw, AlertTriangle, Info, DollarSign, TrendingDown, Database } from 'lucide-react';
 import { EarningsEvent, HoldingRow } from '../types';
 import { supabase as sb } from '../lib/supabaseClient';
 import { PLAN_LIMITS } from '../lib/useSubscription';
@@ -41,7 +40,7 @@ interface HoldingDividend {
 
 const timeOfDayColor = (t: string) => {
   if (t === 'vor Marktöffnung') return 'bg-amber-50 text-amber-700 border-amber-100';
-  if (t === 'nach Marktschluss') return 'bg-blue-50 text-blue-700 border-blue-100';
+  if (t === 'nach Marktschluss') return 'bg-emerald-50 text-emerald-700 border-emerald-100';
   return 'bg-slate-100 text-slate-500 border-slate-200';
 };
 
@@ -83,8 +82,10 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
   const [isDivLoading, setIsDivLoading] = useState(false);
   const [divError, setDivError] = useState<string | null>(null);
   const [isDivFallback, setIsDivFallback] = useState(false);
-  // Positionen ohne Supabase-Cache → Premium-gesperrt
-  const [lockedHoldings, setLockedHoldings] = useState<HoldingRow[]>([]);
+  const [divCacheStats, setDivCacheStats] = useState<{ total: number; cached: number; stale: number } | null>(null);
+  const [scannedDivSymbol, setScannedDivSymbol] = useState<string | null>(null);
+  const isDivScanningRef = useRef(false);
+  const divScanTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Portfolio-Positionen nach Positionsgröße (Stückzahl × Kaufpreis) sortieren
   const earningsLimit = isPremium
@@ -164,73 +165,79 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
     }
   };
 
-  // ── Dividenden: erst Supabase-Cache, dann API für fehlende Symbole ─────────
+  // ── Dividenden: Cache-First via /api/dividends (AV → Gemini Fallback) ───────
 
-  const loadDividends = async () => {
+  const loadDividends = async (isAutoScan = false) => {
     if (portfolioHoldings.length === 0) return;
+    if (isAutoScan && isDivScanningRef.current) return;
+    isDivScanningRef.current = true;
     setIsDivLoading(true);
     setDivError(null);
-    setIsDivFallback(false);
 
-    const portfolioTickers = portfolioHoldings
+    // Portfolio-Tickers nach Positionsgröße sortiert (größte zuerst)
+    const portfolioTickers = [...portfolioHoldings]
+      .sort((a, b) => (b.shares! * (b.buy_price ?? 0)) - (a.shares! * (a.buy_price ?? 0)))
       .map(h => h.ticker?.symbol ?? h.symbol)
       .filter(Boolean)
-      .slice(0, 20);
+      .slice(0, 20) as string[];
 
-    // ── Schritt 1: Supabase-Cache lesen (sofort, kostenlos) ──────────────────
-    const cutoff = new Date(Date.now() - CACHE_TTL_MS).toISOString();
-    const { data: cachedRows } = await sb
-      .from('stock_events')
-      .select('symbol, details, last_updated')
-      .in('symbol', portfolioTickers)
-      .eq('event_type', DIVIDEND_EVENT_TYPE)
-      .eq('event_date', SENTINEL_DATE)
-      .gte('last_updated', cutoff);
+    try {
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session?.access_token) throw new Error('Nicht angemeldet.');
 
-    const cachedSet = new Set((cachedRows ?? []).map(r => r.symbol as string));
-    const cachedData: DividendInfo[] = (cachedRows ?? []).map(r => ({
-      symbol: r.symbol as string,
-      ...(r.details as Omit<DividendInfo, 'symbol'>),
-    }));
+      // Alle Symbole an API senden – API verwaltet Cache + scannt 1 stale Symbol
+      const res = await fetch(
+        `/api/dividends?symbols=${encodeURIComponent(portfolioTickers.join(','))}`,
+        { headers: { Authorization: `Bearer ${session.access_token}` } },
+      );
 
-    // Positionen ohne Cache-Eintrag → Premium-gesperrt anzeigen
-    const locked = portfolioHoldings.filter(h => {
-      const sym = h.ticker?.symbol ?? h.symbol;
-      return !cachedSet.has(sym);
-    });
-    setLockedHoldings(locked);
-    setDividendData(cachedData);
-
-    // ── Schritt 2: Falls Cache leer → Gemini-Fallback für gecachte Werte ────
-    // (nur wenn gar keine Daten im Cache – kein Alpha-Vantage-Call ohne Premium)
-    if (cachedData.length === 0 && locked.length > 0) {
-      try {
-        const fallback = await fetchDividendsFallback(portfolioTickers.slice(0, 5));
-        setDividendData(fallback as DividendInfo[]);
-        setLockedHoldings([]);
-        setIsDivFallback(true);
-      } catch {
-        // Kein Fallback verfügbar – alle Positionen bleiben gesperrt
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.error ?? `HTTP ${res.status}`);
       }
-    }
 
-    setIsDivLoading(false);
+      const json = await res.json();
+      const results: DividendInfo[] = json.results ?? [];
+      const stats = json.cacheStats ?? null;
+
+      setDividendData(results);
+      setDivCacheStats(stats);
+      setScannedDivSymbol(json.scannedSymbol ?? null);
+      setIsDivFallback(results.some((r: DividendInfo) => r.isEstimated));
+
+      // Noch stale Symbole? → auto-retry nach 2 s
+      if ((stats?.stale ?? 0) > 0) {
+        divScanTimerRef.current = setTimeout(() => {
+          isDivScanningRef.current = false;
+          loadDividends(true);
+        }, 2000);
+      } else {
+        isDivScanningRef.current = false;
+      }
+    } catch (e: any) {
+      isDivScanningRef.current = false;
+      setDivError(e?.message ?? 'Dividenden-Daten konnten nicht geladen werden.');
+    } finally {
+      setIsDivLoading(false);
+    }
   };
 
   useEffect(() => {
-    // Laufenden Auto-Scan stoppen wenn sich Holdings ändern
+    // Laufende Auto-Scans stoppen wenn sich Holdings ändern
     if (autoScanTimerRef.current) clearTimeout(autoScanTimerRef.current);
+    if (divScanTimerRef.current) clearTimeout(divScanTimerRef.current);
     isScanningRef.current = false;
+    isDivScanningRef.current = false;
 
     if (tickers.length > 0) {
       loadEarnings();
       loadDividends();
     } else {
-      setLockedHoldings([]);
       setDividendData([]);
     }
     return () => {
       if (autoScanTimerRef.current) clearTimeout(autoScanTimerRef.current);
+      if (divScanTimerRef.current) clearTimeout(divScanTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tickerKey]);
@@ -292,12 +299,12 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
     <div className="space-y-6 animate-in fade-in duration-500">
 
       {/* Header */}
-      <div className="bg-gradient-to-br from-slate-900 to-blue-950 p-8 md:p-12 rounded-[40px] text-white relative overflow-hidden shadow-2xl">
-        <div className="absolute top-0 right-0 w-64 h-64 bg-blue-500/10 rounded-full -mr-16 -mt-16 blur-3xl" />
+      <div className="bg-gradient-to-br from-slate-900 to-emerald-900 p-8 md:p-12 rounded-[40px] text-white relative overflow-hidden shadow-2xl">
+        <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-500/10 rounded-full -mr-16 -mt-16 blur-3xl" />
         <div className="relative z-10">
           <div className="flex items-center gap-2 mb-4">
-            <Calendar className="w-5 h-5 text-blue-400" />
-            <span className="text-blue-400 font-black text-[10px] uppercase tracking-[0.3em]">Depot-Kalender</span>
+            <Calendar className="w-5 h-5 text-emerald-400" />
+            <span className="text-emerald-400 font-black text-[10px] uppercase tracking-[0.3em]">Depot-Kalender</span>
           </div>
           <h2 className="text-3xl md:text-4xl font-black mb-3 tracking-tighter">Earnings & Dividenden</h2>
           <p className="text-slate-400 font-medium leading-relaxed text-sm max-w-xl">
@@ -334,13 +341,38 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
                 </span>
               )}
             </h3>
-            {isDivLoading && (
-              <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-medium">
-                <Loader2 className="w-3 h-3 animate-spin" />
-                {isDivFallback ? 'Lade KI-Prognose…' : 'Lädt…'}
-              </div>
-            )}
+            <div className="flex items-center gap-2">
+              {divCacheStats && !isDivLoading && (
+                <div className="flex items-center gap-1 text-[9px] font-black text-slate-400 bg-slate-50 border border-slate-100 px-2 py-1 rounded-lg">
+                  <Database className="w-2.5 h-2.5" />
+                  {divCacheStats.cached}/{divCacheStats.total} gecacht
+                  {scannedDivSymbol && <span className="text-emerald-500 ml-1">· {scannedDivSymbol}</span>}
+                </div>
+              )}
+            </div>
           </div>
+
+          {/* Lade-Fortschritt */}
+          {isDivLoading && (
+            <div className="bg-white px-5 py-3 rounded-2xl shadow border border-slate-100 flex items-center gap-3">
+              <Loader2 className="w-4 h-4 animate-spin text-emerald-600 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <span className="text-[11px] font-black text-slate-700 block">
+                  {divCacheStats && divCacheStats.stale > 0
+                    ? `Lade Dividenden · Symbol ${divCacheStats.cached + 1} von ${divCacheStats.total}…`
+                    : 'Lade Dividenden-Daten…'}
+                </span>
+                {divCacheStats && divCacheStats.total > 0 && (
+                  <div className="mt-1.5 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-emerald-500 rounded-full transition-all duration-500"
+                      style={{ width: `${Math.round((divCacheStats.cached / divCacheStats.total) * 100)}%` }}
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Zwei Karten: Erhalten + Erwartet */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -355,14 +387,16 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
                   <p className="text-[9px] text-slate-400">{currentYear} (Schätzung)</p>
                 </div>
               </div>
-              {isDivLoading ? (
+              {isDivLoading && holdingDividends.length === 0 ? (
                 <div className="h-8 bg-slate-100 rounded-lg animate-pulse" />
               ) : holdingDividends.length > 0 ? (
                 <p className="text-2xl font-black text-slate-900">
                   {formatCurrency(receivedDividends)} <span className="text-sm font-medium text-slate-400">€</span>
                 </p>
               ) : (
-                <p className="text-sm text-slate-400 font-medium">Keine Dividenden-Daten</p>
+                <p className="text-sm text-slate-400 font-medium">
+                  {isDivLoading ? 'Wird geladen…' : 'Keine Dividenden-Daten'}
+                </p>
               )}
               {holdingDividends.filter(h => h.isPaid).length > 0 && (
                 <p className="text-[10px] text-emerald-600 font-medium mt-1">
@@ -372,27 +406,29 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
             </div>
 
             {/* Erwartete Dividenden */}
-            <div className="bg-white border border-blue-100 rounded-[24px] p-6 shadow-sm">
+            <div className="bg-white border border-emerald-100 rounded-[24px] p-6 shadow-sm">
               <div className="flex items-center gap-2 mb-3">
-                <div className="w-8 h-8 bg-blue-100 rounded-xl flex items-center justify-center">
-                  <TrendingDown className="w-4 h-4 text-blue-600" />
+                <div className="w-8 h-8 bg-emerald-100 rounded-xl flex items-center justify-center">
+                  <TrendingDown className="w-4 h-4 text-emerald-600" />
                 </div>
                 <div>
                   <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Erwartete Dividenden</p>
                   <p className="text-[9px] text-slate-400">Rest {currentYear} (Schätzung)</p>
                 </div>
               </div>
-              {isDivLoading ? (
+              {isDivLoading && holdingDividends.length === 0 ? (
                 <div className="h-8 bg-slate-100 rounded-lg animate-pulse" />
               ) : holdingDividends.length > 0 ? (
                 <p className="text-2xl font-black text-slate-900">
                   {formatCurrency(expectedDividends)} <span className="text-sm font-medium text-slate-400">€</span>
                 </p>
               ) : (
-                <p className="text-sm text-slate-400 font-medium">Keine Dividenden-Daten</p>
+                <p className="text-sm text-slate-400 font-medium">
+                  {isDivLoading ? 'Wird geladen…' : 'Keine Dividenden-Daten'}
+                </p>
               )}
               {holdingDividends.length > 0 && (
-                <p className="text-[10px] text-blue-600 font-medium mt-1">
+                <p className="text-[10px] text-emerald-600 font-medium mt-1">
                   Gesamt p.a.: {formatCurrency(totalAnnualDividend)} €
                 </p>
               )}
@@ -400,31 +436,25 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
           </div>
 
           {/* Dividenden-Fehler */}
-          {divError && !isDivLoading && !isDivFallback && (
+          {divError && !isDivLoading && (
             <div className="bg-rose-50 border border-rose-100 p-4 rounded-[16px] text-rose-700 text-xs font-medium">
-              Offizielle Dividenden-Daten nicht verfügbar – {divError}
+              Dividenden-Daten konnten nicht geladen werden – {divError}
             </div>
           )}
 
           {/* Per-Position-Liste */}
-          {(holdingDividends.length > 0 || lockedHoldings.length > 0) && !isDivLoading && (
+          {(holdingDividends.length > 0 || (isDivLoading && portfolioHoldings.length > 0)) && (
             <div className="bg-white border border-slate-200 rounded-[24px] overflow-hidden shadow-sm">
-              <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+              <div className="px-6 py-4 border-b border-slate-100">
                 <p className="text-[10px] font-black text-slate-900 uppercase tracking-widest">Dividenden je Position</p>
-                {lockedHoldings.length > 0 && (
-                  <span className="flex items-center gap-1 text-[9px] font-black text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-lg uppercase tracking-widest">
-                    <Lock className="w-2.5 h-2.5" />
-                    {lockedHoldings.length} nur Premium
-                  </span>
-                )}
               </div>
 
               <div className="divide-y divide-slate-100">
-                {/* ── Freigeschaltete Positionen (Daten im Cache) ─────────────── */}
+                {/* Positionen mit Dividenden-Daten */}
                 {holdingDividends.map((h, i) => (
                   <div key={i} className="px-6 py-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
                     <div className="flex items-center gap-3">
-                      <div className={`w-2 h-2 rounded-full ${h.isPaid ? 'bg-emerald-500' : 'bg-blue-400'}`} />
+                      <div className={`w-2 h-2 rounded-full ${h.isPaid ? 'bg-emerald-500' : 'bg-emerald-400'}`} />
                       <div>
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <p className="text-sm font-bold text-slate-800">{h.name}</p>
@@ -441,81 +471,41 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
                     </div>
                     <div className="text-right">
                       <p className="text-sm font-black text-slate-900">{formatCurrency(h.annualIncome)} €</p>
-                      <p className={`text-[9px] font-bold uppercase tracking-widest ${h.isPaid ? 'text-emerald-600' : 'text-blue-500'}`}>
+                      <p className={`text-[9px] font-bold uppercase tracking-widest ${h.isPaid ? 'text-emerald-600' : 'text-emerald-500'}`}>
                         {h.isPaid ? 'Ex-Datum vergangen' : h.exDividendDate ? `Ex: ${formatDate(h.exDividendDate)}` : 'Termin offen'}
                       </p>
                     </div>
                   </div>
                 ))}
 
-                {/* ── Premium-gesperrte Positionen (kein Cache-Eintrag) ────────── */}
-                {lockedHoldings.map((h, i) => {
-                  const sym = h.ticker?.symbol ?? h.symbol;
-                  const name = h.ticker?.company_name ?? h.name ?? sym;
-                  return (
-                    <div key={`locked-${i}`} className="px-6 py-4 flex items-center justify-between bg-slate-50/60 relative overflow-hidden">
-                      {/* Linker Inhalt – Name + Symbol sichtbar */}
+                {/* Skeleton für Positionen die noch geladen werden */}
+                {isDivLoading && portfolioHoldings
+                  .filter(h => !holdingDividends.find(d => d.symbol === (h.ticker?.symbol ?? h.symbol)))
+                  .slice(0, 3)
+                  .map((h, i) => (
+                    <div key={`loading-${i}`} className="px-6 py-4 flex items-center justify-between">
                       <div className="flex items-center gap-3">
-                        <div className="w-2 h-2 rounded-full bg-slate-300" />
+                        <div className="w-2 h-2 rounded-full bg-slate-200 animate-pulse" />
                         <div>
-                          <div className="flex items-center gap-1.5">
-                            <p className="text-sm font-bold text-slate-500">{name}</p>
-                            <span className="flex items-center gap-0.5 text-[8px] font-black bg-amber-100 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded uppercase tracking-widest">
-                              <Star className="w-2 h-2" /> Premium
-                            </span>
-                          </div>
-                          <p className="text-[10px] font-mono text-slate-400">
-                            {sym} · {h.shares ?? '–'} Stk
-                          </p>
+                          <div className="h-3.5 w-28 bg-slate-100 rounded animate-pulse mb-1" />
+                          <div className="h-2.5 w-20 bg-slate-100 rounded animate-pulse" />
                         </div>
                       </div>
-                      {/* Rechter Inhalt – Dividendenzahlen unscharf */}
-                      <div className="text-right select-none">
-                        <p className="text-sm font-black text-slate-300 blur-[5px] pointer-events-none">
-                          {formatCurrency(12.34)} €
-                        </p>
-                        <div className="flex items-center justify-end gap-1 mt-0.5">
-                          <Lock className="w-3 h-3 text-amber-500" />
-                          <p className="text-[9px] font-black text-amber-600 uppercase tracking-widest">
-                            Nur Premium
-                          </p>
-                        </div>
+                      <div className="text-right">
+                        <div className="h-3.5 w-16 bg-slate-100 rounded animate-pulse mb-1" />
+                        <div className="h-2.5 w-12 bg-slate-100 rounded animate-pulse" />
                       </div>
                     </div>
-                  );
-                })}
+                  ))}
               </div>
 
               <div className="px-6 py-3 bg-slate-50 border-t border-slate-100">
                 <p className="text-[10px] text-slate-400 italic">
                   {isDivFallback
-                    ? '* KI-Schätzung basierend auf historischen Ausschüttungsmustern. Keine offiziellen Daten – alle Angaben ohne Gewähr. Termine und Beträge beim Unternehmen prüfen.'
-                    : '* Schätzungen basierend auf Alpha Vantage OVERVIEW-Daten (jährliche Dividende). Keine Garantie für zukünftige Zahlungen. Angaben in lokaler Währung des jeweiligen Börsenplatzes.'}
+                    ? '* Teilweise KI-Schätzungen basierend auf historischen Ausschüttungsmustern. Alle Angaben ohne Gewähr.'
+                    : '* Daten via Alpha Vantage. Keine Garantie für Richtigkeit. Angaben in lokaler Währung des jeweiligen Börsenplatzes.'}
                 </p>
               </div>
-            </div>
-          )}
-
-          {/* Premium-Upsell-Banner (wenn mind. 1 Position gesperrt) */}
-          {lockedHoldings.length > 0 && !isDivLoading && (
-            <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-[20px] p-5 flex items-center gap-4">
-              <div className="w-10 h-10 bg-amber-100 rounded-2xl flex items-center justify-center shrink-0">
-                <Star className="w-5 h-5 text-amber-600" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-black text-slate-800">
-                  {lockedHoldings.length} weitere Position{lockedHoldings.length !== 1 ? 'en' : ''} mit Premium freischalten
-                </p>
-                <p className="text-[10px] text-slate-500 font-medium mt-0.5">
-                  Dividendendaten für{' '}
-                  {lockedHoldings.slice(0, 3).map(h => h.ticker?.symbol ?? h.symbol).join(', ')}
-                  {lockedHoldings.length > 3 ? ` +${lockedHoldings.length - 3} weitere` : ''}{' '}
-                  sind noch nicht im Cache verfügbar – Premium lädt sie live.
-                </p>
-              </div>
-              <span className="text-[10px] font-black text-amber-700 bg-amber-100 border border-amber-200 px-3 py-1.5 rounded-xl uppercase tracking-widest whitespace-nowrap shrink-0">
-                Bald verfügbar
-              </span>
             </div>
           )}
         </div>
@@ -541,7 +531,7 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
                 <Database className="w-2.5 h-2.5" />
                 {cacheStats.cached}/{cacheStats.total} gecacht
                 {scannedSymbol && (
-                  <span className="text-blue-500 ml-1">· {scannedSymbol} gescannt</span>
+                  <span className="text-emerald-500 ml-1">· {scannedSymbol} gescannt</span>
                 )}
               </div>
             )}
@@ -555,7 +545,7 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
           <button
             onClick={() => { loadEarnings(); loadDividends(); }}
             disabled={isLoading || isDivLoading}
-            className="flex items-center gap-2 text-[10px] font-black text-blue-600 uppercase tracking-widest hover:text-slate-900 transition-colors disabled:opacity-50"
+            className="flex items-center gap-2 text-[10px] font-black text-emerald-600 uppercase tracking-widest hover:text-slate-900 transition-colors disabled:opacity-50"
           >
             <RefreshCcw className={`w-3 h-3 ${(isLoading || isDivLoading) ? 'animate-spin' : ''}`} />
             {lastFetch ? `Aktualisiert ${lastFetch.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}` : 'Laden'}
@@ -566,7 +556,7 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
       {isLoading && (
         <div className="flex justify-center py-8">
           <div className="bg-white px-6 py-4 rounded-2xl shadow-xl border border-slate-100 flex items-center gap-3 max-w-sm w-full">
-            <Loader2 className="w-5 h-5 animate-spin text-blue-600 shrink-0" />
+            <Loader2 className="w-5 h-5 animate-spin text-emerald-600 shrink-0" />
             <div className="flex-1 min-w-0">
               <span className="text-xs font-black text-slate-900 uppercase tracking-widest block">
                 {cacheStats && cacheStats.stale > 0
@@ -577,7 +567,7 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
                 <div className="mt-2">
                   <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
                     <div
-                      className="h-full bg-blue-500 rounded-full transition-all duration-500"
+                      className="h-full bg-emerald-500 rounded-full transition-all duration-500"
                       style={{ width: `${Math.round((cacheStats.cached / cacheStats.total) * 100)}%` }}
                     />
                   </div>
@@ -601,7 +591,7 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
       {!isLoading && upcoming.length > 0 && (
         <div className="space-y-4">
           <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-[0.2em] flex items-center gap-2">
-            <TrendingUp className="w-4 h-4 text-blue-600" /> Bevorstehende Earnings
+            <TrendingUp className="w-4 h-4 text-emerald-600" /> Bevorstehende Earnings
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {upcoming.map((event, i) => {
@@ -611,7 +601,7 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
                 <div
                   key={i}
                   className={`bg-white border rounded-[24px] p-6 shadow-sm transition-all hover:shadow-md ${
-                    isVerySoon ? 'border-blue-200 ring-1 ring-blue-100' : 'border-slate-200'
+                    isVerySoon ? 'border-emerald-200 ring-1 ring-emerald-600' : 'border-slate-200'
                   }`}
                 >
                   <div className="flex items-start justify-between mb-4">
@@ -619,7 +609,7 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
                       <div className="flex items-center gap-2 mb-1">
                         <span className="font-black text-slate-900 text-base">{event.company}</span>
                         {isVerySoon && (
-                          <span className="text-[9px] font-black bg-blue-600 text-white px-2 py-0.5 rounded-full uppercase tracking-widest">
+                          <span className="text-[9px] font-black bg-emerald-600 text-white px-2 py-0.5 rounded-full uppercase tracking-widest">
                             Bald
                           </span>
                         )}
@@ -682,7 +672,7 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
           <Info className="w-10 h-10 text-slate-300 mx-auto mb-3" />
           {isLoading ? (
             <p className="text-slate-500 font-medium text-sm">
-              Analysiere {tickers.map(t => <span key={t} className="font-mono font-bold text-blue-600">{t}</span>).reduce<React.ReactNode[]>((acc, el, i) => i === 0 ? [el] : [...acc, ', ', el], [])}…
+              Analysiere {tickers.map(t => <span key={t} className="font-mono font-bold text-emerald-600">{t}</span>).reduce<React.ReactNode[]>((acc, el, i) => i === 0 ? [el] : [...acc, ', ', el], [])}…
             </p>
           ) : (
             <p className="text-slate-500 font-medium text-sm">

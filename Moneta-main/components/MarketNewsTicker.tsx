@@ -22,7 +22,7 @@ interface MarketNewsTickerProps {
 
 const IMPORTANCE_STYLE: Record<string, { badge: string; border: string }> = {
   hoch:    { badge: 'bg-rose-100 text-rose-700',    border: 'border-rose-100'  },
-  mittel:  { badge: 'bg-blue-100 text-blue-700',    border: 'border-blue-100'  },
+  mittel:  { badge: 'bg-emerald-100 text-emerald-700',    border: 'border-emerald-100'  },
   niedrig: { badge: 'bg-slate-100 text-slate-500',  border: 'border-slate-200' },
 };
 
@@ -74,7 +74,7 @@ const MarketNewsTicker: React.FC<MarketNewsTickerProps> = ({ news, onNewsClick }
               </div>
 
               {/* Arrow */}
-              <ArrowRight className="w-4 h-4 text-slate-300 group-hover:text-blue-500 group-hover:translate-x-0.5 transition-all shrink-0 mt-1" />
+              <ArrowRight className="w-4 h-4 text-slate-300 group-hover:text-emerald-500 group-hover:translate-x-0.5 transition-all shrink-0 mt-1" />
             </button>
           );
         })}
