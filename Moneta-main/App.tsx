@@ -25,7 +25,7 @@ import { userService } from './services/userService';
 import { getSupabaseBrowser } from './lib/supabaseBrowser';
 import { loadUserHoldings, addTickersByName, deleteHolding } from './services/holdingsService';
 import { useSubscription, PLAN_LIMITS } from './lib/useSubscription';
-import { Clock, AlertTriangle, ShieldCheck, BarChart3, Loader2, BookMarked, Calendar, FlaskConical, Lock, Plus, X, Trash2, ChevronRight, Sparkles, TrendingUp } from 'lucide-react';
+import { Clock, AlertTriangle, ShieldCheck, BarChart3, Loader2, BookMarked, Calendar, FlaskConical, Lock, Plus, X, Trash2, ChevronRight, Sparkles, TrendingUp, Zap } from 'lucide-react';
 
 /** Erstellt ein UserAccount-Objekt aus einem Supabase-User */
 function userFromSupabase(sbUser: any): UserAccount {
@@ -396,30 +396,7 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            {/* ── Stats-Leiste ─────────────────────────────────────────────── */}
-            {holdings.length > 0 && (() => {
-              const totalInvested = holdings
-                .filter(h => !h.watchlist && h.shares != null && h.buy_price != null)
-                .reduce((sum, h) => sum + (h.shares! * h.buy_price!), 0);
-              const posCount = holdings.filter(h => !h.watchlist).length;
-              const watchCount = holdings.filter(h => h.watchlist).length;
-              const avgPerPos = posCount > 0 && totalInvested > 0 ? Math.round(totalInvested / posCount) : null;
-              return (
-                <div className="grid grid-cols-3 gap-3">
-                  {[
-                    { label: 'Einstand gesamt', value: totalInvested > 0 ? `${totalInvested.toLocaleString('de-DE', { maximumFractionDigits: 0 })} €` : '—', sub: 'Kaufkurse × Stückzahl' },
-                    { label: 'Positionen', value: `${posCount}`, sub: `+ ${watchCount} Watchlist` },
-                    { label: 'Ø pro Position', value: avgPerPos ? `${avgPerPos.toLocaleString('de-DE')} €` : '—', sub: 'Einstand' },
-                  ].map(stat => (
-                    <div key={stat.label} className="bg-emerald-600/10 border border-emerald-600/20 rounded-2xl p-4">
-                      <p className="text-[10px] font-semibold text-emerald-600 uppercase tracking-widest">{stat.label}</p>
-                      <p className="text-xl font-black text-slate-900 mt-1">{stat.value}</p>
-                      <p className="text-[10px] text-slate-400 mt-0.5">{stat.sub}</p>
-                    </div>
-                  ))}
-                </div>
-              );
-            })()}
+            {/* Stats werden direkt im PerformanceChart-Header als Badges angezeigt */}
 
             {/* ── Onboarding (wenn kein Depot) ─────────────────────────────── */}
             {holdings.length === 0 && (
@@ -484,6 +461,12 @@ const App: React.FC = () => {
                     const fmt = (n: number, d = 2) =>
                       n.toLocaleString('de-DE', { minimumFractionDigits: d, maximumFractionDigits: d });
 
+                    // News-Flash: prüfen ob ein News-Item diesen Ticker betrifft
+                    const sym = h.ticker?.symbol ?? h.symbol;
+                    const hasNewsFlash = analysisReport?.news?.some(
+                      n => n.ticker && n.ticker.toUpperCase() === sym?.toUpperCase()
+                    ) ?? false;
+
                     return (
                       <div key={h.id} className="px-4 sm:px-6 py-3.5 hover:bg-slate-50/50 transition-colors">
                         <div className="flex items-start gap-2">
@@ -493,6 +476,15 @@ const App: React.FC = () => {
                               <span className="text-sm font-bold text-slate-900 truncate">
                                 {h.ticker?.company_name ?? h.name ?? h.symbol}
                               </span>
+                              {hasNewsFlash && (
+                                <span
+                                  title="Aktuelle News zu dieser Position vorhanden"
+                                  className="flex items-center gap-0.5 text-[8px] font-black text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-full uppercase tracking-widest shrink-0"
+                                >
+                                  <Zap className="w-2.5 h-2.5" />
+                                  News
+                                </span>
+                              )}
                               {h.watchlist && (
                                 <span className="text-[9px] font-black text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded-full uppercase tracking-widest shrink-0">
                                   Watchlist
@@ -634,62 +626,87 @@ const App: React.FC = () => {
               </div>
             )}
 
-            {/* ── Performance-Chart ──────────────────────────────────────── */}
-            {holdings.filter(h => !h.watchlist).length > 0 && (
-              <PerformanceChart
-                userId={userAccount?.id}
-                onUpgradeClick={() => setShowUpgradeModal(true)}
-              />
-            )}
+            {/* ── Performance-Chart (mit Stats-Badges im Header) ─────────── */}
+            {holdings.filter(h => !h.watchlist).length > 0 && (() => {
+              const posHoldings = holdings.filter(h => !h.watchlist && h.shares != null && h.buy_price != null);
+              const totalInvested = posHoldings.reduce((s, h) => s + h.shares! * h.buy_price!, 0);
+              const posCount = holdings.filter(h => !h.watchlist).length;
+              const watchCount = holdings.filter(h => h.watchlist).length;
+              return (
+                <PerformanceChart
+                  userId={userAccount?.id}
+                  onUpgradeClick={() => setShowUpgradeModal(true)}
+                  totalInvested={totalInvested > 0 ? totalInvested : undefined}
+                  positionCount={posCount}
+                  watchlistCount={watchCount}
+                />
+              );
+            })()}
 
-            {/* ── KI-Briefing ───────────────────────────────────────────── */}
+            {/* ── Depot-Briefing (strukturelle Hinweise, rein informativ) ── */}
             {holdings.filter(h => !h.watchlist).length > 0 && (
-              <div className="bg-slate-50 border border-slate-100 rounded-2xl p-5">
-                <div className="flex items-center gap-2 mb-4">
-                  <Sparkles className="w-4 h-4 text-emerald-600" />
-                  <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest">KI-Briefing</h3>
-                  <span className="text-[10px] text-slate-400 ml-auto">Automatisch · keine Anlageberatung</span>
+              <div className="bg-white border border-slate-200 rounded-[24px] overflow-hidden shadow-sm">
+                {/* Compliance-Vignette – zwingend sichtbar */}
+                <div className="flex items-center gap-2 bg-amber-50 border-b border-amber-100 px-5 py-2.5">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                  <p className="text-[10px] text-amber-700 font-bold leading-tight">
+                    Keine Anlageberatung · Alle Hinweise sind informativ und ersetzen keine professionelle Finanzberatung gemäß KWG/WpIG
+                  </p>
                 </div>
-                <div className="space-y-0">
-                  {(() => {
-                    const nonWatch = holdings.filter(h => !h.watchlist);
-                    const insights: string[] = [];
-                    const sectorCounts: Record<string, number> = {};
-                    nonWatch.forEach(h => { if (h.ticker?.sector) sectorCounts[h.ticker.sector] = (sectorCounts[h.ticker.sector] ?? 0) + 1; });
-                    const topSector = Object.entries(sectorCounts).sort((a, b) => b[1] - a[1])[0];
-                    if (topSector && nonWatch.length > 2 && topSector[1] / nonWatch.length > 0.5) {
-                      insights.push(`Klumpenrisiko: Über 50 % deiner Positionen entfallen auf den Sektor „${topSector[0]}".`);
-                    }
-                    if (nonWatch.length < 4) {
-                      insights.push(`Konzentriertes Portfolio: Mit ${nonWatch.length} Position${nonWatch.length !== 1 ? 'en' : ''} ist dein Depot noch wenig gestreut.`);
-                    }
-                    const watchCount = holdings.filter(h => h.watchlist).length;
-                    if (watchCount > 0) {
-                      insights.push(`Du hast ${watchCount} Wert${watchCount !== 1 ? 'e' : ''} auf der Watchlist – füge Kaufpreis & Stückzahl hinzu, um sie zu analysieren.`);
-                    }
-                    if (insights.length === 0) {
-                      insights.push('Dein Portfolio sieht gut aufgestellt aus. Starte eine KI-Analyse für tiefere Einblicke.');
-                    }
-                    return insights.map((text, i) => (
-                      <div key={i} className="flex items-start gap-3 py-2.5 border-b border-slate-100 last:border-0">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mt-1.5 shrink-0" />
-                        <p className="text-sm text-slate-700">{text}</p>
-                      </div>
-                    ));
-                  })()}
+
+                <div className="px-5 py-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Sparkles className="w-4 h-4 text-emerald-600" />
+                    <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-widest">Depot-Überblick</h3>
+                  </div>
+
+                  <div className="space-y-0">
+                    {(() => {
+                      const nonWatch = holdings.filter(h => !h.watchlist);
+                      const insights: string[] = [];
+                      // Sektorkonzentration (sachlich)
+                      const sectorCounts: Record<string, number> = {};
+                      nonWatch.forEach(h => { if (h.ticker?.sector) sectorCounts[h.ticker.sector] = (sectorCounts[h.ticker.sector] ?? 0) + 1; });
+                      const topSector = Object.entries(sectorCounts).sort((a, b) => b[1] - a[1])[0];
+                      if (topSector && nonWatch.length > 2 && topSector[1] / nonWatch.length > 0.5) {
+                        insights.push(`Sektorkonzentration: Mehr als 50 % deiner Positionen entfallen auf den Sektor „${topSector[0]}" – Diversifikation prüfen.`);
+                      }
+                      // Portfoliogröße (sachlich)
+                      if (nonWatch.length < 4) {
+                        insights.push(`Portfolio-Größe: ${nonWatch.length} Position${nonWatch.length !== 1 ? 'en' : ''} – konzentriertes Depot. Eine breitere Streuung kann das Klumpenrisiko reduzieren.`);
+                      }
+                      // Watchlist-Hinweis
+                      const watchCount = holdings.filter(h => h.watchlist).length;
+                      if (watchCount > 0) {
+                        insights.push(`Watchlist: ${watchCount} Wert${watchCount !== 1 ? 'e' : ''} ohne Kaufdaten – Stückzahl & Kaufpreis ergänzen, um diese in die Analyse einzubeziehen.`);
+                      }
+                      if (insights.length === 0) {
+                        insights.push('Depot-Daten vollständig hinterlegt. Starte eine KI-Analyse für eine detaillierte Struktur-Auswertung.');
+                      }
+                      // Maximal 3 Punkte
+                      return insights.slice(0, 3).map((text, i) => (
+                        <div key={i} className="flex items-start gap-3 py-2.5 border-b border-slate-50 last:border-0">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 mt-1.5 shrink-0" />
+                          <p className="text-[12px] text-slate-600 leading-relaxed">{text}</p>
+                        </div>
+                      ));
+                    })()}
+                  </div>
+
+                  {!analysisReport && (
+                    <button
+                      onClick={() => {
+                        const text = buildDepotTextFromHoldings(holdings);
+                        if (text) handleAnalysis({ text });
+                      }}
+                      disabled={isGlobalLoading}
+                      className="mt-4 w-full bg-emerald-600 text-white py-2.5 rounded-[12px] text-[10px] font-black uppercase tracking-widest hover:bg-slate-900 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+                    >
+                      {isGlobalLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <BarChart3 className="w-3.5 h-3.5" />}
+                      KI-Analyse starten
+                    </button>
+                  )}
                 </div>
-                {!analysisReport && (
-                  <button
-                    onClick={() => {
-                      const text = buildDepotTextFromHoldings(holdings);
-                      if (text) handleAnalysis({ text });
-                    }}
-                    disabled={isGlobalLoading}
-                    className="mt-4 text-xs text-emerald-600 font-semibold hover:underline disabled:opacity-50"
-                  >
-                    Vollständige KI-Analyse starten →
-                  </button>
-                )}
               </div>
             )}
 

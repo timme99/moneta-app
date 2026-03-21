@@ -89,12 +89,12 @@ Das JSON MUSS folgende Felder enthalten:
 - holdings: Array mit Objekten { name, ticker, weight (Zahl 0–100), sentiment ("Positiv"|"Neutral"|"Negativ"), reason (rein sachliche Beschreibung der Marktlage, KEINE Empfehlung) }
 - sectors: Array mit { name (z. B. "Technologie", "Finanzen"), value (Zahl) } – Aufteilung nach Branchen
 - regions: Array mit { name (z. B. "USA", "Europa"), value (Zahl) } – Aufteilung nach Regionen
-- news: Array mit 3–5 relevanten Marktmeldungen zu den Depotwerten, je { title, source (z. B. "Reuters"), snippet (Kurzzitat), importance ("hoch"|"mittel"|"niedrig"), impact_emoji (z. B. "📉" oder "📈") }
+- news: Array mit 3–5 relevanten Marktmeldungen zu den Depotwerten, je { title, source (z. B. "Reuters"), snippet (Kurzzitat, sachlich), url (leer lassen ""), ticker (Kürzel der betroffenen Position oder ""), importance ("hoch"|"mittel"|"niedrig"), impact_emoji (z. B. "📉" oder "📈") } – rein faktisch, keine Prognosen
 - summary: Kurze sachliche Zusammenfassung der Depot-Zusammensetzung (keine Empfehlungen)
 - score: Zahl 0–100 (Diversifikations-Score, kein Qualitätsurteil)
 - strengths: Array von Strings (beobachtbare strukturelle Eigenschaften)
 - considerations: Array von Strings (neutrale Hinweise auf mögliche Risiken zur Selbstrecherche)
-- nextSteps: Array von { action: string, description: string } (allgemeine Informationshinweise, keine Handlungsempfehlungen)
+- nextSteps: Array von max. 3 { action: string, description: string } – NUR technische Hinweise wie "Diversifikation prüfen", "Sektorkonzentration beachten", "Kostenstruktur analysieren". KEINE Aktienempfehlungen, keine Kauf/Verkauf/Halte-Aussagen, keine Kursziele.
 - diversification_score: Zahl, risk_level: "low"|"medium"|"high", context: string, gaps: Array von Strings`;
 
 export const analyzePortfolio = async (input: { text?: string, fileBase64?: string, fileType?: string }) => {
@@ -192,11 +192,12 @@ export const generatePortfolioSuggestion = async (data: any) => {
 const HOLDING_THESES_PROMPT = (holdings: { name: string; ticker: string; shares: number | null; buyPrice: number | null }[]) =>
 `Du bist ein neutraler Finanzinformations-Assistent. Erstelle für jede der folgenden Positionen eine kurze, sachliche Markteinschätzung (genau 2 Sätze).
 
-WICHTIG:
-- KEINE Kauf- oder Verkaufsempfehlungen
-- Beschreibe nur beobachtbare Marktlage, Fundamentaldaten oder Branchenkontext
-- Neutral formulieren ("Das Unternehmen... ist bekannt für... / operiert in...")
-- Falls kein Kaufdatum/Kaufpreis bekannt: aktuelle Markteinschätzung zur Branchenstellung geben
+WICHTIG – Pflichtregeln (rechtlich):
+- KEINE Kauf-, Halte- oder Verkaufsempfehlungen
+- KEIN "sollte", "wird", "empfehlen", "raten"
+- Nur beschreibbare Fakten: Marktstellung, Sektorzugehörigkeit, historische Fundamentaldaten
+- Satz-Starters erlaubt: "Das Unternehmen ist bekannt für…", "Der Sektor zeigt…", "Die Position gehört zu…"
+- Bei ETFs: TER, Replikationsmethode, Benchmark sachlich beschreiben
 
 Positionen:
 ${holdings.map((h, i) => `${i + 1}. ${h.name} (${h.ticker})${h.shares ? ` · ${h.shares} Stk. · Kaufpreis ${h.buyPrice?.toFixed(2)} €` : ' · Nur Marktbeobachtung'}`).join('\n')}

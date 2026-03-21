@@ -19,6 +19,9 @@ import { useSubscription, PLAN_LIMITS } from '../lib/useSubscription';
 interface PerformanceChartProps {
   userId: string | null | undefined;
   onUpgradeClick: () => void;
+  totalInvested?: number;
+  positionCount?: number;
+  watchlistCount?: number;
 }
 
 interface SnapshotRow {
@@ -60,7 +63,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   );
 };
 
-const PerformanceChart: React.FC<PerformanceChartProps> = ({ userId, onUpgradeClick }) => {
+const PerformanceChart: React.FC<PerformanceChartProps> = ({ userId, onUpgradeClick, totalInvested, positionCount, watchlistCount }) => {
   const sub = useSubscription(userId);
   const [data, setData] = useState<ChartPoint[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -119,6 +122,15 @@ const PerformanceChart: React.FC<PerformanceChartProps> = ({ userId, onUpgradeCl
             die historische Entwicklung deines Depots.
           </p>
         </div>
+        {/* Stat-Badges */}
+        {positionCount != null && (
+          <div className="flex items-center gap-2 mt-3 flex-wrap">
+            <span className="inline-flex items-center gap-1 text-[9px] font-black text-slate-600 bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-lg">
+              {positionCount} Position{positionCount !== 1 ? 'en' : ''}
+              {watchlistCount != null && watchlistCount > 0 && ` · ${watchlistCount} Watchlist`}
+            </span>
+          </div>
+        )}
       </div>
     );
   }
@@ -135,21 +147,44 @@ const PerformanceChart: React.FC<PerformanceChartProps> = ({ userId, onUpgradeCl
   return (
     <div className="bg-white border border-slate-200 rounded-[24px] overflow-hidden shadow-sm">
       {/* Header */}
-      <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          {isUp
-            ? <TrendingUp className="w-4 h-4 text-emerald-500" />
-            : <TrendingDown className="w-4 h-4 text-rose-500" />}
-          <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-[0.15em]">
-            Performance-Chart
-          </h3>
+      <div className="px-6 pt-4 pb-3 border-b border-slate-100">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            {isUp
+              ? <TrendingUp className="w-4 h-4 text-emerald-500" />
+              : <TrendingDown className="w-4 h-4 text-rose-500" />}
+            <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-[0.15em]">
+              Performance-Chart
+            </h3>
+          </div>
+          <div className="text-right">
+            <p className="text-sm font-black text-slate-900">{fmt(latest.value)} €</p>
+            <p className={`text-[9px] font-bold ${isUp ? 'text-emerald-600' : 'text-rose-500'}`}>
+              {isUp ? '+' : ''}{fmt(perfAbs)} € ({isUp ? '+' : ''}{perfPct.toFixed(2)} %)
+            </p>
+          </div>
         </div>
-        <div className="text-right">
-          <p className="text-sm font-black text-slate-900">{fmt(latest.value)} €</p>
-          <p className={`text-[9px] font-bold ${isUp ? 'text-emerald-600' : 'text-rose-500'}`}>
-            {isUp ? '+' : ''}{fmt(perfAbs)} € ({isUp ? '+' : ''}{perfPct.toFixed(2)} %)
-          </p>
-        </div>
+        {/* Stat-Badges */}
+        {(totalInvested != null || positionCount != null) && (
+          <div className="flex items-center gap-2 mt-2 flex-wrap">
+            {totalInvested != null && totalInvested > 0 && (
+              <span className="inline-flex items-center gap-1 text-[9px] font-black text-emerald-700 bg-emerald-50 border border-emerald-100 px-2.5 py-1 rounded-lg">
+                Einstand {totalInvested.toLocaleString('de-DE', { maximumFractionDigits: 0 })} €
+              </span>
+            )}
+            {positionCount != null && (
+              <span className="inline-flex items-center gap-1 text-[9px] font-black text-slate-600 bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-lg">
+                {positionCount} Position{positionCount !== 1 ? 'en' : ''}
+                {watchlistCount != null && watchlistCount > 0 && ` · ${watchlistCount} Watchlist`}
+              </span>
+            )}
+            {totalInvested != null && positionCount != null && positionCount > 0 && totalInvested > 0 && (
+              <span className="inline-flex items-center gap-1 text-[9px] font-black text-slate-500 bg-slate-50 border border-slate-100 px-2.5 py-1 rounded-lg">
+                Ø {Math.round(totalInvested / positionCount).toLocaleString('de-DE')} € / Position
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Chart */}
