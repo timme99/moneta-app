@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import {
   BarChart3, Search, MessageSquare,
-  Settings as SettingsIcon, LogIn, Calendar, FlaskConical, User, Receipt,
+  Settings as SettingsIcon, LogIn, Calendar, FlaskConical, User, Receipt, TrendingUp,
 } from 'lucide-react';
 import type { UserAccount } from '../types';
 import Logo from './atoms/Logo';
@@ -29,6 +29,7 @@ const Header: React.FC<HeaderProps> = ({
     { id: 'cockpit',   label: 'Cockpit',    icon: BarChart3 },
     { id: 'earnings',  label: 'Earnings',   icon: Calendar },
     { id: 'scenarios', label: 'Szenarien',  icon: FlaskConical },
+    { id: 'options',   label: 'Optionen',   icon: TrendingUp },
     { id: 'tax',       label: 'Steuern',    icon: Receipt },
     { id: 'assistant', label: 'Assistent',  icon: MessageSquare },
     { id: 'discover',  label: 'Entdecken',  icon: Search },
@@ -37,7 +38,7 @@ const Header: React.FC<HeaderProps> = ({
   const bottomNavItems = [
     { id: 'cockpit',   label: 'Cockpit',   icon: BarChart3 },
     { id: 'earnings',  label: 'Earnings',  icon: Calendar },
-    { id: 'tax',       label: 'Steuern',   icon: Receipt },
+    { id: 'options',   label: 'Optionen',  icon: TrendingUp },
     { id: 'assistant', label: 'KI-Chat',   icon: MessageSquare },
     { id: 'settings',  label: 'Profil',    icon: SettingsIcon },
   ];

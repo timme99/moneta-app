@@ -15,6 +15,7 @@ import PortfolioInput from './components/PortfolioInput';
 import EarningsCalendar from './components/EarningsCalendar';
 import ScenarioAnalysis from './components/ScenarioAnalysis';
 import TaxOptimizer from './components/TaxOptimizer';
+import OptionsTracker from './components/OptionsTracker';
 import NewsletterQuickToggle from './components/NewsletterQuickToggle';
 import PerformanceChart from './components/PerformanceChart';
 import UpgradeModal from './components/UpgradeModal';
@@ -24,7 +25,7 @@ import { userService } from './services/userService';
 import { getSupabaseBrowser } from './lib/supabaseBrowser';
 import { loadUserHoldings, addTickersByName, deleteHolding } from './services/holdingsService';
 import { useSubscription, PLAN_LIMITS } from './lib/useSubscription';
-import { Clock, AlertTriangle, ShieldCheck, BarChart3, Loader2, BookMarked, Calendar, FlaskConical, Lock, Plus, X, Trash2, ChevronRight, Sparkles } from 'lucide-react';
+import { Clock, AlertTriangle, ShieldCheck, BarChart3, Loader2, BookMarked, Calendar, FlaskConical, Lock, Plus, X, Trash2, ChevronRight, Sparkles, TrendingUp } from 'lucide-react';
 
 /** Erstellt ein UserAccount-Objekt aus einem Supabase-User */
 function userFromSupabase(sbUser: any): UserAccount {
@@ -726,6 +727,22 @@ const App: React.FC = () => {
                     <p className={`text-[10px] font-medium mt-0.5 ${activeView === 'scenarios' ? 'text-emerald-100' : 'text-slate-400'}`}>Was wäre wenn? · KI-Simulation</p>
                   </div>
                 </button>
+
+                <button
+                  onClick={() => setActiveView('options')}
+                  className={`flex items-center gap-4 p-5 rounded-[24px] border transition-all text-left group hover:shadow-md ${
+                    activeView === 'options' ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-white border-slate-200 hover:border-emerald-300'
+                  }`}
+                >
+                  <div className={`p-3 rounded-[14px] ${activeView === 'options' ? 'bg-white/20' : 'bg-emerald-50 group-hover:bg-emerald-100'}`}>
+                    <TrendingUp className={`w-5 h-5 ${activeView === 'options' ? 'text-white' : 'text-emerald-700'}`} />
+                  </div>
+                  <div>
+                    <p className={`text-[10px] font-black uppercase tracking-widest ${activeView === 'options' ? 'text-emerald-100' : 'text-slate-400'}`}>Black-Scholes</p>
+                    <p className={`text-sm font-black mt-0.5 ${activeView === 'options' ? 'text-white' : 'text-slate-900'}`}>Optionspreis-Tracker</p>
+                    <p className={`text-[10px] font-medium mt-0.5 ${activeView === 'options' ? 'text-emerald-100' : 'text-slate-400'}`}>Greeks · Szenario-Simulation</p>
+                  </div>
+                </button>
               </div>
             )}
 
@@ -784,6 +801,8 @@ const App: React.FC = () => {
                 </div>
                 <ScenarioAnalysis key={holdings.map(h => h.symbol).sort().join(',')} holdings={holdings} report={analysisReport} isPremium={subscription.isPremium} />
               </div>
+            ) : activeView === 'options' ? (
+              <OptionsTracker />
             ) : activeView === 'tax' ? (
               <TaxOptimizer holdings={holdings} isPremium={subscription.isPremium} />
             ) : activeView === 'settings' ? (
