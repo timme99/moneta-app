@@ -244,11 +244,14 @@ const ScenarioAnalysis: React.FC<ScenarioAnalysisProps> = ({ holdings, report, i
     ? PLAN_LIMITS.premium.maxScenarioHoldings
     : PLAN_LIMITS.free.maxScenarioHoldings;
 
-  const allWithTicker = holdings.filter(h => h.ticker?.symbol);
+  // Nur echte Portfolio-Positionen (keine Watchlist) mit Ticker-Mapping
+  const allWithTicker = holdings.filter(h => h.ticker?.symbol && !h.watchlist);
   const rawHoldings = allWithTicker.map(h => ({
     name: h.ticker!.company_name ?? h.name ?? h.symbol,
     ticker: h.ticker!.symbol,
-    weight: report?.holdings?.find(rh => rh.ticker === h.ticker!.symbol)?.weight ?? 0,
+    // Gewichtung aus KI-Report, Fallback: Einstandswert (Stückzahl × Kaufpreis)
+    weight: report?.holdings?.find(rh => rh.ticker === h.ticker!.symbol)?.weight
+      ?? ((h.shares ?? 0) * (h.buy_price ?? 0)),
   }));
 
   // Free-User: Top N nach Gewichtung; Premium: alle

@@ -3,6 +3,7 @@ import { Calendar, Clock, TrendingUp, Loader2, RefreshCcw, AlertTriangle, Info, 
 import { fetchDividendsFallback } from '../services/geminiService';
 import { EarningsEvent, HoldingRow } from '../types';
 import { supabase as sb } from '../lib/supabaseClient';
+import { PLAN_LIMITS } from '../lib/useSubscription';
 
 const DIVIDEND_EVENT_TYPE = 'dividend_info';
 const SENTINEL_DATE       = '1970-01-01';
@@ -10,6 +11,7 @@ const CACHE_TTL_MS        = 7 * 24 * 60 * 60 * 1000; // 7 Tage
 
 interface EarningsCalendarProps {
   holdings: HoldingRow[];
+  isPremium?: boolean;
 }
 
 // ── Typen ──────────────────────────────────────────────────────────────────────
@@ -66,7 +68,7 @@ const formatCurrency = (value: number): string =>
 
 // ── Komponente ─────────────────────────────────────────────────────────────────
 
-const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
+const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium = false }) => {
   const [events, setEvents] = useState<EarningsEvent[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -84,8 +86,27 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
   // Positionen ohne Supabase-Cache → Premium-gesperrt
   const [lockedHoldings, setLockedHoldings] = useState<HoldingRow[]>([]);
 
-  // Alle Positionen inkl. Watchlist – die KI braucht nur das Symbol für Earnings-Termine
-  const tickers = holdings
+  // Portfolio-Positionen nach Positionsgröße (Stückzahl × Kaufpreis) sortieren
+  const earningsLimit = isPremium
+    ? PLAN_LIMITS.premium.maxEarningsHoldings
+    : PLAN_LIMITS.free.maxEarningsHoldings;
+
+  const portfolioSorted = holdings
+    .filter(h => !h.watchlist && h.shares != null && h.buy_price != null)
+    .sort((a, b) => (b.shares! * b.buy_price!) - (a.shares! * a.buy_price!));
+
+  const watchlistSorted = holdings
+    .filter(h => h.watchlist)
+    .sort((a, b) => (a.ticker?.symbol ?? a.symbol ?? '').localeCompare(b.ticker?.symbol ?? b.symbol ?? ''));
+
+  // Free: nur Top-N Portfolio-Positionen; Premium: alle; dann Watchlist alphabetisch
+  const limitedPortfolio = Number.isFinite(earningsLimit)
+    ? portfolioSorted.slice(0, earningsLimit)
+    : portfolioSorted;
+
+  const earningsHoldingsTrimmed = !isPremium && portfolioSorted.length > earningsLimit;
+
+  const tickers = [...limitedPortfolio, ...watchlistSorted]
     .map(h => h.ticker?.symbol ?? h.symbol)
     .filter(Boolean)
     .slice(0, 12);
@@ -522,6 +543,12 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
                 {scannedSymbol && (
                   <span className="text-blue-500 ml-1">· {scannedSymbol} gescannt</span>
                 )}
+              </div>
+            )}
+            {earningsHoldingsTrimmed && (
+              <div className="flex items-center gap-1 text-[9px] font-black text-amber-600 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-lg">
+                <Lock className="w-2.5 h-2.5" />
+                Top {earningsLimit} von {portfolioSorted.length} · Premium für alle
               </div>
             )}
           </div>
