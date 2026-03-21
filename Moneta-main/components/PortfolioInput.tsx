@@ -14,12 +14,12 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Search, Plus, Trash2, Loader2, TrendingUp, BarChart3, BookMarked, Info,
   TrendingDown, RefreshCw, Pencil, MessageSquare, Camera, FileSpreadsheet,
-  CheckCircle2, AlertCircle, Zap, FileText,
+  CheckCircle2, AlertCircle, Zap, FileText, AlertTriangle, GitMerge, SkipForward, X,
 } from 'lucide-react';
 import { getSupabaseBrowser } from '../lib/supabaseBrowser';
 import type { TickerEntry } from '../lib/supabase-types';
 import type { HoldingRow } from '../types';
-import { addHolding, addTickersByName, deleteHolding, addBrokerHoldings, type BrokerPosition } from '../services/holdingsService';
+import { addHolding, addTickersByName, deleteHolding, addBrokerHoldings, type BrokerPosition, type AddHoldingOptions } from '../services/holdingsService';
 
 interface PortfolioInputProps {
   /** Holdings aus App.tsx – Single Source of Truth */
@@ -125,6 +125,19 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
 
   // Excel-Import: Anreicherungs-Modus
   const [enrichMode, setEnrichMode] = useState(false);
+
+  // ── Duplikat-Dialog (manuelles Hinzufügen) ───────────────────────────────
+  const [singleConflict, setSingleConflict] = useState<{
+    existing: HoldingRow;
+    opts: AddHoldingOptions;
+  } | null>(null);
+
+  // ── Duplikat-Dialog (Bulk-Import) ────────────────────────────────────────
+  const [bulkConflict, setBulkConflict] = useState<{
+    duplicates: Array<{ existing: HoldingRow; newPos: BrokerPosition }>;
+    newPositions: BrokerPosition[];
+    effectiveUserId: string;
+  } | null>(null);
 
   // Bulk-Import (Screenshot / Excel)
   const [importState, setImportState] = useState<{ loading: boolean; message: string; error: string }>({
@@ -261,6 +274,138 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
     }
   };
 
+  // ── Duplikat-Hilfsfunktionen ─────────────────────────────────────────────
+
+  /** Berechnet gewichteten Durchschnittspreis und Gesamtstückzahl beim Zusammenführen. */
+  const mergeHolding = (existing: HoldingRow, addShares: number, addPrice: number) => {
+    const exS = existing.shares ?? 0;
+    const exP = existing.buy_price ?? 0;
+    const totalShares = exS + addShares;
+    const mergedPrice = totalShares > 0
+      ? (exS * exP + addShares * addPrice) / totalShares
+      : addPrice;
+    return { shares: totalShares, buyPrice: mergedPrice };
+  };
+
+  /** Prüft Bulk-Positionen auf Duplikate; zeigt Dialog oder importiert direkt. */
+  const checkAndImportBrokerPositions = async (
+    positions: BrokerPosition[],
+    effectiveUserId: string,
+    enrichOnly = false,
+  ): Promise<{ count: number; skipped: number; error?: string } | null> => {
+    // Im Anreicherungs-Modus: direkt importieren (überspringt bestehende, kein Dialog nötig)
+    if (enrichOnly) return addBrokerHoldings(positions, effectiveUserId, true);
+
+    const existingSymbolsUpper = new Set(
+      holdings
+        .filter(h => !h.watchlist && h.shares != null)
+        .map(h => (h.ticker?.symbol ?? h.symbol).toUpperCase()),
+    );
+
+    const duplicates = positions
+      .map(p => ({
+        existing: holdings.find(h =>
+          (h.ticker?.symbol ?? h.symbol).toUpperCase() === p.rawSymbol.toUpperCase() &&
+          !h.watchlist && h.shares != null,
+        ),
+        newPos: p,
+      }))
+      .filter((d): d is { existing: HoldingRow; newPos: BrokerPosition } => !!d.existing);
+
+    const newPositions = positions.filter(
+      p => !existingSymbolsUpper.has(p.rawSymbol.toUpperCase()),
+    );
+
+    if (duplicates.length === 0) {
+      return addBrokerHoldings(positions, effectiveUserId);
+    }
+
+    // Duplikate gefunden → Dialog anzeigen, Import pausieren
+    setImportState({ loading: false, message: '', error: '' });
+    setBulkConflict({ duplicates, newPositions, effectiveUserId });
+    return null; // Dialog übernimmt den Rest
+  };
+
+  /** Bulk-Dialog: alle Duplikate zusammenführen. */
+  const handleBulkMerge = async () => {
+    if (!bulkConflict) return;
+    const { duplicates, newPositions, effectiveUserId } = bulkConflict;
+    setBulkConflict(null);
+    setImportState({ loading: true, message: 'Führe Positionen zusammen …', error: '' });
+
+    const mergedPositions = duplicates.map(({ existing, newPos }) => {
+      const { shares: mShares, buyPrice: mPrice } = mergeHolding(existing, newPos.shares, newPos.avgPrice);
+      return { ...newPos, shares: mShares, avgPrice: mPrice };
+    });
+
+    const allPositions = [...newPositions, ...mergedPositions];
+    const { count, skipped, error } = await addBrokerHoldings(allPositions, effectiveUserId);
+    if (error) { setImportState({ loading: false, message: '', error }); return; }
+    await onRefresh?.();
+    setImportState({
+      loading: false,
+      message: `${count} Position${count !== 1 ? 'en' : ''} importiert · ${duplicates.length} zusammengeführt.`,
+      error: '',
+    });
+  };
+
+  /** Bulk-Dialog: Duplikate überspringen, nur neue importieren. */
+  const handleBulkSkip = async () => {
+    if (!bulkConflict) return;
+    const { duplicates, newPositions, effectiveUserId } = bulkConflict;
+    setBulkConflict(null);
+    if (newPositions.length === 0) {
+      setImportState({ loading: false, message: `Alle ${duplicates.length} Positionen bereits vorhanden – Import übersprungen.`, error: '' });
+      return;
+    }
+    setImportState({ loading: true, message: 'Importiere neue Positionen …', error: '' });
+    const { count, error } = await addBrokerHoldings(newPositions, effectiveUserId);
+    if (error) { setImportState({ loading: false, message: '', error }); return; }
+    await onRefresh?.();
+    setImportState({
+      loading: false,
+      message: `${count} neue Position${count !== 1 ? 'en' : ''} importiert · ${duplicates.length} bereits vorhanden übersprungen.`,
+      error: '',
+    });
+  };
+
+  /** Single-Dialog: Positionen zusammenführen (gewichteter Ø-Preis). */
+  const handleSingleMerge = async () => {
+    if (!singleConflict) return;
+    const { existing, opts } = singleConflict;
+    const { shares: mShares, buyPrice: mPrice } = mergeHolding(
+      existing,
+      opts.shares ?? 0,
+      opts.buyPrice ?? 0,
+    );
+    setSingleConflict(null);
+    setIsSaving(true);
+    const result = await addHolding({ ...opts, shares: mShares, buyPrice: mPrice });
+    if (result.success) {
+      setQuery(''); setSelected(null); setShares(''); setBuyPrice(''); setTotalValue('');
+      await onRefresh?.();
+    } else {
+      setSaveError(`Zusammenführen fehlgeschlagen: ${result.error}`);
+    }
+    setIsSaving(false);
+  };
+
+  /** Single-Dialog: bestehende Position ersetzen. */
+  const handleSingleReplace = async () => {
+    if (!singleConflict) return;
+    const { opts } = singleConflict;
+    setSingleConflict(null);
+    setIsSaving(true);
+    const result = await addHolding(opts);
+    if (result.success) {
+      setQuery(''); setSelected(null); setShares(''); setBuyPrice(''); setTotalValue('');
+      await onRefresh?.();
+    } else {
+      setSaveError(`Ersetzen fehlgeschlagen: ${result.error}`);
+    }
+    setIsSaving(false);
+  };
+
   // ── Hinzufügen ────────────────────────────────────────────────────────────
   const handleAdd = async () => {
     if (!selected) return;
@@ -293,6 +438,28 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
       setSaveError('Kaufpreis muss größer als 0 sein.');
       setIsSaving(false);
       return;
+    }
+
+    // ── Duplikat-Prüfung (nur bei echten Positionen mit Stückzahl) ─────────
+    if (sharesNum !== null) {
+      const existingHolding = holdings.find(h =>
+        (h.ticker?.symbol ?? h.symbol).toUpperCase() === selected.symbol.toUpperCase() &&
+        !h.watchlist && h.shares != null,
+      );
+      if (existingHolding) {
+        setSingleConflict({
+          existing: existingHolding,
+          opts: {
+            userId:   effectiveUserId,
+            symbol:   selected.symbol,
+            name:     selected.company_name !== selected.symbol ? selected.company_name : null,
+            shares:   sharesNum,
+            buyPrice: priceNum,
+          },
+        });
+        setIsSaving(false);
+        return; // Dialog übernimmt
+      }
     }
 
     const result = await addHolding({
@@ -758,7 +925,9 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
         }
         if (!effectiveUserId) throw new Error('Nicht eingeloggt – bitte zuerst anmelden.');
 
-        const { count, skipped, error } = await addBrokerHoldings(brokerPositions, effectiveUserId);
+        const result = await checkAndImportBrokerPositions(brokerPositions, effectiveUserId);
+        if (!result) return; // Duplikat-Dialog wird angezeigt
+        const { count, skipped, error } = result;
         if (error) throw new Error(error);
 
         if (effectiveUserId !== userId) setUserId(effectiveUserId);
@@ -799,7 +968,9 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
       }
       if (!effectiveUserId) throw new Error('Nicht eingeloggt – bitte zuerst anmelden.');
 
-      const { count, skipped, error } = await addBrokerHoldings(positions, effectiveUserId);
+      const result = await checkAndImportBrokerPositions(positions, effectiveUserId);
+      if (!result) return; // Duplikat-Dialog wird angezeigt
+      const { count, skipped, error } = result;
 
       if (error) throw new Error(error);
 
@@ -869,7 +1040,9 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
       const parts: string[] = [];
 
       if (fullPositions.length > 0) {
-        const { count, skipped, error } = await addBrokerHoldings(fullPositions, effectiveUserId);
+        const result = await checkAndImportBrokerPositions(fullPositions, effectiveUserId);
+        if (!result) return; // Duplikat-Dialog wird angezeigt
+        const { count, skipped, error } = result;
         if (error) throw new Error(error);
         parts.push(`${count} Position${count !== 1 ? 'en' : ''} mit Einstandskurs importiert${skipped > 0 ? ` (${skipped} übersprungen)` : ''}`);
       }
@@ -948,7 +1121,9 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
       }
       if (!effectiveUserId) throw new Error('Nicht eingeloggt – bitte zuerst anmelden.');
 
-      const { count, skipped, error } = await addBrokerHoldings(brokerPositions, effectiveUserId);
+      const result = await checkAndImportBrokerPositions(brokerPositions, effectiveUserId);
+      if (!result) return; // Duplikat-Dialog wird angezeigt
+      const { count, skipped, error } = result;
       if (error) throw new Error(error);
 
       setImportState({
@@ -1068,7 +1243,9 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
                 effectiveUserId = sessionData?.session?.user?.id ?? userId;
               }
               if (!effectiveUserId) throw new Error('Nicht eingeloggt – bitte zuerst anmelden.');
-              const { count, skipped, error } = await addBrokerHoldings(positions, effectiveUserId, enrichMode);
+              const result = await checkAndImportBrokerPositions(positions, effectiveUserId, enrichMode);
+              if (!result) return; // Duplikat-Dialog wird angezeigt
+              const { count, skipped, error } = result;
               if (error) throw new Error(error);
               if (effectiveUserId !== userId) setUserId(effectiveUserId);
               await onRefresh?.();
@@ -1130,7 +1307,9 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
       const parts: string[] = [];
 
       if (fullPositions.length > 0) {
-        const { count, skipped, error } = await addBrokerHoldings(fullPositions, effectiveUserId, enrichMode);
+        const result = await checkAndImportBrokerPositions(fullPositions, effectiveUserId, enrichMode);
+        if (!result) return; // Duplikat-Dialog wird angezeigt
+        const { count, skipped, error } = result;
         if (error) throw new Error(error);
         parts.push(
           enrichMode
@@ -1617,6 +1796,142 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
               Mit Assistent besprechen
             </button>
           )}
+        </div>
+      )}
+
+      {/* ── Duplikat-Dialog (manuelles Hinzufügen) ──────────────────────── */}
+      {singleConflict && (() => {
+        const ex = singleConflict.existing;
+        const { shares: newS, buyPrice: newP } = singleConflict.opts;
+        const exS = ex.shares ?? 0;
+        const exP = ex.buy_price ?? 0;
+        const mergedS = exS + (newS ?? 0);
+        const mergedP = mergedS > 0
+          ? (exS * exP + (newS ?? 0) * (newP ?? 0)) / mergedS
+          : newP ?? 0;
+        const fmt = (n: number) => n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+        return (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+            <div className="bg-white rounded-[32px] shadow-2xl max-w-sm w-full overflow-hidden animate-in zoom-in-95 duration-200">
+              {/* Header */}
+              <div className="bg-amber-50 border-b border-amber-100 px-6 py-5 flex items-start gap-3">
+                <div className="w-9 h-9 bg-amber-100 rounded-2xl flex items-center justify-center shrink-0 mt-0.5">
+                  <AlertTriangle className="w-4.5 h-4.5 text-amber-600" />
+                </div>
+                <div>
+                  <p className="text-sm font-black text-slate-900">Position bereits vorhanden</p>
+                  <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+                    <span className="font-bold text-slate-700">{ex.ticker?.company_name ?? ex.name ?? ex.symbol}</span> ({ex.symbol}) ist bereits in deinem Depot.
+                    War das ein Fehler, oder sollen die Positionen zusammengeführt werden?
+                  </p>
+                </div>
+              </div>
+
+              {/* Vergleich */}
+              <div className="px-6 py-4 space-y-2">
+                <div className="grid grid-cols-3 gap-2 text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">
+                  <span>Position</span><span className="text-center">Stück</span><span className="text-right">Ø-Preis</span>
+                </div>
+                {[
+                  { label: 'Vorhanden', s: exS, p: exP, color: 'text-slate-700' },
+                  { label: 'Neu', s: newS ?? 0, p: newP ?? 0, color: 'text-emerald-700' },
+                  { label: 'Zusammen', s: mergedS, p: mergedP, color: 'text-slate-900 font-black border-t border-slate-100 pt-2 mt-1' },
+                ].map(row => (
+                  <div key={row.label} className={`grid grid-cols-3 gap-2 text-[11px] ${row.color}`}>
+                    <span className="font-bold">{row.label}</span>
+                    <span className="text-center tabular-nums">{row.s.toLocaleString('de-DE')}</span>
+                    <span className="text-right tabular-nums">{fmt(row.p)} €</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Aktionen */}
+              <div className="px-6 pb-6 flex flex-col gap-2">
+                <button
+                  onClick={handleSingleMerge}
+                  disabled={isSaving}
+                  className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-[16px] text-[11px] font-black uppercase tracking-widest flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+                >
+                  <GitMerge className="w-4 h-4" />
+                  Zusammenführen ({fmt(mergedP)} € Ø · {mergedS.toLocaleString('de-DE')} Stk.)
+                </button>
+                <button
+                  onClick={handleSingleReplace}
+                  disabled={isSaving}
+                  className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 py-3 rounded-[16px] text-[11px] font-black uppercase tracking-widest flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+                >
+                  <SkipForward className="w-4 h-4" />
+                  Ersetzen (bestehende Position überschreiben)
+                </button>
+                <button
+                  onClick={() => setSingleConflict(null)}
+                  className="w-full text-slate-400 hover:text-slate-600 py-2 text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-1.5 transition-colors"
+                >
+                  <X className="w-3 h-3" /> Abbrechen (war ein Fehler)
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Duplikat-Dialog (Bulk-Import) ────────────────────────────────── */}
+      {bulkConflict && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-[32px] shadow-2xl max-w-sm w-full overflow-hidden animate-in zoom-in-95 duration-200">
+            {/* Header */}
+            <div className="bg-amber-50 border-b border-amber-100 px-6 py-5 flex items-start gap-3">
+              <div className="w-9 h-9 bg-amber-100 rounded-2xl flex items-center justify-center shrink-0 mt-0.5">
+                <AlertTriangle className="w-4.5 h-4.5 text-amber-600" />
+              </div>
+              <div>
+                <p className="text-sm font-black text-slate-900">
+                  {bulkConflict.duplicates.length} Position{bulkConflict.duplicates.length !== 1 ? 'en' : ''} bereits vorhanden
+                </p>
+                <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+                  {bulkConflict.newPositions.length} neue + {bulkConflict.duplicates.length} bereits im Depot.
+                  Sollen die vorhandenen Positionen zusammengeführt oder übersprungen werden?
+                </p>
+              </div>
+            </div>
+
+            {/* Duplikat-Liste */}
+            <div className="px-6 py-3 max-h-40 overflow-y-auto space-y-1">
+              {bulkConflict.duplicates.map(({ existing, newPos }, i) => (
+                <div key={i} className="flex items-center justify-between text-[10px]">
+                  <span className="font-bold text-slate-700">{existing.ticker?.company_name ?? existing.symbol}</span>
+                  <span className="text-slate-400 font-mono tabular-nums">
+                    {(existing.shares ?? 0).toLocaleString('de-DE')} + {newPos.shares.toLocaleString('de-DE')} Stk.
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            {/* Aktionen */}
+            <div className="px-6 pb-6 flex flex-col gap-2">
+              <button
+                onClick={handleBulkMerge}
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-[16px] text-[11px] font-black uppercase tracking-widest flex items-center justify-center gap-2 transition-colors"
+              >
+                <GitMerge className="w-4 h-4" />
+                Alle zusammenführen (gewichteter Ø-Preis)
+              </button>
+              <button
+                onClick={handleBulkSkip}
+                className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 py-3 rounded-[16px] text-[11px] font-black uppercase tracking-widest flex items-center justify-center gap-2 transition-colors"
+              >
+                <SkipForward className="w-4 h-4" />
+                Vorhandene überspringen ({bulkConflict.newPositions.length} neue importieren)
+              </button>
+              <button
+                onClick={() => setBulkConflict(null)}
+                className="w-full text-slate-400 hover:text-slate-600 py-2 text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-1.5 transition-colors"
+              >
+                <X className="w-3 h-3" /> Abbrechen
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
