@@ -40,13 +40,16 @@ async function upsertTickerMapping(tickers: Array<{
 }>) {
   try {
     const supabase = getSupabaseAdmin();
-    const rows: InsertTables<'ticker_mapping'>[] = tickers.map((t) => ({
+    const rows = tickers.map((t) => ({
       symbol:             t.ticker,
       company_name:       t.company_name,
       sector:             t.sector ?? null,
       industry:           t.industry ?? null,
       description_static: t.description ?? null,
-      competitors:        t.competitors ?? null,
+      // competitors ist TEXT[] in der DB → String aufteilen; leeres Array → null
+      competitors:        t.competitors
+        ? t.competitors.split(',').map(s => s.trim()).filter(Boolean)
+        : null,
     }));
     const { error } = await supabase
       .from('ticker_mapping')
