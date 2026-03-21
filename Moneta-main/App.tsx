@@ -452,7 +452,21 @@ const App: React.FC = () => {
                 </div>
 
                 <div className="divide-y divide-slate-50">
-                  {holdings.slice(0, 6).map((h) => {
+                  {[...holdings]
+                    .sort((a, b) => {
+                      // Portfolio-Positionen vor Watchlist
+                      if (a.watchlist !== b.watchlist) return a.watchlist ? 1 : -1;
+                      // Portfolio: nach Positionsgröße (Stückzahl × Kaufpreis) absteigend
+                      if (!a.watchlist) {
+                        const valA = (a.shares ?? 0) * (a.buy_price ?? 0);
+                        const valB = (b.shares ?? 0) * (b.buy_price ?? 0);
+                        return valB - valA;
+                      }
+                      // Watchlist: alphabetisch nach Symbol
+                      return (a.symbol ?? '').localeCompare(b.symbol ?? '');
+                    })
+                    .slice(0, 6)
+                    .map((h) => {
                     // Aktuellen Kurs aus dem Analyse-Report auslesen (kein extra API-Aufruf)
                     const reportEntry = analysisReport?.holdings?.find(
                       (rh) => rh.ticker === h.symbol || rh.ticker === h.ticker?.symbol
@@ -760,7 +774,7 @@ const App: React.FC = () => {
                   <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
                   <p className="text-[10px] text-amber-700 font-bold">Keine Anlageberatung. KI-generierte Informationen dienen ausschließlich Bildungszwecken.</p>
                 </div>
-                <EarningsCalendar key={holdings.map(h => h.symbol).sort().join(',')} holdings={holdings} />
+                <EarningsCalendar key={holdings.map(h => h.symbol).sort().join(',')} holdings={holdings} isPremium={subscription.isPremium} />
               </div>
             ) : activeView === 'scenarios' ? (
               <div className="space-y-4">

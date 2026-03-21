@@ -79,6 +79,7 @@ export const PLAN_LIMITS = {
   free: {
     maxHoldings:          5,
     maxScenarioHoldings:  5,    // Max Positionen in der Szenario-Analyse
+    maxEarningsHoldings:  5,    // Max Portfolio-Positionen im Earnings-Kalender
     maxAnalysisHoldings:  10,   // Max Positionen die an KI-Analysen übergeben werden
     analysesPerMonth:     3,
     csvImports:           1,
@@ -88,6 +89,7 @@ export const PLAN_LIMITS = {
   premium: {
     maxHoldings:          Infinity,
     maxScenarioHoldings:  Infinity,
+    maxEarningsHoldings:  Infinity,
     maxAnalysisHoldings:  Infinity,
     analysesPerMonth:     Infinity,
     csvImports:           Infinity,
@@ -97,6 +99,7 @@ export const PLAN_LIMITS = {
   pro: {
     maxHoldings:          Infinity,
     maxScenarioHoldings:  Infinity,
+    maxEarningsHoldings:  Infinity,
     maxAnalysisHoldings:  Infinity,
     analysesPerMonth:     Infinity,
     csvImports:           Infinity,

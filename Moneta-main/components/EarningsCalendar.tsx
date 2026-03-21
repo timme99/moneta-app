@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Calendar, Clock, TrendingUp, Loader2, RefreshCcw, AlertTriangle, Info, DollarSign, TrendingDown, Database, Lock, Star } from 'lucide-react';
 import { fetchDividendsFallback } from '../services/geminiService';
 import { EarningsEvent, HoldingRow } from '../types';
 import { supabase as sb } from '../lib/supabaseClient';
+import { PLAN_LIMITS } from '../lib/useSubscription';
 
 const DIVIDEND_EVENT_TYPE = 'dividend_info';
 const SENTINEL_DATE       = '1970-01-01';
@@ -10,6 +11,7 @@ const CACHE_TTL_MS        = 7 * 24 * 60 * 60 * 1000; // 7 Tage
 
 interface EarningsCalendarProps {
   holdings: HoldingRow[];
+  isPremium?: boolean;
 }
 
 // ── Typen ──────────────────────────────────────────────────────────────────────
@@ -66,13 +68,15 @@ const formatCurrency = (value: number): string =>
 
 // ── Komponente ─────────────────────────────────────────────────────────────────
 
-const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
+const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium = false }) => {
   const [events, setEvents] = useState<EarningsEvent[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastFetch, setLastFetch] = useState<Date | null>(null);
   const [scannedSymbol, setScannedSymbol] = useState<string | null>(null);
   const [cacheStats, setCacheStats] = useState<{ total: number; cached: number; stale: number } | null>(null);
+  const autoScanTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isScanningRef = useRef(false);
 
   // Dividenden-State
   const [dividendData, setDividendData] = useState<DividendInfo[]>([]);
@@ -82,8 +86,27 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
   // Positionen ohne Supabase-Cache → Premium-gesperrt
   const [lockedHoldings, setLockedHoldings] = useState<HoldingRow[]>([]);
 
-  // Alle Positionen inkl. Watchlist – die KI braucht nur das Symbol für Earnings-Termine
-  const tickers = holdings
+  // Portfolio-Positionen nach Positionsgröße (Stückzahl × Kaufpreis) sortieren
+  const earningsLimit = isPremium
+    ? PLAN_LIMITS.premium.maxEarningsHoldings
+    : PLAN_LIMITS.free.maxEarningsHoldings;
+
+  const portfolioSorted = holdings
+    .filter(h => !h.watchlist && h.shares != null && h.buy_price != null)
+    .sort((a, b) => (b.shares! * b.buy_price!) - (a.shares! * a.buy_price!));
+
+  const watchlistSorted = holdings
+    .filter(h => h.watchlist)
+    .sort((a, b) => (a.ticker?.symbol ?? a.symbol ?? '').localeCompare(b.ticker?.symbol ?? b.symbol ?? ''));
+
+  // Free: nur Top-N Portfolio-Positionen; Premium: alle; dann Watchlist alphabetisch
+  const limitedPortfolio = Number.isFinite(earningsLimit)
+    ? portfolioSorted.slice(0, earningsLimit)
+    : portfolioSorted;
+
+  const earningsHoldingsTrimmed = !isPremium && portfolioSorted.length > earningsLimit;
+
+  const tickers = [...limitedPortfolio, ...watchlistSorted]
     .map(h => h.ticker?.symbol ?? h.symbol)
     .filter(Boolean)
     .slice(0, 12);
@@ -95,8 +118,10 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
 
   // ── Earnings laden (Cache-First via /api/earnings) ──────────────────────────
 
-  const loadEarnings = async () => {
+  const loadEarnings = async (isAutoScan = false) => {
     if (tickers.length === 0) return;
+    if (isAutoScan && isScanningRef.current) return; // Kein paralleler Aufruf
+    isScanningRef.current = true;
     setIsLoading(true);
     setError(null);
     try {
@@ -121,7 +146,18 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
       setScannedSymbol(json.scannedSymbol ?? null);
       setCacheStats(json.cacheStats ?? null);
       setLastFetch(new Date());
+
+      // Noch unbekannte Symbole? → automatisch nächsten Scan auslösen (1,5 s Pause)
+      if ((json.cacheStats?.stale ?? 0) > 0) {
+        autoScanTimerRef.current = setTimeout(() => {
+          isScanningRef.current = false;
+          loadEarnings(true);
+        }, 1500);
+      } else {
+        isScanningRef.current = false;
+      }
     } catch (e: any) {
+      isScanningRef.current = false;
       setError(e?.message?.includes(':') ? e.message.split(':')[1] : 'Earnings-Daten konnten nicht geladen werden.');
     } finally {
       setIsLoading(false);
@@ -182,6 +218,10 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
   };
 
   useEffect(() => {
+    // Laufenden Auto-Scan stoppen wenn sich Holdings ändern
+    if (autoScanTimerRef.current) clearTimeout(autoScanTimerRef.current);
+    isScanningRef.current = false;
+
     if (tickers.length > 0) {
       loadEarnings();
       loadDividends();
@@ -189,6 +229,9 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
       setLockedHoldings([]);
       setDividendData([]);
     }
+    return () => {
+      if (autoScanTimerRef.current) clearTimeout(autoScanTimerRef.current);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tickerKey]);
 
@@ -502,6 +545,12 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
                 )}
               </div>
             )}
+            {earningsHoldingsTrimmed && (
+              <div className="flex items-center gap-1 text-[9px] font-black text-amber-600 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-lg">
+                <Lock className="w-2.5 h-2.5" />
+                Top {earningsLimit} von {portfolioSorted.length} · Premium für alle
+              </div>
+            )}
           </div>
           <button
             onClick={() => { loadEarnings(); loadDividends(); }}
@@ -515,14 +564,29 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings }) => {
       )}
 
       {isLoading && (
-        <div className="flex justify-center py-16">
-          <div className="bg-white px-6 py-4 rounded-2xl shadow-xl border border-slate-100 flex items-center gap-3">
+        <div className="flex justify-center py-8">
+          <div className="bg-white px-6 py-4 rounded-2xl shadow-xl border border-slate-100 flex items-center gap-3 max-w-sm w-full">
             <Loader2 className="w-5 h-5 animate-spin text-blue-600 shrink-0" />
-            <div>
-              <span className="text-xs font-black text-slate-900 uppercase tracking-widest block">Lade Earnings-Kalender…</span>
-              <span className="text-[10px] text-slate-400 font-mono mt-0.5 block">
-                Cache wird geprüft · ggf. 1 neue Aktie gescannt
+            <div className="flex-1 min-w-0">
+              <span className="text-xs font-black text-slate-900 uppercase tracking-widest block">
+                {cacheStats && cacheStats.stale > 0
+                  ? `Scanne Symbol ${cacheStats.cached + 1} von ${cacheStats.total}…`
+                  : 'Lade Earnings-Kalender…'}
               </span>
+              {cacheStats && cacheStats.total > 0 && (
+                <div className="mt-2">
+                  <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-blue-500 rounded-full transition-all duration-500"
+                      style={{ width: `${Math.round((cacheStats.cached / cacheStats.total) * 100)}%` }}
+                    />
+                  </div>
+                  <span className="text-[10px] text-slate-400 font-mono mt-1 block">
+                    {cacheStats.cached}/{cacheStats.total} gecacht
+                    {scannedSymbol ? ` · ${scannedSymbol} gescannt` : ''}
+                  </span>
+                </div>
+              )}
             </div>
           </div>
         </div>
