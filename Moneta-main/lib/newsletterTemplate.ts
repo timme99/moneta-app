@@ -228,3 +228,118 @@ export function extractHighlightsFromMarkdown(markdown: string): string[] {
     .map(line => line.replace(/^- /, '').trim())
     .filter(Boolean);
 }
+
+// ── Monatlicher Dividenden-Fahrplan ──────────────────────────────────────────
+
+export interface MonthlyDividendEntry {
+  month:          number;   // 1–12
+  label:          string;   // "Januar" … "Dezember"
+  holdings: {
+    symbol:           string;
+    name:             string;
+    estimatedPayout:  number; // Stückzahl × dividendPerShare (Jahreswert / 4 Quartale)
+    isEstimated:      boolean;
+  }[];
+  totalEstimated: number;   // Summe für diesen Monat
+}
+
+const MONTH_LABELS = [
+  'Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
+  'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember',
+];
+
+/**
+ * Baut einen monatlichen Dividenden-Fahrplan aus den Holding-Dividenden.
+ *
+ * Logik:
+ *  - Hat eine Position ein bekanntes Ex-Datum → Auszahlung in diesem Monat anzeigen.
+ *  - Hat sie kein Ex-Datum → Jahresdividende gleichmäßig auf Q1/Q2/Q3/Q4 verteilen
+ *    (Monate 3, 6, 9, 12 – übliche Quartalsmonate).
+ *
+ * Verwendung im Newsletter:
+ *   const schedule = buildMonthlyDividendSchedule(holdingDividends);
+ *   // schedule[0] = Januar, schedule[11] = Dezember
+ *
+ * Hinweis: Nur informativ. Tatsächliche Ausschüttungstermine beim Unternehmen prüfen.
+ */
+export function buildMonthlyDividendSchedule(
+  holdingDividends: Array<{
+    symbol:           string;
+    name:             string;
+    annualIncome:     number;
+    exDividendDate:   string;
+    isEstimated:      boolean;
+  }>,
+  year = new Date().getFullYear(),
+): MonthlyDividendEntry[] {
+  // Initialisiere 12 leere Monate
+  const months: MonthlyDividendEntry[] = MONTH_LABELS.map((label, i) => ({
+    month: i + 1,
+    label,
+    holdings: [],
+    totalEstimated: 0,
+  }));
+
+  for (const h of holdingDividends) {
+    if (h.annualIncome <= 0) continue;
+
+    if (h.exDividendDate) {
+      // Bekanntes Ex-Datum → Auszahlung im entsprechenden Monat eintragen
+      const d = new Date(h.exDividendDate);
+      if (d.getFullYear() === year) {
+        const mi = d.getMonth(); // 0-basiert
+        months[mi].holdings.push({
+          symbol:          h.symbol,
+          name:            h.name,
+          estimatedPayout: h.annualIncome,   // Jahresdividende für dieses Ex-Datum
+          isEstimated:     h.isEstimated,
+        });
+        months[mi].totalEstimated += h.annualIncome;
+      }
+    } else {
+      // Kein bekanntes Datum → auf 4 Quartale (Q1=März, Q2=Juni, Q3=Sep, Q4=Dez) verteilen
+      const quarterMonths = [2, 5, 8, 11]; // 0-basiert: März, Juni, Sept, Dez
+      const quarterlyPayout = h.annualIncome / 4;
+      for (const mi of quarterMonths) {
+        months[mi].holdings.push({
+          symbol:          h.symbol,
+          name:            h.name,
+          estimatedPayout: quarterlyPayout,
+          isEstimated:     true, // Verteilung ist immer geschätzt
+        });
+        months[mi].totalEstimated += quarterlyPayout;
+      }
+    }
+  }
+
+  return months;
+}
+
+/**
+ * Konvertiert den monatlichen Fahrplan in einen Markdown-Abschnitt
+ * für den Newsletter. Monate ohne Auszahlungen werden übersprungen.
+ */
+export function buildMonthlyScheduleMarkdown(
+  schedule: MonthlyDividendEntry[],
+  year = new Date().getFullYear(),
+): string {
+  const activeMonths = schedule.filter(m => m.holdings.length > 0);
+  if (!activeMonths.length) return '';
+
+  const lines: string[] = [];
+  lines.push(`## 📅 Dividenden-Fahrplan ${year}`);
+  lines.push('');
+  lines.push('> Schätzungen auf Basis bekannter Ex-Daten bzw. quartalsweiser Verteilung. Keine Garantie.');
+  lines.push('');
+
+  for (const m of activeMonths) {
+    lines.push(`### ${m.label} — ${m.totalEstimated.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`);
+    for (const h of m.holdings.sort((a, b) => b.estimatedPayout - a.estimatedPayout)) {
+      const est = h.isEstimated ? ' *(KI)*' : '';
+      lines.push(`- **${h.name}** (\`${h.symbol}\`): ${h.estimatedPayout.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €${est}`);
+    }
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}
