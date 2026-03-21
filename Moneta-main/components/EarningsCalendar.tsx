@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Calendar, Clock, TrendingUp, Loader2, RefreshCcw, AlertTriangle, Info, DollarSign, TrendingDown, Database } from 'lucide-react';
+import { Calendar, Clock, TrendingUp, Loader2, RefreshCcw, AlertTriangle, Info, DollarSign, TrendingDown, Database, Lock } from 'lucide-react';
 import { EarningsEvent, HoldingRow } from '../types';
 import { getSupabaseBrowser } from '../lib/supabaseBrowser';
 import { PLAN_LIMITS } from '../lib/useSubscription';
