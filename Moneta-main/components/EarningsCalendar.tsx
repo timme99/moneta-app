@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Calendar, Clock, TrendingUp, Loader2, RefreshCcw, AlertTriangle, Info, DollarSign, TrendingDown, Database, Lock } from 'lucide-react';
+import { Calendar, Clock, TrendingUp, Loader2, RefreshCcw, AlertTriangle, Info, DollarSign, TrendingDown, Database, Lock, Sparkles, ShieldCheck } from 'lucide-react';
 import { EarningsEvent, HoldingRow } from '../types';
 import { getSupabaseBrowser } from '../lib/supabaseBrowser';
 import { PLAN_LIMITS } from '../lib/useSubscription';
 
 const DIVIDEND_EVENT_TYPE = 'dividend_info';
 const SENTINEL_DATE       = '1970-01-01';
-const CACHE_TTL_MS        = 7 * 24 * 60 * 60 * 1000; // 7 Tage
+const CACHE_TTL_MS        = 30 * 24 * 60 * 60 * 1000; // 30 Tage (sync mit API)
 
 interface EarningsCalendarProps {
   holdings: HoldingRow[];
@@ -33,7 +33,9 @@ interface HoldingDividend {
   dividendPerShare: number;
   annualIncome: number;
   exDividendDate: string;
-  isPaid: boolean; // Ex-Date in diesem Jahr bereits vergangen
+  isPaid: boolean;      // Ex-Date in diesem Jahr bereits vergangen
+  isEstimated: boolean; // true = Gemini-Schätzung, false = Alpha Vantage DB
+  isFromDb: boolean;    // true = aus Datenbank-Cache
 }
 
 // ── Helper ─────────────────────────────────────────────────────────────────────
@@ -255,7 +257,7 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
   const holdingDividends: HoldingDividend[] = useMemo(() => {
     if (dividendData.length === 0) return [];
 
-    return portfolioHoldings
+    const result = portfolioHoldings
       .map(h => {
         const sym = h.ticker?.symbol ?? h.symbol;
         const divInfo = dividendData.find(d => d.symbol === sym);
@@ -264,7 +266,6 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
         const shares = h.shares ?? 0;
         const annualIncome = shares * divInfo.dividendPerShare;
 
-        // Ex-Datum in aktuellem Jahr und bereits vergangen → "bezahlt"
         let isPaid = false;
         if (divInfo.exDividendDate) {
           const exDate = new Date(divInfo.exDividendDate);
@@ -272,27 +273,59 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
         }
 
         return {
-          symbol: sym,
-          name: h.ticker?.company_name ?? h.name ?? sym,
+          symbol:          sym,
+          name:            h.ticker?.company_name ?? h.name ?? sym,
           shares,
           dividendPerShare: divInfo.dividendPerShare,
           annualIncome,
-          exDividendDate: divInfo.exDividendDate,
+          exDividendDate:  divInfo.exDividendDate,
           isPaid,
+          isEstimated:     divInfo.isEstimated ?? false,
+          isFromDb:        divInfo.isFromDb    ?? false,
         } as HoldingDividend;
       })
-      .filter((x): x is HoldingDividend => x !== null)
-      .sort((a, b) => b.annualIncome - a.annualIncome);
+      .filter((x): x is HoldingDividend => x !== null);
+
+    // Chronologischer Fahrplan: zukünftige Ex-Daten aufsteigend, dann vergangene, dann ohne Datum
+    return result.sort((a, b) => {
+      const hasA = Boolean(a.exDividendDate);
+      const hasB = Boolean(b.exDividendDate);
+      if (!hasA && !hasB) return b.annualIncome - a.annualIncome;
+      if (!hasA) return 1;
+      if (!hasB) return -1;
+      const dateA = new Date(a.exDividendDate).getTime();
+      const dateB = new Date(b.exDividendDate).getTime();
+      const now   = today.getTime();
+      const futureA = dateA >= now;
+      const futureB = dateB >= now;
+      // Beide zukünftig: nächste zuerst
+      if (futureA && futureB) return dateA - dateB;
+      // Beide vergangen: neueste zuerst
+      if (!futureA && !futureB) return dateB - dateA;
+      // Zukünftig vor vergangen
+      return futureA ? -1 : 1;
+    });
   }, [dividendData, portfolioHoldings, currentYear]);
 
   const totalAnnualDividend = holdingDividends.reduce((sum, h) => sum + h.annualIncome, 0);
-  // "Erhalten": Ex-Datum dieses Jahr schon vergangen → schätzungsweise erhaltene Dividende
+
+  // "Erhalten": Positionen deren Ex-Datum in diesem Jahr bereits vergangen ist
   const receivedDividends = holdingDividends
     .filter(h => h.isPaid)
-    .reduce((sum, h) => sum + h.annualIncome / 4, 0); // ~1 Quartalszahlung als Schätzung
-  // "Erwartet": Rest des Jahres basierend auf Jahresdividende
-  const monthsRemaining = Math.max(0, 12 - (today.getMonth() + 1));
-  const expectedDividends = totalAnnualDividend * (monthsRemaining / 12);
+    .reduce((sum, h) => sum + h.annualIncome, 0);
+
+  // "Erwartet": Positionen mit zukünftigem Ex-Datum in diesem Jahr
+  const expectedDividends = holdingDividends
+    .filter(h => {
+      if (!h.exDividendDate || h.isPaid) return false;
+      const exDate = new Date(h.exDividendDate);
+      return exDate.getFullYear() === currentYear && exDate > today;
+    })
+    .reduce((sum, h) => sum + h.annualIncome, 0);
+
+  // Sparerpauschbetrag (1.000 € ab 2023, Einzelperson)
+  const SPARERPAUSCHBETRAG = 1000;
+  const pauschbetragPct = Math.min(100, (totalAnnualDividend / SPARERPAUSCHBETRAG) * 100);
 
   // ── Earnings-Aufteilung ────────────────────────────────────────────────────
 
@@ -363,7 +396,7 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
               <div className="flex-1 min-w-0">
                 <span className="text-[11px] font-black text-slate-700 block">
                   {divCacheStats && divCacheStats.stale > 0
-                    ? `Lade Dividenden · Symbol ${divCacheStats.cached + 1} von ${divCacheStats.total}…`
+                    ? `Scanne ${Math.min(10, divCacheStats.stale)} Symbol${divCacheStats.stale > 1 ? 'e' : ''} via KI-Batch…`
                     : 'Lade Dividenden-Daten…'}
                 </span>
                 {divCacheStats && divCacheStats.total > 0 && (
@@ -378,66 +411,120 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
             </div>
           )}
 
-          {/* Zwei Karten: Erhalten + Erwartet */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {/* Erhaltene Dividenden */}
-            <div className="bg-white border border-emerald-100 rounded-[24px] p-6 shadow-sm">
-              <div className="flex items-center gap-2 mb-3">
-                <div className="w-8 h-8 bg-emerald-100 rounded-xl flex items-center justify-center">
-                  <TrendingUp className="w-4 h-4 text-emerald-600" />
+          {/* Drei Karten: Erhalten + Erwartet + Gesamt */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {/* Erhalten */}
+            <div className="bg-white border border-emerald-100 rounded-[24px] p-5 shadow-sm">
+              <div className="flex items-center gap-2 mb-2">
+                <div className="w-7 h-7 bg-emerald-100 rounded-xl flex items-center justify-center">
+                  <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
                 </div>
                 <div>
-                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Erhaltene Dividenden</p>
-                  <p className="text-[9px] text-slate-400">{currentYear} (Schätzung)</p>
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Ex-Datum vergangen</p>
+                  <p className="text-[9px] text-slate-300">{currentYear}</p>
                 </div>
               </div>
               {isDivLoading && holdingDividends.length === 0 ? (
-                <div className="h-8 bg-slate-100 rounded-lg animate-pulse" />
-              ) : holdingDividends.length > 0 ? (
-                <p className="text-2xl font-black text-slate-900">
-                  {formatCurrency(receivedDividends)} <span className="text-sm font-medium text-slate-400">€</span>
-                </p>
+                <div className="h-7 bg-slate-100 rounded-lg animate-pulse" />
               ) : (
-                <p className="text-sm text-slate-400 font-medium">
-                  {isDivLoading ? 'Wird geladen…' : 'Keine Dividenden-Daten'}
+                <p className="text-xl font-black text-slate-900 tabular-nums">
+                  {formatCurrency(receivedDividends)} <span className="text-xs font-medium text-slate-400">€</span>
                 </p>
               )}
               {holdingDividends.filter(h => h.isPaid).length > 0 && (
-                <p className="text-[10px] text-emerald-600 font-medium mt-1">
-                  {holdingDividends.filter(h => h.isPaid).length} Position{holdingDividends.filter(h => h.isPaid).length !== 1 ? 'en' : ''} mit Ex-Datum in {currentYear}
+                <p className="text-[9px] text-emerald-600 font-bold mt-1">
+                  {holdingDividends.filter(h => h.isPaid).length} Position{holdingDividends.filter(h => h.isPaid).length !== 1 ? 'en' : ''}
                 </p>
               )}
             </div>
 
-            {/* Erwartete Dividenden */}
-            <div className="bg-white border border-emerald-100 rounded-[24px] p-6 shadow-sm">
-              <div className="flex items-center gap-2 mb-3">
-                <div className="w-8 h-8 bg-emerald-100 rounded-xl flex items-center justify-center">
-                  <TrendingDown className="w-4 h-4 text-emerald-600" />
+            {/* Erwartet */}
+            <div className="bg-white border border-blue-100 rounded-[24px] p-5 shadow-sm">
+              <div className="flex items-center gap-2 mb-2">
+                <div className="w-7 h-7 bg-blue-50 rounded-xl flex items-center justify-center">
+                  <Calendar className="w-3.5 h-3.5 text-blue-500" />
                 </div>
                 <div>
-                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Erwartete Dividenden</p>
-                  <p className="text-[9px] text-slate-400">Rest {currentYear} (Schätzung)</p>
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Bevorstehend</p>
+                  <p className="text-[9px] text-slate-300">Rest {currentYear}</p>
                 </div>
               </div>
               {isDivLoading && holdingDividends.length === 0 ? (
-                <div className="h-8 bg-slate-100 rounded-lg animate-pulse" />
-              ) : holdingDividends.length > 0 ? (
-                <p className="text-2xl font-black text-slate-900">
-                  {formatCurrency(expectedDividends)} <span className="text-sm font-medium text-slate-400">€</span>
-                </p>
+                <div className="h-7 bg-slate-100 rounded-lg animate-pulse" />
               ) : (
-                <p className="text-sm text-slate-400 font-medium">
-                  {isDivLoading ? 'Wird geladen…' : 'Keine Dividenden-Daten'}
+                <p className="text-xl font-black text-slate-900 tabular-nums">
+                  {formatCurrency(expectedDividends)} <span className="text-xs font-medium text-slate-400">€</span>
+                </p>
+              )}
+              {holdingDividends.filter(h => !h.isPaid && h.exDividendDate).length > 0 && (
+                <p className="text-[9px] text-blue-500 font-bold mt-1">
+                  {holdingDividends.filter(h => !h.isPaid && h.exDividendDate && new Date(h.exDividendDate) > today).length} ausstehend
+                </p>
+              )}
+            </div>
+
+            {/* Gesamt p.a. */}
+            <div className="bg-white border border-slate-100 rounded-[24px] p-5 shadow-sm">
+              <div className="flex items-center gap-2 mb-2">
+                <div className="w-7 h-7 bg-slate-100 rounded-xl flex items-center justify-center">
+                  <DollarSign className="w-3.5 h-3.5 text-slate-600" />
+                </div>
+                <div>
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Gesamt p.a.</p>
+                  <p className="text-[9px] text-slate-300">alle Positionen</p>
+                </div>
+              </div>
+              {isDivLoading && holdingDividends.length === 0 ? (
+                <div className="h-7 bg-slate-100 rounded-lg animate-pulse" />
+              ) : (
+                <p className="text-xl font-black text-slate-900 tabular-nums">
+                  {formatCurrency(totalAnnualDividend)} <span className="text-xs font-medium text-slate-400">€</span>
                 </p>
               )}
               {holdingDividends.length > 0 && (
-                <p className="text-[10px] text-emerald-600 font-medium mt-1">
-                  Gesamt p.a.: {formatCurrency(totalAnnualDividend)} €
+                <p className="text-[9px] text-slate-400 font-bold mt-1">
+                  {holdingDividends.length} zahlen Dividende
                 </p>
               )}
             </div>
           </div>
+
+          {/* Sparerpauschbetrag-Vorschau */}
+          {totalAnnualDividend > 0 && (
+            <div className="bg-white border border-slate-200 rounded-[20px] p-5 shadow-sm">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                  <p className="text-[10px] font-black text-slate-900 uppercase tracking-widest">
+                    Sparerpauschbetrag {currentYear}
+                  </p>
+                </div>
+                <span className={`text-[10px] font-black px-2 py-0.5 rounded-lg ${
+                  pauschbetragPct >= 100
+                    ? 'bg-rose-50 text-rose-600 border border-rose-100'
+                    : pauschbetragPct >= 70
+                    ? 'bg-amber-50 text-amber-600 border border-amber-100'
+                    : 'bg-emerald-50 text-emerald-600 border border-emerald-100'
+                }`}>
+                  {formatCurrency(Math.min(totalAnnualDividend, SPARERPAUSCHBETRAG))} / {SPARERPAUSCHBETRAG.toLocaleString('de-DE')} €
+                </span>
+              </div>
+              <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all duration-700 ${
+                    pauschbetragPct >= 100 ? 'bg-rose-400' : pauschbetragPct >= 70 ? 'bg-amber-400' : 'bg-emerald-500'
+                  }`}
+                  style={{ width: `${pauschbetragPct}%` }}
+                />
+              </div>
+              <p className="text-[9px] text-slate-400 mt-1.5">
+                {pauschbetragPct >= 100
+                  ? `Pauschbetrag durch geplante Dividenden überschritten (+${formatCurrency(totalAnnualDividend - SPARERPAUSCHBETRAG)} €)`
+                  : `${pauschbetragPct.toFixed(0)} % ausgeschöpft · ${formatCurrency(SPARERPAUSCHBETRAG - Math.min(totalAnnualDividend, SPARERPAUSCHBETRAG))} € verbleibend`}
+                {' '}· Keine Steuerberatung · Schätzung auf Basis der Jahresdividenden
+              </p>
+            </div>
+          )}
 
           {/* Dividenden-Fehler */}
           {divError && !isDivLoading && (
@@ -454,33 +541,55 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
               </div>
 
               <div className="divide-y divide-slate-100">
-                {/* Positionen mit Dividenden-Daten */}
-                {holdingDividends.map((h, i) => (
-                  <div key={i} className="px-6 py-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-2 h-2 rounded-full ${h.isPaid ? 'bg-emerald-500' : 'bg-emerald-400'}`} />
-                      <div>
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <p className="text-sm font-bold text-slate-800">{h.name}</p>
-                          {dividendData.find(d => d.symbol === h.symbol)?.isEstimated && (
-                            <span className="text-[8px] font-black bg-amber-50 text-amber-600 border border-amber-200 px-1.5 py-0.5 rounded uppercase tracking-widest">
-                              KI-Schätzung
-                            </span>
-                          )}
+                {/* Positionen mit Dividenden-Daten – chronologisch nach Ex-Datum */}
+                {holdingDividends.map((h, i) => {
+                  const daysToEx = h.exDividendDate ? daysUntil(h.exDividendDate) : null;
+                  const isSoon   = daysToEx !== null && daysToEx >= 0 && daysToEx <= 30;
+                  return (
+                    <div key={i} className={`px-6 py-4 flex items-center justify-between hover:bg-slate-50 transition-colors ${isSoon ? 'bg-emerald-50/30' : ''}`}>
+                      <div className="flex items-center gap-3">
+                        {/* Quelle-Icon: DB (grün) vs KI-Schätzung (amber) */}
+                        <div title={h.isEstimated ? 'KI-Schätzung (Gemini)' : 'Aus Datenbank (Alpha Vantage)'}>
+                          {h.isEstimated
+                            ? <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                            : <Database className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                          }
                         </div>
-                        <p className="text-[10px] font-mono text-slate-400">
-                          {h.symbol} · {h.shares} Stk · {formatCurrency(h.dividendPerShare)} €/Aktie p.a.
+                        <div>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <p className="text-sm font-bold text-slate-800">{h.name}</p>
+                            {isSoon && !h.isPaid && (
+                              <span className="text-[8px] font-black bg-emerald-600 text-white px-1.5 py-0.5 rounded uppercase tracking-widest">
+                                Bald
+                              </span>
+                            )}
+                            {h.isEstimated && (
+                              <span className="text-[8px] font-black bg-amber-50 text-amber-600 border border-amber-200 px-1.5 py-0.5 rounded uppercase tracking-widest">
+                                KI-Schätzung
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[10px] font-mono text-slate-400">
+                            {h.symbol} · {h.shares} Stk · {formatCurrency(h.dividendPerShare)} €/Aktie p.a.
+                          </p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm font-black text-slate-900 tabular-nums">{formatCurrency(h.annualIncome)} €</p>
+                        <p className={`text-[9px] font-bold uppercase tracking-widest ${
+                          h.isPaid ? 'text-slate-400' : isSoon ? 'text-emerald-600' : 'text-slate-500'
+                        }`}>
+                          {h.isPaid
+                            ? '✓ Ex-Datum vergangen'
+                            : daysToEx === 0 ? 'Ex-Datum heute'
+                            : daysToEx !== null && daysToEx > 0
+                              ? `Ex: ${formatDate(h.exDividendDate)} (in ${daysToEx}d)`
+                              : h.exDividendDate ? `Ex: ${formatDate(h.exDividendDate)}` : 'Termin offen'}
                         </p>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <p className="text-sm font-black text-slate-900">{formatCurrency(h.annualIncome)} €</p>
-                      <p className={`text-[9px] font-bold uppercase tracking-widest ${h.isPaid ? 'text-emerald-600' : 'text-emerald-500'}`}>
-                        {h.isPaid ? 'Ex-Datum vergangen' : h.exDividendDate ? `Ex: ${formatDate(h.exDividendDate)}` : 'Termin offen'}
-                      </p>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
 
                 {/* Skeleton für Positionen die noch geladen werden */}
                 {isDivLoading && portfolioHoldings
@@ -503,12 +612,15 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
                   ))}
               </div>
 
-              <div className="px-6 py-3 bg-slate-50 border-t border-slate-100">
-                <p className="text-[10px] text-slate-400 italic">
-                  {isDivFallback
-                    ? '* Teilweise KI-Schätzungen basierend auf historischen Ausschüttungsmustern. Alle Angaben ohne Gewähr.'
-                    : '* Daten via Alpha Vantage. Keine Garantie für Richtigkeit. Angaben in lokaler Währung des jeweiligen Börsenplatzes.'}
-                </p>
+              <div className="px-6 py-3 bg-slate-50 border-t border-slate-100 flex items-center gap-3 flex-wrap">
+                <span className="flex items-center gap-1 text-[9px] text-slate-400">
+                  <Database className="w-3 h-3 text-emerald-500" /> Alpha Vantage (verifiziert)
+                </span>
+                <span className="flex items-center gap-1 text-[9px] text-slate-400">
+                  <Sparkles className="w-3 h-3 text-amber-400" /> KI-Schätzung (Gemini)
+                </span>
+                <span className="text-[9px] text-slate-300">·</span>
+                <span className="text-[9px] text-slate-400 italic">Alle Angaben ohne Gewähr · Keine Anlageberatung</span>
               </div>
             </div>
           )}
