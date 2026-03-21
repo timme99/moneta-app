@@ -86,12 +86,12 @@ const ETFList: React.FC<ETFListProps> = ({ onShowAll }) => {
               <tr key={etf.id} className="hover:bg-slate-50/80 transition-colors group/row cursor-default">
                 <td className="px-6 py-4">
                   <div className="flex flex-col">
-                    <span className="font-bold text-sm text-slate-900 group-hover/row:text-blue-600 transition-colors">{etf.name}</span>
+                    <span className="font-bold text-sm text-slate-900 group-hover/row:text-emerald-600 transition-colors">{etf.name}</span>
                     <span className="text-[10px] text-slate-400 font-mono tracking-tighter uppercase">{etf.isin} · {etf.ticker}</span>
                   </div>
                 </td>
                 <td className="px-6 py-4">
-                  <span className="text-[10px] font-bold px-2 py-1 bg-blue-50 text-blue-700 rounded-lg">
+                  <span className="text-[10px] font-bold px-2 py-1 bg-emerald-50 text-emerald-700 rounded-lg">
                     {etf.category}
                   </span>
                 </td>

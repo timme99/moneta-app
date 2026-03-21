@@ -112,12 +112,12 @@ const Assistant: React.FC<AssistantProps> = ({ onAnalysisComplete, initialMessag
     <div className="flex flex-col h-[calc(100vh-180px)] max-w-4xl mx-auto bg-white rounded-[40px] shadow-2xl border border-slate-200 overflow-hidden">
       <div className="p-6 bg-slate-900 text-white flex justify-between items-center">
         <div className="flex items-center gap-4">
-          <div className="bg-blue-600 p-3 rounded-2xl shadow-lg">
+          <div className="bg-emerald-600 p-3 rounded-2xl shadow-lg">
             <Bot className="w-6 h-6 text-white" />
           </div>
           <div>
             <h3 className="font-black text-lg tracking-tight">Moneta Assistent</h3>
-            <p className="text-[10px] text-blue-400 font-black uppercase tracking-widest">KI-Sicherheits-Proxy aktiv</p>
+            <p className="text-[10px] text-emerald-400 font-black uppercase tracking-widest">KI-Sicherheits-Proxy aktiv</p>
           </div>
         </div>
       </div>
@@ -126,7 +126,7 @@ const Assistant: React.FC<AssistantProps> = ({ onAnalysisComplete, initialMessag
         {messages.map((msg, i) => (
           <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div className={`max-w-[80%] rounded-[32px] p-6 text-sm ${
-              msg.role === 'user' ? 'bg-blue-600 text-white' : 'bg-white text-slate-800 border border-slate-200'
+              msg.role === 'user' ? 'bg-emerald-600 text-white' : 'bg-white text-slate-800 border border-slate-200'
             }`}>
               <p className="whitespace-pre-wrap leading-relaxed font-medium">{msg.content}</p>
             </div>
@@ -150,9 +150,9 @@ const Assistant: React.FC<AssistantProps> = ({ onAnalysisComplete, initialMessag
             onChange={(e) => setInput(e.target.value)}
             onKeyPress={(e) => e.key === 'Enter' && handleSendText()}
             placeholder="Frag mich etwas zu deinem Depot..."
-            className="flex-1 px-6 py-4 bg-slate-50 border border-slate-200 rounded-[24px] focus:outline-none focus:ring-2 focus:ring-blue-600 text-sm font-medium"
+            className="flex-1 px-6 py-4 bg-slate-50 border border-slate-200 rounded-[24px] focus:outline-none focus:ring-2 focus:ring-emerald-600 text-sm font-medium"
           />
-          <button onClick={handleSendText} disabled={isLoading || !input.trim()} className="p-4 bg-blue-600 text-white rounded-[24px] hover:bg-blue-700 transition-all">
+          <button onClick={handleSendText} disabled={isLoading || !input.trim()} className="p-4 bg-emerald-600 text-white rounded-[24px] hover:bg-emerald-700 transition-all">
             <Send className="w-6 h-6" />
           </button>
         </div>

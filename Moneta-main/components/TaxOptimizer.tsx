@@ -312,9 +312,9 @@ const TaxOptimizer: React.FC<TaxOptimizerProps> = ({ holdings }) => {
         </div>
 
         {priceMsg && (
-          <div className="mx-6 mt-4 flex items-center gap-2 bg-blue-50 border border-blue-100 rounded-xl px-4 py-2">
-            <Info className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-            <p className="text-[10px] text-blue-700">{priceMsg}</p>
+          <div className="mx-6 mt-4 flex items-center gap-2 bg-emerald-50 border border-emerald-100 rounded-xl px-4 py-2">
+            <Info className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+            <p className="text-[10px] text-emerald-700">{priceMsg}</p>
           </div>
         )}
 
@@ -442,8 +442,8 @@ const TaxOptimizer: React.FC<TaxOptimizerProps> = ({ holdings }) => {
             label: 'Genutzter Freibetrag',
             value: fmt(computation.genutzterFreibetrag),
             sub: `von ${fmt(computation.verfügbarerFB)} verfügbar`,
-            color: 'text-blue-700',
-            bg: 'bg-blue-50 border-blue-100',
+            color: 'text-emerald-700',
+            bg: 'bg-emerald-50 border-emerald-100',
           },
           {
             label: 'Steuer gesamt',
@@ -502,7 +502,7 @@ const TaxOptimizer: React.FC<TaxOptimizerProps> = ({ holdings }) => {
                 key={i}
                 className={`flex items-start gap-3 p-3 rounded-xl text-xs ${
                   hint.type === 'good' ? 'bg-emerald-50 text-emerald-800' :
-                  hint.type === 'info' ? 'bg-blue-50 text-blue-800' :
+                  hint.type === 'info' ? 'bg-emerald-50 text-emerald-800' :
                   'bg-amber-50 text-amber-800'
                 }`}
               >

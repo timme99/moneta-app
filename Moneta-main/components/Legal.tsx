@@ -17,7 +17,7 @@ const Legal: React.FC<LegalProps> = ({ isOpen, onClose, type }) => {
       icon: FileText,
       body: (
         <div className="space-y-5 text-sm text-slate-600">
-          <div className="bg-blue-50 border border-blue-100 p-4 rounded-2xl text-blue-800 text-[11px] font-medium">
+          <div className="bg-emerald-50 border border-emerald-100 p-4 rounded-2xl text-emerald-800 text-[11px] font-medium">
             Dieses Impressum gilt für die Webanwendung <strong>Moneta</strong>, erreichbar unter dieser Domain.
           </div>
 
@@ -120,7 +120,7 @@ const Legal: React.FC<LegalProps> = ({ isOpen, onClose, type }) => {
             <h4 className="font-black text-slate-900 uppercase text-[10px] tracking-widest mb-2">Drittanbieter / KI-Verarbeitung</h4>
             <p className="text-[12px] leading-relaxed">
               Für KI-Analysen werden Depot-Daten (Ticker-Symbole, ISINs) an die Google Gemini API übertragen. Es werden keine Namen oder sonstige direkt personenidentifizierbare Daten übermittelt. Google LLC ist EU-Standard-Vertragsklauseln unterworfen. Weitere Informationen:{' '}
-              <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
+              <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer" className="text-emerald-600 underline">
                 Google Datenschutzrichtlinie
               </a>.
             </p>
@@ -151,7 +151,7 @@ const Legal: React.FC<LegalProps> = ({ isOpen, onClose, type }) => {
       <div className="bg-white rounded-[40px] shadow-2xl w-full max-w-xl overflow-hidden animate-in zoom-in duration-300">
         <div className="p-8 border-b border-slate-100 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="bg-blue-600 p-2.5 rounded-xl text-white">
+            <div className="bg-emerald-600 p-2.5 rounded-xl text-white">
               <current.icon className="w-5 h-5" />
             </div>
             <h2 className="text-xl font-black text-slate-900 tracking-tight">{current.title}</h2>
@@ -166,7 +166,7 @@ const Legal: React.FC<LegalProps> = ({ isOpen, onClose, type }) => {
         <div className="p-6 bg-slate-50 text-center">
           <button
             onClick={onClose}
-            className="px-8 py-3 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-blue-600 transition-all"
+            className="px-8 py-3 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-emerald-600 transition-all"
           >
             Verstanden
           </button>

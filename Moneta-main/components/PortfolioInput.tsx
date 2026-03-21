@@ -1183,11 +1183,11 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
       <div className="relative" ref={dropRef}>
         <div className={`bg-white border rounded-[24px] p-4 shadow-sm transition-all duration-300 ${
           isFocused
-            ? 'border-blue-300 shadow-blue-500/15 shadow-xl ring-2 ring-blue-500/20'
+            ? 'border-emerald-300 shadow-emerald-600/20 shadow-xl ring-2 ring-emerald-600/20'
             : 'border-slate-200 hover:border-slate-300 hover:shadow-md'
         }`}>
           <div className="flex items-center gap-3">
-            <Search className={`w-5 h-5 shrink-0 transition-colors duration-200 ${isFocused ? 'text-blue-500' : 'text-slate-400'}`} />
+            <Search className={`w-5 h-5 shrink-0 transition-colors duration-200 ${isFocused ? 'text-emerald-500' : 'text-slate-400'}`} />
             <input
               type="text"
               value={query}
@@ -1207,14 +1207,14 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
                 <button
                   key={t.id}
                   onClick={() => handleSelect(t)}
-                  className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-blue-50 rounded-xl text-left transition-colors group"
+                  className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-emerald-50 rounded-xl text-left transition-colors group"
                 >
                   <div className="min-w-0">
                     <span className="text-sm font-bold text-slate-900">{t.company_name}</span>
                     <span className="text-xs text-slate-400 ml-2 font-mono">{t.symbol}</span>
                   </div>
                   {t.sector && (
-                    <span className="ml-2 shrink-0 text-[9px] font-black text-blue-600 bg-blue-50 group-hover:bg-white px-2 py-0.5 rounded-full uppercase tracking-widest transition-colors">
+                    <span className="ml-2 shrink-0 text-[9px] font-black text-emerald-600 bg-emerald-50 group-hover:bg-white px-2 py-0.5 rounded-full uppercase tracking-widest transition-colors">
                       {t.sector}
                     </span>
                   )}
@@ -1250,9 +1250,9 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
                       setImportState({ loading: false, message: '', error: e?.message ?? 'KI-Auflösung fehlgeschlagen.' });
                     }
                   }}
-                  className="w-full flex items-center gap-3 px-3 py-3 hover:bg-blue-50 rounded-xl text-left transition-colors group"
+                  className="w-full flex items-center gap-3 px-3 py-3 hover:bg-emerald-50 rounded-xl text-left transition-colors group"
                 >
-                  <div className="w-7 h-7 bg-blue-50 rounded-lg flex items-center justify-center text-blue-600 shrink-0 group-hover:bg-blue-600 group-hover:text-white transition-colors">
+                  <div className="w-7 h-7 bg-emerald-50 rounded-lg flex items-center justify-center text-emerald-600 shrink-0 group-hover:bg-emerald-600 group-hover:text-white transition-colors">
                     <Zap className="w-3.5 h-3.5" />
                   </div>
                   <div>
@@ -1273,15 +1273,15 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
 
         {/* ── Kaufdaten-Formular ─────────────────────────────────────────── */}
         {selected && (
-          <div className="mt-3 bg-blue-50 border border-blue-100 rounded-[20px] p-4 space-y-4 animate-in fade-in duration-200">
+          <div className="mt-3 bg-emerald-50 border border-emerald-100 rounded-[20px] p-4 space-y-4 animate-in fade-in duration-200">
 
             {/* Titel + aktueller Kurs */}
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-2">
-                <span className="text-[10px] font-black text-blue-700 uppercase tracking-widest">
+                <span className="text-[10px] font-black text-emerald-700 uppercase tracking-widest">
                   {selected.company_name}
                 </span>
-                <span className="text-[9px] text-blue-400 font-mono">({selected.symbol})</span>
+                <span className="text-[9px] text-emerald-400 font-mono">({selected.symbol})</span>
               </div>
 
               {/* Kurs-Badge */}
@@ -1306,29 +1306,29 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
             {/* Zeile 1: Stückzahl + Kaufpreis */}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
-                <label className="text-[9px] font-black text-blue-600 uppercase tracking-widest">
-                  Stückzahl <span className="font-medium normal-case text-blue-400">(optional)</span>
+                <label className="text-[9px] font-black text-emerald-600 uppercase tracking-widest">
+                  Stückzahl <span className="font-medium normal-case text-emerald-400">(optional)</span>
                 </label>
                 <input
                   type="number"
                   value={shares}
                   onChange={(e) => handleSharesChange(e.target.value)}
                   placeholder="z. B. 10"
-                  className="w-full px-4 py-3 bg-white border border-slate-200 rounded-[14px] text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-600 transition-all"
+                  className="w-full px-4 py-3 bg-white border border-slate-200 rounded-[14px] text-sm font-medium focus:outline-none focus:ring-2 focus:ring-emerald-600 transition-all"
                   min="0"
                   step="any"
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-[9px] font-black text-blue-600 uppercase tracking-widest">
-                  Kaufpreis/Stk, EUR <span className="font-medium normal-case text-blue-400">(optional)</span>
+                <label className="text-[9px] font-black text-emerald-600 uppercase tracking-widest">
+                  Kaufpreis/Stk, EUR <span className="font-medium normal-case text-emerald-400">(optional)</span>
                 </label>
                 <input
                   type="number"
                   value={buyPrice}
                   onChange={(e) => setBuyPrice(e.target.value)}
                   placeholder="z. B. 130,00"
-                  className="w-full px-4 py-3 bg-white border border-slate-200 rounded-[14px] text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-600 transition-all"
+                  className="w-full px-4 py-3 bg-white border border-slate-200 rounded-[14px] text-sm font-medium focus:outline-none focus:ring-2 focus:ring-emerald-600 transition-all"
                   min="0"
                   step="any"
                 />
@@ -1337,11 +1337,11 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
 
             {/* Zeile 2: Gesamtwert (bidirektional mit Stückzahl) */}
             <div className="space-y-1">
-              <label className="text-[9px] font-black text-blue-600 uppercase tracking-widest flex items-center gap-1.5">
+              <label className="text-[9px] font-black text-emerald-600 uppercase tracking-widest flex items-center gap-1.5">
                 ≈ Gesamtwert, EUR
-                <span className="font-medium normal-case text-blue-400">(optional)</span>
+                <span className="font-medium normal-case text-emerald-400">(optional)</span>
                 {currentPrice && (
-                  <span className="font-medium normal-case text-blue-300">
+                  <span className="font-medium normal-case text-emerald-300">
                     — Eingabe berechnet Stückzahl automatisch
                   </span>
                 )}
@@ -1356,19 +1356,19 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
                     : 'Kurs nicht verfügbar – Stückzahl direkt eingeben'
                 }
                 disabled={!currentPrice && !totalValue}
-                className="w-full px-4 py-3 bg-white border border-slate-200 rounded-[14px] text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-600 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                className="w-full px-4 py-3 bg-white border border-slate-200 rounded-[14px] text-sm font-medium focus:outline-none focus:ring-2 focus:ring-emerald-600 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                 min="0"
                 step="any"
               />
               {!currentPrice && (
-                <p className="text-[9px] text-blue-400 font-medium">
+                <p className="text-[9px] text-emerald-400 font-medium">
                   Live-Kurs nicht verfügbar – Gesamtwert kann nicht automatisch berechnet werden.
                 </p>
               )}
             </div>
 
             {/* Watchlist-Hinweis */}
-            <p className="text-[9px] text-blue-500 font-medium flex items-center gap-1">
+            <p className="text-[9px] text-emerald-500 font-medium flex items-center gap-1">
               <BookMarked className="w-3 h-3 shrink-0" />
               {isWatchlistAdd
                 ? 'Felder leer → wird als Watchlist-Eintrag gespeichert (kein Bestand)'
@@ -1386,7 +1386,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
               <button
                 onClick={handleAdd}
                 disabled={isSaving}
-                className="flex-1 bg-slate-900 text-white py-3 rounded-[14px] text-[10px] font-black uppercase tracking-widest hover:bg-blue-600 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+                className="flex-1 bg-slate-900 text-white py-3 rounded-[14px] text-[10px] font-black uppercase tracking-widest hover:bg-emerald-600 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
               >
                 {isSaving
                   ? <Loader2 className="w-4 h-4 animate-spin" />
@@ -1420,7 +1420,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
           <button
             onClick={() => { setImportState({ loading: false, message: '', error: '' }); imageInputRef.current?.click(); }}
             disabled={importState.loading}
-            className="flex-1 flex items-center justify-center gap-2 py-3 bg-purple-50 border border-purple-100 hover:bg-purple-100 rounded-[16px] text-[10px] font-black text-purple-700 uppercase tracking-widest transition-colors disabled:opacity-50 min-h-[44px]"
+            className="flex-1 flex items-center justify-center gap-2 py-3 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 rounded-[16px] text-[10px] font-black text-emerald-700 uppercase tracking-widest transition-colors disabled:opacity-50 min-h-[44px]"
           >
             <Camera className="w-4 h-4" />
             Screenshot
@@ -1480,13 +1480,13 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
         <button
           onClick={() => { setImportState({ loading: false, message: '', error: '' }); brokerInputRef.current?.click(); }}
           disabled={importState.loading}
-          className="w-full flex items-center justify-between px-4 py-3 bg-blue-50 border border-blue-100 hover:bg-blue-100 rounded-[16px] text-[10px] font-black text-blue-700 uppercase tracking-widest transition-colors disabled:opacity-50 min-h-[44px]"
+          className="w-full flex items-center justify-between px-4 py-3 bg-emerald-50 border border-emerald-100 hover:bg-emerald-100 rounded-[16px] text-[10px] font-black text-emerald-700 uppercase tracking-widest transition-colors disabled:opacity-50 min-h-[44px]"
         >
           <div className="flex items-center gap-2">
             <FileSpreadsheet className="w-4 h-4" />
             Transaktionshistorie importieren
           </div>
-          <span className="text-[8px] font-black text-blue-400 normal-case tracking-normal">
+          <span className="text-[8px] font-black text-emerald-400 normal-case tracking-normal">
             CSV / Excel Export
           </span>
         </button>
@@ -1562,7 +1562,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
                       </span>
                     )}
                     {!h.watchlist && h.shares != null && h.buy_price != null && (
-                      <span className="text-[10px] text-blue-500 font-bold">
+                      <span className="text-[10px] text-emerald-500 font-bold">
                         = {(h.shares * h.buy_price).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} € Einstand
                       </span>
                     )}
@@ -1574,7 +1574,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
                 <div className="flex items-center gap-1">
                   <button
                     onClick={() => handleEdit(h)}
-                    className={`p-2 rounded-xl transition-colors shrink-0 ${editingId === h.id ? 'bg-blue-100 text-blue-600' : 'hover:bg-blue-50 hover:text-blue-500 text-slate-300'}`}
+                    className={`p-2 rounded-xl transition-colors shrink-0 ${editingId === h.id ? 'bg-emerald-100 text-emerald-600' : 'hover:bg-emerald-50 hover:text-emerald-500 text-slate-300'}`}
                     title="Position bearbeiten"
                   >
                     <Pencil className="w-4 h-4" />
@@ -1599,7 +1599,7 @@ const PortfolioInput: React.FC<PortfolioInputProps> = ({ holdings, onAnalyze, is
           <button
             onClick={handleAnalyze}
             disabled={isLoading}
-            className="flex-1 bg-blue-600 text-white py-5 rounded-[24px] font-black uppercase tracking-[0.2em] text-[10px] flex items-center justify-center gap-3 hover:bg-slate-900 transition-all shadow-xl shadow-blue-600/20 disabled:opacity-50"
+            className="flex-1 bg-emerald-600 text-white py-5 rounded-[24px] font-black uppercase tracking-[0.2em] text-[10px] flex items-center justify-center gap-3 hover:bg-slate-900 transition-all shadow-xl shadow-emerald-600/20 disabled:opacity-50"
           >
             {isLoading
               ? <Loader2 className="w-5 h-5 animate-spin" />

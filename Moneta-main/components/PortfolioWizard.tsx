@@ -55,7 +55,7 @@ const PortfolioWizard: React.FC<PortfolioWizardProps> = ({ onComplete, onCancel 
         return (
           <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-500">
             <div className="text-center mb-8">
-              <div className="bg-blue-100 w-16 h-16 rounded-[24px] flex items-center justify-center mx-auto mb-4 text-blue-600">
+              <div className="bg-emerald-100 w-16 h-16 rounded-[24px] flex items-center justify-center mx-auto mb-4 text-emerald-600">
                 <Target className="w-8 h-8" />
               </div>
               <h2 className="text-3xl font-black text-slate-900 tracking-tight">Was möchten Sie erreichen?</h2>
@@ -71,17 +71,17 @@ const PortfolioWizard: React.FC<PortfolioWizardProps> = ({ onComplete, onCancel 
                   key={opt.id}
                   onClick={() => setData({...data, goal: opt.id})}
                   className={`flex items-center gap-4 p-6 rounded-[24px] border-2 transition-all text-left group ${
-                    data.goal === opt.id ? 'border-blue-600 bg-blue-50 shadow-lg' : 'border-slate-100 hover:border-blue-200 bg-white'
+                    data.goal === opt.id ? 'border-emerald-600 bg-emerald-50 shadow-lg' : 'border-slate-100 hover:border-emerald-200 bg-white'
                   }`}
                 >
-                  <div className={`p-3 rounded-2xl ${data.goal === opt.id ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400 group-hover:bg-blue-100 group-hover:text-blue-500'}`}>
+                  <div className={`p-3 rounded-2xl ${data.goal === opt.id ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-400 group-hover:bg-emerald-100 group-hover:text-emerald-500'}`}>
                     <opt.icon className="w-6 h-6" />
                   </div>
                   <div>
                     <h4 className="font-bold text-slate-900">{opt.title}</h4>
                     <p className="text-xs text-slate-500 font-medium leading-relaxed">{opt.desc}</p>
                   </div>
-                  {data.goal === opt.id && <CheckCircle2 className="w-5 h-5 text-blue-600 ml-auto" />}
+                  {data.goal === opt.id && <CheckCircle2 className="w-5 h-5 text-emerald-600 ml-auto" />}
                 </button>
               ))}
             </div>
@@ -124,7 +124,7 @@ const PortfolioWizard: React.FC<PortfolioWizardProps> = ({ onComplete, onCancel 
         return (
           <div className="space-y-8 animate-in fade-in slide-in-from-right-4 duration-500">
             <div className="text-center mb-4">
-              <div className="bg-purple-100 w-16 h-16 rounded-[24px] flex items-center justify-center mx-auto mb-4 text-purple-600">
+              <div className="bg-emerald-100 w-16 h-16 rounded-[24px] flex items-center justify-center mx-auto mb-4 text-emerald-700">
                 <Wallet className="w-8 h-8" />
               </div>
               <h2 className="text-3xl font-black text-slate-900 tracking-tight">Die Rahmendaten</h2>
@@ -140,7 +140,7 @@ const PortfolioWizard: React.FC<PortfolioWizardProps> = ({ onComplete, onCancel 
                   type="range" min="25" max="5000" step="25"
                   value={data.amount}
                   onChange={e => setData({...data, amount: parseInt(e.target.value)})}
-                  className="w-full h-2 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-blue-600 mt-6"
+                  className="w-full h-2 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-emerald-600 mt-6"
                 />
               </div>
               
@@ -153,7 +153,7 @@ const PortfolioWizard: React.FC<PortfolioWizardProps> = ({ onComplete, onCancel 
                   type="range" min="1" max="40"
                   value={data.horizon}
                   onChange={e => setData({...data, horizon: parseInt(e.target.value)})}
-                  className="w-full h-2 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-blue-600 mt-6"
+                  className="w-full h-2 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-emerald-600 mt-6"
                 />
               </div>
             </div>
@@ -170,7 +170,7 @@ const PortfolioWizard: React.FC<PortfolioWizardProps> = ({ onComplete, onCancel 
         
         <div className="absolute top-0 left-0 right-0 h-1.5 bg-slate-200">
           <div 
-            className="h-full bg-blue-600 transition-all duration-700 ease-out" 
+            className="h-full bg-emerald-600 transition-all duration-700 ease-out" 
             style={{ width: `${(step / 3) * 100}%` }}
           />
         </div>
@@ -179,7 +179,7 @@ const PortfolioWizard: React.FC<PortfolioWizardProps> = ({ onComplete, onCancel 
           {isLoading ? (
             <div className="py-20 text-center space-y-6">
               <div className="relative inline-block">
-                <Loader2 className="w-16 h-16 animate-spin text-blue-600" />
+                <Loader2 className="w-16 h-16 animate-spin text-emerald-600" />
                 <Sparkles className="w-6 h-6 text-amber-400 absolute -top-1 -right-1 animate-bounce" />
               </div>
               <div className="space-y-2">
@@ -211,7 +211,7 @@ const PortfolioWizard: React.FC<PortfolioWizardProps> = ({ onComplete, onCancel 
                 ) : (
                   <button 
                     onClick={handleFinish}
-                    className="flex items-center gap-3 px-10 py-5 bg-blue-600 text-white rounded-[24px] font-black uppercase tracking-[0.2em] text-[10px] hover:bg-blue-700 transition-all shadow-2xl shadow-blue-600/30 active:scale-95 group"
+                    className="flex items-center gap-3 px-10 py-5 bg-emerald-600 text-white rounded-[24px] font-black uppercase tracking-[0.2em] text-[10px] hover:bg-emerald-700 transition-all shadow-2xl shadow-emerald-600/20 active:scale-95 group"
                   >
                     Anlage-Plan erstellen <Sparkles className="w-4 h-4 group-hover:rotate-12 transition-transform" />
                   </button>

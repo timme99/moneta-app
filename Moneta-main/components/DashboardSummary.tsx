@@ -161,7 +161,7 @@ const DashboardSummary: React.FC<Props> = ({ report, healthReport, savingsReport
             label="Sparpotenzial p.a."
             value={savings}
             sub={savingsReport?.savings_percentage ? `${savingsReport.savings_percentage} durch ETF-Wechsel` : 'Durch günstigere ETFs'}
-            color="text-blue-700" bg="bg-blue-50" border="border-blue-200"
+            color="text-emerald-700" bg="bg-emerald-50" border="border-emerald-200"
           />
         )}
       </div>
@@ -171,7 +171,7 @@ const DashboardSummary: React.FC<Props> = ({ report, healthReport, savingsReport
         <div className="bg-white border border-slate-200 rounded-[28px] overflow-hidden">
           <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-blue-600" />
+              <Sparkles className="w-4 h-4 text-emerald-600" />
               <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-[0.18em]">
                 KI-Einschätzungen
               </h3>
@@ -179,7 +179,7 @@ const DashboardSummary: React.FC<Props> = ({ report, healthReport, savingsReport
             <button
               onClick={() => { setLoaded(false); load(); }}
               disabled={loading}
-              className="flex items-center gap-1.5 text-[9px] font-black text-slate-400 hover:text-blue-600 uppercase tracking-widest transition-colors disabled:opacity-40"
+              className="flex items-center gap-1.5 text-[9px] font-black text-slate-400 hover:text-emerald-600 uppercase tracking-widest transition-colors disabled:opacity-40"
             >
               <RefreshCcw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
               Aktualisieren
@@ -188,7 +188,7 @@ const DashboardSummary: React.FC<Props> = ({ report, healthReport, savingsReport
 
           {loading && (
             <div className="flex items-center justify-center gap-3 py-8">
-              <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
+              <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
                 KI analysiert Positionen…
               </span>

@@ -139,7 +139,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
                   {' '}und klicke auf den Magic Link.
                 </p>
               </div>
-              <button onClick={() => { setSent(false); reset(); }} className="text-xs text-blue-600 font-bold hover:underline">
+              <button onClick={() => { setSent(false); reset(); }} className="text-xs text-emerald-600 font-bold hover:underline">
                 Andere E-Mail-Adresse verwenden
               </button>
             </div>
@@ -154,7 +154,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
                 </div>
               </div>
               <p className="text-sm text-slate-600 font-medium">{successMsg}</p>
-              <button onClick={() => { setSuccessMsg(null); setMode('signin'); }} className="text-xs text-blue-600 font-bold hover:underline">
+              <button onClick={() => { setSuccessMsg(null); setMode('signin'); }} className="text-xs text-emerald-600 font-bold hover:underline">
                 Zum Anmelden
               </button>
             </div>
@@ -219,7 +219,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
                     <input
                       type="email" required value={email} onChange={(e) => setEmail(e.target.value)}
                       placeholder="deine@email.de"
-                      className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-[20px] focus:outline-none focus:ring-2 focus:ring-blue-600 focus:bg-white text-base font-medium transition-all"
+                      className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-[20px] focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:bg-white text-base font-medium transition-all"
                     />
                   </div>
                   {error && <ErrorBanner msg={error} />}
@@ -270,7 +270,7 @@ const EmailField = ({ value, onChange }: { value: string; onChange: (v: string) 
     <input
       type="email" required value={value} onChange={(e) => onChange(e.target.value)}
       placeholder="deine@email.de"
-      className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-[20px] focus:outline-none focus:ring-2 focus:ring-blue-600 focus:bg-white text-base font-medium transition-all"
+      className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-[20px] focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:bg-white text-base font-medium transition-all"
     />
   </div>
 );
@@ -283,7 +283,7 @@ const PasswordField = ({
     <input
       type={show ? 'text' : 'password'} required value={value} onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
-      className="w-full pl-12 pr-12 py-4 bg-slate-50 border border-slate-200 rounded-[20px] focus:outline-none focus:ring-2 focus:ring-blue-600 focus:bg-white text-base font-medium transition-all"
+      className="w-full pl-12 pr-12 py-4 bg-slate-50 border border-slate-200 rounded-[20px] focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:bg-white text-base font-medium transition-all"
     />
     <button type="button" onClick={onToggle} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
       {show ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
@@ -294,7 +294,7 @@ const PasswordField = ({
 const SubmitButton = ({ loading, label, icon, disabled }: { loading: boolean; label: string; icon: React.ReactNode; disabled: boolean }) => (
   <button
     type="submit" disabled={loading || disabled}
-    className="w-full bg-slate-900 text-white py-4 rounded-[20px] font-black uppercase tracking-[0.15em] text-[10px] flex items-center justify-center gap-3 hover:bg-blue-600 transition-all shadow-lg shadow-slate-900/10 disabled:opacity-50"
+    className="w-full bg-slate-900 text-white py-4 rounded-[20px] font-black uppercase tracking-[0.15em] text-[10px] flex items-center justify-center gap-3 hover:bg-emerald-600 transition-all shadow-lg shadow-slate-900/10 disabled:opacity-50"
   >
     {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <>{icon} {label} <ArrowRight className="w-4 h-4" /></>}
   </button>
