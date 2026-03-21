@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Calendar, Clock, TrendingUp, Loader2, RefreshCcw, AlertTriangle, Info, DollarSign, TrendingDown, Database } from 'lucide-react';
 import { EarningsEvent, HoldingRow } from '../types';
-import { supabase as sb } from '../lib/supabaseClient';
+import { getSupabaseBrowser } from '../lib/supabaseBrowser';
 import { PLAN_LIMITS } from '../lib/useSubscription';
 
 const DIVIDEND_EVENT_TYPE = 'dividend_info';
@@ -126,6 +126,8 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
     setIsLoading(true);
     setError(null);
     try {
+      const sb = getSupabaseBrowser();
+      if (!sb) throw new Error('Supabase nicht verfügbar.');
       const { data: { session } } = await sb.auth.getSession();
       if (!session?.access_token) throw new Error('Nicht angemeldet.');
 
@@ -182,6 +184,8 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
       .slice(0, 20) as string[];
 
     try {
+      const sb = getSupabaseBrowser();
+      if (!sb) throw new Error('Supabase nicht verfügbar.');
       const { data: { session } } = await sb.auth.getSession();
       if (!session?.access_token) throw new Error('Nicht angemeldet.');
 
