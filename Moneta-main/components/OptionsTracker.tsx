@@ -464,9 +464,9 @@ export default function OptionsTracker() {
             <h1 className="text-xl font-black text-slate-100 tracking-tight">Optionspreis-Tracker</h1>
             <p className="text-[10px] text-slate-400 font-mono mt-0.5 uppercase tracking-widest">Black-Scholes · Greeks · Quick-Szenarien</p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 w-full sm:w-auto">
             {/* Symbol-Suche mit Autocomplete (DB-first → AV-Fallback) */}
-            <div className="relative" ref={dropRef}>
+            <div className="relative flex-1 sm:flex-none" ref={dropRef}>
               <input
                 type="text"
                 value={symbolQuery}
@@ -477,13 +477,13 @@ export default function OptionsTracker() {
                 }}
                 placeholder="Symbol suchen (AAPL, SAP…)"
                 maxLength={20}
-                className="bg-slate-800 border border-slate-700 text-slate-100 placeholder-slate-500 font-mono text-sm rounded-xl px-4 py-2.5 w-52 focus:outline-none focus:border-emerald-500 transition-colors pr-9"
+                className="bg-slate-800 border border-slate-700 text-slate-100 placeholder-slate-500 font-mono text-sm rounded-xl px-4 py-2.5 w-full sm:w-52 focus:outline-none focus:border-emerald-500 transition-colors pr-9"
               />
               {isFetchingSymbol && (
                 <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 animate-spin pointer-events-none" />
               )}
               {showDrop && suggestions.length > 0 && (
-                <div className="absolute top-full mt-1 w-64 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl z-50 overflow-hidden">
+                <div className="absolute top-full mt-1 w-full sm:w-64 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl z-50 overflow-hidden">
                   {suggestions.map(s => (
                     <button
                       key={s.symbol}

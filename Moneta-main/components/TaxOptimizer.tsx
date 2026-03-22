@@ -172,7 +172,7 @@ const TaxOptimizer: React.FC<TaxOptimizerProps> = ({ holdings }) => {
     <div className="space-y-6">
 
       {/* ── Header ── */}
-      <div className="relative overflow-hidden bg-gradient-to-br from-emerald-800 via-teal-700 to-cyan-700 rounded-[32px] md:rounded-[40px] p-8 md:p-12 text-white shadow-2xl">
+      <div className="relative overflow-hidden bg-gradient-to-br from-emerald-800 via-teal-700 to-cyan-700 rounded-[32px] md:rounded-[40px] p-4 md:p-8 text-white shadow-2xl">
         <div className="relative z-10">
           <div className="flex items-center gap-3 mb-3">
             <Receipt className="w-7 h-7 text-emerald-200" />

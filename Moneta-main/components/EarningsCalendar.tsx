@@ -321,7 +321,7 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
     <div className="space-y-6 animate-in fade-in duration-500">
 
       {/* Header */}
-      <div className="bg-gradient-to-br from-slate-900 to-emerald-900 p-8 md:p-12 rounded-[40px] text-white relative overflow-hidden shadow-2xl">
+      <div className="bg-gradient-to-br from-slate-900 to-emerald-900 p-4 md:p-8 rounded-[40px] text-white relative overflow-hidden shadow-2xl">
         <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-500/10 rounded-full -mr-16 -mt-16 blur-3xl" />
         <div className="relative z-10">
           <div className="flex items-center gap-2 mb-4">
@@ -397,7 +397,7 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
           )}
 
           {/* Drei Karten: Erhalten + Erwartet + Gesamt */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             {/* Erhalten */}
             <div className="bg-white border border-emerald-100 rounded-[24px] p-5 shadow-sm">
               <div className="flex items-center gap-2 mb-2">
@@ -549,26 +549,26 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
                   : holdingDividends.map((h, i) => {
                   if (h.noData) {
                     return (
-                      <div key={i} className="px-6 py-3 flex items-center justify-between opacity-40 hover:opacity-60 transition-opacity">
-                        <div className="flex items-center gap-3">
-                          <span className="text-slate-300 text-base font-light w-3.5 text-center">–</span>
-                          <div>
-                            <p className="text-sm font-bold text-slate-500">{h.name}</p>
-                            <p className="text-[10px] font-mono text-slate-300">
+                      <div key={i} className="px-6 py-3 flex items-center justify-between gap-2 opacity-40 hover:opacity-60 transition-opacity">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <span className="text-slate-300 text-base font-light w-3.5 text-center shrink-0">–</span>
+                          <div className="min-w-0">
+                            <p className="text-sm font-bold text-slate-500 truncate">{h.name}</p>
+                            <p className="text-[10px] font-mono text-slate-300 truncate">
                               {h.symbol} · {h.shares} Stk ·{' '}
                               {isDivLoading ? 'Wird geladen…' : 'Keine Dividende bekannt'}
                             </p>
                           </div>
                         </div>
-                        <p className="text-[10px] text-slate-300 font-mono tabular-nums">0,00 €</p>
+                        <p className="text-[10px] text-slate-300 font-mono tabular-nums shrink-0">0,00 €</p>
                       </div>
                     );
                   }
                   const daysToEx = h.exDividendDate ? daysUntil(h.exDividendDate) : null;
                   const isSoon   = daysToEx !== null && daysToEx >= 0 && daysToEx <= 30;
                   return (
-                    <div key={i} className={`px-6 py-4 flex items-center justify-between hover:bg-slate-50 transition-colors ${isSoon ? 'bg-emerald-50/30' : ''}`}>
-                      <div className="flex items-center gap-3">
+                    <div key={i} className={`px-6 py-4 flex items-center justify-between gap-2 hover:bg-slate-50 transition-colors ${isSoon ? 'bg-emerald-50/30' : ''}`}>
+                      <div className="flex items-center gap-3 min-w-0">
                         {/* Quelle-Icon: DB (grün) vs KI-Schätzung (amber) */}
                         <div title={h.isEstimated ? 'KI-Schätzung (Gemini)' : 'Aus Datenbank (Alpha Vantage)'}>
                           {h.isEstimated
@@ -576,26 +576,26 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
                             : <Database className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
                           }
                         </div>
-                        <div>
+                        <div className="min-w-0">
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            <p className="text-sm font-bold text-slate-800">{h.name}</p>
+                            <p className="text-sm font-bold text-slate-800 truncate">{h.name}</p>
                             {isSoon && !h.isPaid && (
-                              <span className="text-[8px] font-black bg-emerald-600 text-white px-1.5 py-0.5 rounded uppercase tracking-widest">
+                              <span className="text-[8px] font-black bg-emerald-600 text-white px-1.5 py-0.5 rounded uppercase tracking-widest shrink-0">
                                 Bald
                               </span>
                             )}
                             {h.isEstimated && (
-                              <span className="text-[8px] font-black bg-amber-50 text-amber-600 border border-amber-200 px-1.5 py-0.5 rounded uppercase tracking-widest">
+                              <span className="text-[8px] font-black bg-amber-50 text-amber-600 border border-amber-200 px-1.5 py-0.5 rounded uppercase tracking-widest shrink-0">
                                 KI-Schätzung
                               </span>
                             )}
                           </div>
-                          <p className="text-[10px] font-mono text-slate-400">
+                          <p className="text-[10px] font-mono text-slate-400 truncate">
                             {h.symbol} · {h.shares} Stk · {formatCurrency(h.dividendPerShare)} €/Aktie p.a.
                           </p>
                         </div>
                       </div>
-                      <div className="text-right">
+                      <div className="text-right shrink-0">
                         <p className="text-sm font-black text-slate-900 tabular-nums">{formatCurrency(h.annualIncome)} €</p>
                         <p className={`text-[9px] font-bold uppercase tracking-widest ${
                           h.isPaid ? 'text-slate-400' : isSoon ? 'text-emerald-600' : 'text-slate-500'
@@ -715,19 +715,19 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
                     isVerySoon ? 'border-emerald-200 ring-1 ring-emerald-600' : 'border-slate-200'
                   }`}
                 >
-                  <div className="flex items-start justify-between mb-4">
-                    <div>
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="font-black text-slate-900 text-base">{event.company}</span>
+                  <div className="flex items-start justify-between mb-4 gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
+                        <span className="font-black text-slate-900 text-base truncate">{event.company}</span>
                         {isVerySoon && (
-                          <span className="text-[9px] font-black bg-emerald-600 text-white px-2 py-0.5 rounded-full uppercase tracking-widest">
+                          <span className="text-[9px] font-black bg-emerald-600 text-white px-2 py-0.5 rounded-full uppercase tracking-widest shrink-0">
                             Bald
                           </span>
                         )}
                       </div>
                       <span className="text-[10px] font-mono text-slate-400">{event.ticker} · {event.quarter}</span>
                     </div>
-                    <span className="text-[10px] font-black text-slate-400 bg-slate-50 border border-slate-100 px-2.5 py-1 rounded-lg whitespace-nowrap">
+                    <span className="text-[10px] font-black text-slate-400 bg-slate-50 border border-slate-100 px-2.5 py-1 rounded-lg whitespace-nowrap shrink-0">
                       {days === 0 ? 'Heute' : `in ${days} Tag${days !== 1 ? 'en' : ''}`}
                     </span>
                   </div>

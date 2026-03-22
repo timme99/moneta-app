@@ -121,7 +121,7 @@ const AssistantChat: React.FC<AssistantChatProps> = ({ onAnalysisComplete, isPre
   };
 
   return (
-    <div className="flex flex-col h-[600px] bg-white rounded-[32px] shadow-2xl border border-slate-200 overflow-hidden">
+    <div className="flex flex-col h-[420px] sm:h-[600px] bg-white rounded-[32px] shadow-2xl border border-slate-200 overflow-hidden">
       <div className="p-5 bg-slate-900 text-white flex justify-between items-center">
         <div className="flex items-center gap-3">
           <div className="bg-emerald-600 p-2 rounded-xl shadow-lg shadow-emerald-600/20">
