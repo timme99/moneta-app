@@ -351,6 +351,91 @@ export const analyzeScenarioFallback = async (
   }
 };
 
+// ── Options Scenario Analysis ────────────────────────────────────────────────
+
+interface OptionPosition {
+  symbol:     string;
+  optionType: 'call' | 'put';
+  S:          number;   // aktueller Kurs
+  K:          number;   // Basispreis
+  T:          number;   // Restlaufzeit in Tagen
+  sigma:      number;   // impl. Volatilität in %
+  q:          number;   // Dividendenrendite in %
+  delta:      number;
+  theta:      number;   // pro Tag in EUR
+  vega:       number;   // pro 1% Vola in EUR
+  optPrice:   number;   // aktueller Optionsschein-Preis in EUR
+  ratio:      number;   // Bezugsverhältnis
+}
+
+const OPTIONS_SCENARIO_PROMPT = (
+  pos: OptionPosition,
+  scenarioName: string,
+  scenarioDesc: string,
+) =>
+`Du bist ein Finanzbildungs-Assistent. Analysiere rein informativ und ohne Anlageberatungscharakter,
+wie das folgende Makro-Szenario historisch eine solche Optionsposition beeinflusst hätte.
+
+Szenario: "${scenarioName}"
+Beschreibung: "${scenarioDesc}"
+
+Optionsposition (Black-Scholes-Merton, europäische Option):
+- Underlying: ${pos.symbol || 'nicht angegeben'}
+- Typ: ${pos.optionType === 'call' ? 'CALL (Long)' : 'PUT (Long)'}
+- Aktueller Kurs (S): ${pos.S.toFixed(2)} €
+- Basispreis (K): ${pos.K.toFixed(2)} €
+- Restlaufzeit: ${pos.T} Tage
+- Impl. Volatilität (σ): ${pos.sigma.toFixed(1)} %
+- Dividendenrendite (q): ${pos.q.toFixed(1)} %
+- Aktueller Optionspreis: ${pos.optPrice.toFixed(4)} €
+- Bezugsverhältnis: ${pos.ratio}:1
+
+Options-Greeks (zeigen die Sensitivitäten):
+- Delta (Δ): ${pos.delta.toFixed(4)} – Preisänderung pro 1 € Kursbewegung
+- Theta (Θ): ${pos.theta.toFixed(4)} € / Tag – Zeitwertverlust
+- Vega (ν): ${pos.vega.toFixed(4)} € / 1% Volatilitätsänderung
+
+Analysiere, welche Greeks in diesem Szenario dominant wären (Delta-Effekt durch Kursbewegung,
+Vega-Effekt durch Volatilitätsanstieg, Theta-Verlust durch Zeitablauf) und schätze den
+kombinierten Effekt auf den Optionspreis. Berücksichtige, dass hohe Volatilität in Krisen
+typischerweise den Vega-Effekt für Calls und Puts unterschiedlich beeinflusst.
+
+Antworte NUR mit einem gültigen JSON-Objekt:
+{
+  "scenario": "${scenarioName}",
+  "description": "${scenarioDesc}",
+  "estimatedImpact": "Kurze Zusammenfassung des Effekts auf DIESE Optionsposition",
+  "impactPercent": -35.0,
+  "dominantGreek": "Delta|Vega|Theta",
+  "greekAnalysis": {
+    "deltaEffect": "Qualitative Einschätzung des Delta-Effekts (Kursbewegung)",
+    "vegaEffect": "Qualitative Einschätzung des Vega-Effekts (Volatilität)",
+    "thetaEffect": "Qualitative Einschätzung des Theta-Effekts (Zeit)"
+  },
+  "affectedBy": ["Kursbewegung", "Volatilitätsanstieg", "Zeitablauf"],
+  "explanation": "Ausführliche bildungsorientierte Erklärung – wie wirkt sich ${scenarioName} auf Optionen dieses Typs historisch aus?",
+  "historicalComparison": "Verweis auf historisch ähnliche Situationen (z.B. VIX-Spike 2020, Dotcom-Blase)"
+}
+
+impactPercent als Zahl (Wertveränderung der Option in % – negativ = Verlust, positiv = Gewinn).
+Nur sachliche, historisch fundierte Informationen. Keine Handlungsempfehlungen. Kein anderer Text außer dem JSON.`;
+
+export const analyzeOptionScenario = async (
+  pos: OptionPosition,
+  scenarioName: string,
+  scenarioDesc: string,
+) => {
+  const result = await callProxy('chat', {
+    contents: [{ parts: [{ text: OPTIONS_SCENARIO_PROMPT(pos, scenarioName, scenarioDesc) }] }],
+    config: { temperature: 0.3, maxOutputTokens: 1800 },
+  });
+  try {
+    return JSON.parse(extractJson(result.text));
+  } catch {
+    throw new Error('PARSE_ERROR:Gemini hat kein gültiges JSON zurückgegeben. Bitte erneut versuchen.');
+  }
+};
+
 // ── Dividends Fallback ───────────────────────────────────────────────────────
 
 const DIVIDENDS_FALLBACK_PROMPT = (tickers: string[], year: number) =>

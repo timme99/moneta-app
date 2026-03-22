@@ -5,8 +5,10 @@
  * Ermöglicht Szenario-Simulationen: Kursänderung, Vola-Änderung, Zeitablauf.
  */
 
-import React, { useState, useMemo } from 'react';
-import { TrendingUp, TrendingDown, Activity, ChevronRight, RotateCcw, Info } from 'lucide-react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { RotateCcw, Info, Sparkles, Loader2 } from 'lucide-react';
+import { analyzeOptionScenario } from '../services/geminiService';
+import { getSupabaseBrowser } from '../lib/supabaseBrowser';
 
 // ─── Black-Scholes Mathematik ─────────────────────────────────────────────────
 
@@ -41,37 +43,45 @@ interface BSResult {
   Nd2: number;
 }
 
+/**
+ * Black-Scholes-Merton mit kontinuierlicher Dividendenrendite q (Merton 1973).
+ * Formel: S_adj = S * e^(-qT) ersetzt S im Standard-BS-Modell.
+ * q = 0 → identisch mit klassischem Black-Scholes ohne Dividenden.
+ */
 function blackScholes(
   S: number, K: number, T: number, r: number, sigma: number,
   type: 'call' | 'put',
+  q = 0,   // kontinuierliche Dividendenrendite p.a. (dezimal, z.B. 0.02 = 2 %)
 ): BSResult {
   if (T <= 0) {
     const intrinsic = type === 'call' ? Math.max(S - K, 0) : Math.max(K - S, 0);
     const delta = type === 'call' ? (S > K ? 1 : 0) : (S < K ? -1 : 0);
     return { price: intrinsic, delta, gamma: 0, theta: 0, vega: 0, rho: 0, d1: 0, d2: 0, Nd1: 0, Nd2: 0 };
   }
-  const d1 = (Math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * Math.sqrt(T));
+  // Merton-Anpassung: dividendenbereinigter Kurs
+  const Sq = S * Math.exp(-q * T);
+  const d1 = (Math.log(Sq / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * Math.sqrt(T));
   const d2 = d1 - sigma * Math.sqrt(T);
   const Nd1 = normCDF(d1), Nd2 = normCDF(d2);
   const nd1 = normPDF(d1);
-  const Km = K * Math.exp(-r * T);
+  const Km  = K  * Math.exp(-r * T);
 
   let price: number, delta: number, theta: number, rho: number;
   if (type === 'call') {
-    price = S * Nd1 - Km * Nd2;
-    delta = Nd1;
-    theta = (-(S * nd1 * sigma) / (2 * Math.sqrt(T)) - r * Km * Nd2) / 365;
+    price = Sq * Nd1 - Km * Nd2;
+    delta = Math.exp(-q * T) * Nd1;
+    theta = (-(Sq * nd1 * sigma) / (2 * Math.sqrt(T)) + q * Sq * Nd1 - r * Km * Nd2) / 365;
     rho = Km * T * Nd2 / 100;
   } else {
     const Nnd1 = normCDF(-d1), Nnd2 = normCDF(-d2);
-    price = Km * Nnd2 - S * Nnd1;
-    delta = Nd1 - 1;
-    theta = (-(S * nd1 * sigma) / (2 * Math.sqrt(T)) + r * Km * Nnd2) / 365;
+    price = Km * Nnd2 - Sq * Nnd1;
+    delta = Math.exp(-q * T) * (Nd1 - 1);
+    theta = (-(Sq * nd1 * sigma) / (2 * Math.sqrt(T)) - q * Sq * Nnd1 + r * Km * Nnd2) / 365;
     rho = -Km * T * Nnd2 / 100;
   }
 
-  const gamma = nd1 / (S * sigma * Math.sqrt(T));
-  const vega  = S * nd1 * Math.sqrt(T) / 100;
+  const gamma = nd1 / (Sq * sigma * Math.sqrt(T));
+  const vega  = Sq * nd1 * Math.sqrt(T) / 100;
   return { price, delta, gamma, theta, vega, rho, d1, d2, Nd1, Nd2 };
 }
 
@@ -135,15 +145,23 @@ function ParamSlider({ label, value, min, max, step, unit, onChange }: SliderPro
 
 // ─── Payoff Chart ─────────────────────────────────────────────────────────────
 
-function PayoffChart({ S, K, premium, ratio, type }: {
+// React.memo verhindert Neuberechnungen der 80-Punkte-SVG-Kurve bei Szenario-Slider-
+// Bewegungen, die S/K/premium/ratio/type NICHT verändern (z.B. scenPricePct-Änderungen).
+const PayoffChart = React.memo(function PayoffChart({ S, K, premium, ratio, type }: {
   S: number; K: number; premium: number; ratio: number; type: 'call' | 'put';
 }) {
   const W = 300, H = 110;
-  const spots = Array.from({ length: 80 }, (_, i) => S * (0.65 + i * 0.009));
-  const payoffs = spots.map(s => {
-    const intrinsic = type === 'call' ? Math.max(0, s - K) : Math.max(0, K - s);
-    return intrinsic / ratio - premium;
-  });
+  const spots = React.useMemo(
+    () => Array.from({ length: 80 }, (_, i) => S * (0.65 + i * 0.009)),
+    [S],
+  );
+  const payoffs = React.useMemo(
+    () => spots.map(s => {
+      const intrinsic = type === 'call' ? Math.max(0, s - K) : Math.max(0, K - s);
+      return intrinsic / ratio - premium;
+    }),
+    [spots, K, ratio, premium, type],
+  );
   const minP = Math.min(...payoffs, -premium * 1.2);
   const maxP = Math.max(...payoffs, premium * 0.5);
   const range = maxP - minP || 1;
@@ -180,7 +198,7 @@ function PayoffChart({ S, K, premium, ratio, type }: {
       </svg>
     </div>
   );
-}
+});
 
 // ─── Szenarien ────────────────────────────────────────────────────────────────
 
@@ -203,6 +221,7 @@ export default function OptionsTracker() {
   const [T,          setT]          = useState(90);
   const [sigma,      setSigma]      = useState(20);
   const [r,          setR]          = useState(2.5);
+  const [q,          setQ]          = useState(0);    // Dividendenrendite p.a. in %
   const [ratio,      setRatio]      = useState(1);
 
   // ── Szenario-Parameter ─────────────────────────────────────────────────────
@@ -211,11 +230,81 @@ export default function OptionsTracker() {
   const [scenDays,     setScenDays]     = useState(0);
   const [activePreset, setActivePreset] = useState<string | null>('bullish');
 
+  // ── Symbol-Suche (DB-first → AV-Fallback) ─────────────────────────────────
+  const sb = getSupabaseBrowser();
+  const [symbolQuery,      setSymbolQuery]      = useState('');
+  const [suggestions,      setSuggestions]      = useState<{symbol: string; company_name: string}[]>([]);
+  const [showDrop,         setShowDrop]         = useState(false);
+  const [isFetchingSymbol, setIsFetchingSymbol] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dropRef     = useRef<HTMLDivElement>(null);
+
+  const searchTickers = useCallback((q: string) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (!q.trim() || q.length < 2) { setSuggestions([]); setShowDrop(false); return; }
+    debounceRef.current = setTimeout(async () => {
+      setIsFetchingSymbol(true);
+      // Phase 1: Supabase ticker_mapping (DB-first)
+      const { data } = sb
+        ? await sb.from('ticker_mapping').select('symbol, company_name')
+            .or(`symbol.ilike.%${q}%,company_name.ilike.%${q}%`).limit(6)
+        : { data: [] as any[] };
+      if (data && data.length > 0) {
+        setSuggestions(data);
+        setShowDrop(true);
+        setIsFetchingSymbol(false);
+      } else {
+        // Phase 2: /api/financial-data Fallback (Gemini → Alpha Vantage)
+        try {
+          const res = await fetch(`/api/financial-data?ticker=${encodeURIComponent(q)}`);
+          if (res.ok) {
+            const json = await res.json();
+            if (json.ticker) {
+              setSuggestions([{ symbol: json.ticker, company_name: json.companyName ?? json.ticker }]);
+              setShowDrop(true);
+            }
+          }
+        } catch { /* ignorieren */ }
+        setIsFetchingSymbol(false);
+      }
+    }, 300);
+  }, [sb]);
+
+  const handleSymbolSelect = async (sym: string) => {
+    setSymbol(sym);
+    setSymbolQuery(sym);
+    setSuggestions([]);
+    setShowDrop(false);
+    // Aktuellen Kurs laden und S-Slider vorbelegen
+    try {
+      const res = await fetch(`/api/financial-data?ticker=${encodeURIComponent(sym)}`);
+      if (res.ok) {
+        const json = await res.json();
+        if (json.price > 0) setS(parseFloat(Number(json.price).toFixed(2)));
+      }
+    } catch { /* kein Kurs verfügbar */ }
+  };
+
+  // Dropdown bei Klick außerhalb schließen
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (dropRef.current && !dropRef.current.contains(e.target as Node)) setShowDrop(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  // ── KI-Szenario-Analyse ────────────────────────────────────────────────────
+  const [aiLoading,  setAiLoading]  = useState(false);
+  const [aiResult,   setAiResult]   = useState<any>(null);
+  const [aiError,    setAiError]    = useState<string | null>(null);
+  const [aiScenario, setAiScenario] = useState<string | null>(null);
+
   // ── Berechnungen ───────────────────────────────────────────────────────────
   const TY = T / 365;
   const bs = useMemo(
-    () => blackScholes(S, K, TY, r / 100, sigma / 100, optionType),
-    [S, K, TY, r, sigma, optionType],
+    () => blackScholes(S, K, TY, r / 100, sigma / 100, optionType, q / 100),
+    [S, K, TY, r, sigma, optionType, q],
   );
   const optPrice = bs.price / ratio;
 
@@ -223,8 +312,8 @@ export default function OptionsTracker() {
   const scenSigma = Math.max(1, sigma * (1 + scenVolaPct / 100));
   const scenT     = Math.max(0, T - scenDays) / 365;
   const bsScen = useMemo(
-    () => blackScholes(scenS, K, scenT, r / 100, scenSigma / 100, optionType),
-    [scenS, K, scenT, r, scenSigma, optionType],
+    () => blackScholes(scenS, K, scenT, r / 100, scenSigma / 100, optionType, q / 100),
+    [scenS, K, scenT, r, scenSigma, optionType, q],
   );
   const scenPrice = bsScen.price / ratio;
   const diff      = scenPrice - optPrice;
@@ -257,6 +346,47 @@ export default function OptionsTracker() {
   const thetaContrib = bs.theta / ratio * scenDays;
   const residual     = diff - deltaContrib - vegaContrib - thetaContrib;
 
+  // ── KI-Analyse Handler ──────────────────────────────────────────────────────
+  const OPTION_SCENARIO_LIST = [
+    { name: 'Marktkorrektur −30%', desc: 'Breiter Markteinbruch von 30 % analog zu historischen Bärenmärkten (2008, COVID-2020)' },
+    { name: 'Zinsanstieg +3%',     desc: 'Schneller Anstieg der Leitzinsen um 3 Prozentpunkte' },
+    { name: 'Inflationsschock',    desc: 'Anhaltende Inflation über 8 % – Auswirkungen auf Volatilität und Marktrisiko' },
+    { name: 'Tech-Selloff −40%',  desc: 'Massive Korrektur im Technologiesektor (Dotcom-Blase 2000–2002)' },
+    { name: 'VIX-Spike (Crash)',  desc: 'Extremer Volatilitätsanstieg +150 % – Vola-Effekt dominiert' },
+  ];
+
+  const runAiAnalysis = async (scenName: string, scenDesc: string) => {
+    setAiScenario(scenName);
+    setAiResult(null);
+    setAiError(null);
+    setAiLoading(true);
+    try {
+      const data = await analyzeOptionScenario(
+        {
+          symbol: symbol || 'N/A',
+          optionType,
+          S, K, T: T, sigma, q,
+          delta: bs.delta / ratio,
+          theta: bs.theta / ratio,
+          vega:  bs.vega  / ratio,
+          optPrice,
+          ratio,
+        },
+        scenName,
+        scenDesc,
+      );
+      setAiResult(data);
+    } catch (e: any) {
+      setAiError(
+        e?.message?.includes(':')
+          ? e.message.split(':').slice(1).join(':').trim()
+          : 'KI-Analyse vorübergehend nicht verfügbar. Bitte erneut versuchen.',
+      );
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
 
@@ -264,44 +394,106 @@ export default function OptionsTracker() {
       <div className="flex items-center gap-2 bg-amber-50 border border-amber-100 rounded-2xl px-5 py-3">
         <Info className="w-4 h-4 text-amber-500 shrink-0" />
         <p className="text-[10px] text-amber-700 font-bold">
-          Kein Anlageberatungsangebot. Black-Scholes gilt für europäische Optionen ohne Dividenden. Alle Angaben ohne Gewähr.
+          Kein Anlageberatungsangebot. Black-Scholes-Merton-Modell (europäische Optionen, kontinuierliche Dividendenrendite q nach Merton 1973). Alle Angaben ohne Gewähr.
         </p>
       </div>
 
       {/* ── Header ──────────────────────────────────────────────────────────── */}
-      <div className="bg-slate-900 rounded-[28px] px-6 py-5 flex flex-col sm:flex-row items-start sm:items-center gap-4">
-        <div className="flex-1">
-          <h1 className="text-xl font-black text-slate-100 tracking-tight">Optionspreis-Tracker</h1>
-          <p className="text-[10px] text-slate-400 font-mono mt-0.5 uppercase tracking-widest">Black-Scholes · Greeks · Szenario-Simulation</p>
-        </div>
-        <div className="flex items-center gap-3">
-          {/* Symbol-Eingabe */}
-          <input
-            type="text"
-            value={symbol}
-            onChange={e => setSymbol(e.target.value.toUpperCase())}
-            placeholder="Symbol (z.B. AAPL)"
-            maxLength={12}
-            className="bg-slate-800 border border-slate-700 text-slate-100 placeholder-slate-500 font-mono text-sm rounded-xl px-4 py-2.5 w-44 focus:outline-none focus:border-emerald-500 transition-colors"
-          />
-          {/* Call / Put Toggle */}
-          <div className="flex rounded-xl overflow-hidden border border-slate-700">
-            {(['call', 'put'] as const).map(t => (
-              <button
-                key={t}
-                onClick={() => setOptionType(t)}
-                className={`px-4 py-2.5 text-[10px] font-black uppercase tracking-widest transition-colors ${
-                  optionType === t
-                    ? t === 'call'
-                      ? 'bg-emerald-600 text-white'
-                      : 'bg-rose-600 text-white'
-                    : 'bg-slate-800 text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                {t === 'call' ? '▲ Call' : '▼ Put'}
-              </button>
-            ))}
+      <div className="bg-slate-900 rounded-[28px] px-6 py-5">
+        {/* Erste Zeile: Titel + Symbol-Suche + Call/Put */}
+        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+          <div className="flex-1">
+            <h1 className="text-xl font-black text-slate-100 tracking-tight">Optionspreis-Tracker</h1>
+            <p className="text-[10px] text-slate-400 font-mono mt-0.5 uppercase tracking-widest">Black-Scholes · Greeks · Quick-Szenarien</p>
           </div>
+          <div className="flex items-center gap-3">
+            {/* Symbol-Suche mit Autocomplete (DB-first → AV-Fallback) */}
+            <div className="relative" ref={dropRef}>
+              <input
+                type="text"
+                value={symbolQuery}
+                onChange={e => {
+                  const v = e.target.value.toUpperCase();
+                  setSymbolQuery(v);
+                  searchTickers(v);
+                }}
+                placeholder="Symbol suchen (AAPL, SAP…)"
+                maxLength={20}
+                className="bg-slate-800 border border-slate-700 text-slate-100 placeholder-slate-500 font-mono text-sm rounded-xl px-4 py-2.5 w-52 focus:outline-none focus:border-emerald-500 transition-colors pr-9"
+              />
+              {isFetchingSymbol && (
+                <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 animate-spin pointer-events-none" />
+              )}
+              {showDrop && suggestions.length > 0 && (
+                <div className="absolute top-full mt-1 w-64 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl z-50 overflow-hidden">
+                  {suggestions.map(s => (
+                    <button
+                      key={s.symbol}
+                      onMouseDown={e => { e.preventDefault(); handleSymbolSelect(s.symbol); }}
+                      className="w-full text-left px-4 py-2.5 hover:bg-slate-700 transition-colors flex items-center justify-between gap-2"
+                    >
+                      <span className="text-xs font-black text-emerald-400 font-mono shrink-0">{s.symbol}</span>
+                      <span className="text-[10px] text-slate-400 truncate">{s.company_name}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            {/* Call / Put Toggle */}
+            <div className="flex rounded-xl overflow-hidden border border-slate-700">
+              {(['call', 'put'] as const).map(t => (
+                <button
+                  key={t}
+                  onClick={() => setOptionType(t)}
+                  className={`px-4 py-2.5 text-[10px] font-black uppercase tracking-widest transition-colors ${
+                    optionType === t
+                      ? t === 'call'
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-rose-600 text-white'
+                      : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  {t === 'call' ? '▲ Call' : '▼ Put'}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Zweite Zeile: Quick-Szenario-Buttons + Ergebnis-Badge */}
+        <div className="flex flex-wrap items-center gap-2 pt-3 mt-4 border-t border-slate-800">
+          <span className="text-[9px] font-black uppercase tracking-widest text-slate-500 mr-1">Szenarien:</span>
+          {PRESETS.map(p => (
+            <button
+              key={p.id}
+              onClick={() => applyPreset(p)}
+              className={`px-3 py-1.5 rounded-lg text-[10px] font-black transition-all border ${
+                activePreset === p.id
+                  ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                  : 'bg-slate-800 text-slate-300 border-slate-700 hover:border-emerald-500 hover:text-emerald-300'
+              }`}
+            >
+              {p.label}
+            </button>
+          ))}
+          <button
+            onClick={() => { setScenPricePct(0); setScenVolaPct(0); setScenDays(0); setActivePreset(null); }}
+            className="px-3 py-1.5 rounded-lg text-[10px] font-black transition-all border border-slate-700 bg-slate-800 text-slate-400 hover:text-slate-200 flex items-center gap-1"
+          >
+            <RotateCcw className="w-2.5 h-2.5" /> Reset
+          </button>
+          {/* Live-Ergebnis-Badge */}
+          {activePreset && (
+            <span className={`ml-auto text-xs font-black font-mono tabular-nums px-3 py-1.5 rounded-lg border ${
+              diff >= 0
+                ? 'text-emerald-400 bg-emerald-950 border-emerald-800'
+                : 'text-rose-400 bg-rose-950 border-rose-800'
+            }`}>
+              {symbol && <span className="text-slate-400 font-normal mr-1">{symbol}</span>}
+              {fmtEur(scenPrice)} € &nbsp;
+              ({diff >= 0 ? '+' : ''}{diffPct.toFixed(1)} %)
+            </span>
+          )}
         </div>
       </div>
 
@@ -317,6 +509,7 @@ export default function OptionsTracker() {
           <ParamSlider label="Restlaufzeit (T)"       value={T}     min={1}   max={730}  step={1}    unit="Tage" onChange={setT}   />
           <ParamSlider label="Impl. Volatilität (σ)"  value={sigma} min={1}   max={150}  step={0.5}  unit="%"  onChange={setSigma} />
           <ParamSlider label="Zinssatz (r)"           value={r}     min={0}   max={10}   step={0.1}  unit="%"  onChange={setR}     />
+          <ParamSlider label="Dividendenrendite (q)" value={q}     min={0}   max={15}   step={0.1}  unit="%"  onChange={setQ}     />
           <ParamSlider label="Bezugsverhältnis"       value={ratio} min={1}   max={1000} step={1}    unit=":1" onChange={setRatio} />
 
           <PayoffChart S={S} K={K} premium={optPrice} ratio={ratio} type={optionType} />
@@ -356,9 +549,9 @@ export default function OptionsTracker() {
                 {T} Tage verbleibend
               </span>
               <span className="text-[10px] font-black px-3 py-1 rounded-lg border bg-slate-800 border-slate-700 text-slate-300">
-                BE: {optionType === 'call'
-                  ? (K + bs.price).toLocaleString('de-DE', { maximumFractionDigits: 2 })
-                  : (K - bs.price).toLocaleString('de-DE', { maximumFractionDigits: 2 })} €
+                  BE: {optionType === 'call'
+                  ? (K + optPrice).toLocaleString('de-DE', { maximumFractionDigits: 2 })
+                  : (K - optPrice).toLocaleString('de-DE', { maximumFractionDigits: 2 })} €
               </span>
             </div>
           </div>
@@ -386,164 +579,150 @@ export default function OptionsTracker() {
               </div>
             </div>
           </div>
+
+          {/* ── Kompakte Szenario-Attribution (nur wenn Preset aktiv) ───────── */}
+          {activePreset && (
+            <div className="bg-slate-900 rounded-[28px] p-5">
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-3">
+                Szenario-Attribution · {PRESETS.find(p => p.id === activePreset)?.label}
+              </p>
+              <div className="divide-y divide-slate-800">
+                {[
+                  { label: 'Δ Delta-Effekt',  val: deltaContrib, color: 'text-sky-400' },
+                  { label: 'ν Vega-Effekt',   val: vegaContrib,  color: 'text-emerald-400' },
+                  { label: 'Θ Theta-Effekt',  val: thetaContrib, color: 'text-rose-400' },
+                  { label: '∑ Gesamt',        val: diff,         color: diff >= 0 ? 'text-emerald-300' : 'text-rose-300', bold: true },
+                ].map(row => (
+                  <div key={row.label} className={`flex items-center justify-between py-2 ${row.bold ? 'pt-3 mt-1' : ''}`}>
+                    <p className={`text-[10px] font-black ${row.bold ? 'text-slate-300' : 'text-slate-500'}`}>{row.label}</p>
+                    <p className={`text-xs font-black font-mono tabular-nums ${row.color}`}>
+                      {row.val >= 0 ? '+' : ''}{fmtEur(row.val)} €
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* ── Szenario-Simulation ──────────────────────────────────────────────── */}
+      {/* ── KI-Szenario-Analyse ──────────────────────────────────────────────── */}
       <div className="bg-white border border-slate-200 rounded-[28px] overflow-hidden shadow-sm">
-        <div className="px-6 py-5 border-b border-slate-100">
-          <div className="flex items-center gap-3">
-            <Activity className="w-5 h-5 text-emerald-600" />
-            <h2 className="text-sm font-black text-slate-900 uppercase tracking-widest">Szenario-Simulation</h2>
+        <div className="px-6 py-5 border-b border-slate-100 flex items-center gap-3">
+          <Sparkles className="w-5 h-5 text-violet-500" />
+          <div>
+            <h2 className="text-sm font-black text-slate-900 uppercase tracking-widest">KI-Szenario-Analyse</h2>
+            <p className="text-[10px] text-slate-400 font-medium mt-0.5">
+              Gemini analysiert, wie dieses Makro-Szenario historisch auf die Greeks dieser Optionsposition gewirkt hätte.
+            </p>
           </div>
-          <p className="text-[10px] text-slate-400 font-medium mt-1">
-            Simuliere Kursänderung, Volatilität und Zeitablauf – und sieh wie sich der Optionspreis verändert.
-          </p>
         </div>
 
-        <div className="p-6 space-y-6">
-
-          {/* Preset-Buttons */}
+        <div className="p-6 space-y-4">
+          {/* Szenario-Auswahl */}
           <div>
-            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Schnell-Szenarien</p>
+            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Szenario wählen</p>
             <div className="flex flex-wrap gap-2">
-              {PRESETS.map(p => (
+              {OPTION_SCENARIO_LIST.map(sc => (
                 <button
-                  key={p.id}
-                  onClick={() => applyPreset(p)}
+                  key={sc.name}
+                  onClick={() => runAiAnalysis(sc.name, sc.desc)}
+                  disabled={aiLoading}
                   className={`px-4 py-2 rounded-xl text-[11px] font-black transition-all border ${
-                    activePreset === p.id
-                      ? 'bg-emerald-600 text-white border-emerald-600 shadow-md'
-                      : 'bg-slate-50 text-slate-600 border-slate-200 hover:border-emerald-300 hover:bg-emerald-50'
+                    aiScenario === sc.name && !aiLoading
+                      ? 'bg-violet-600 text-white border-violet-600 shadow-md'
+                      : 'bg-slate-50 text-slate-600 border-slate-200 hover:border-violet-300 hover:bg-violet-50 disabled:opacity-40 disabled:cursor-not-allowed'
                   }`}
                 >
-                  {p.label}
+                  {sc.name}
                 </button>
               ))}
-              <button
-                onClick={() => { setScenPricePct(0); setScenVolaPct(0); setScenDays(0); setActivePreset(null); }}
-                className="px-4 py-2 rounded-xl text-[11px] font-black transition-all border border-slate-200 bg-slate-50 text-slate-500 hover:bg-slate-100 flex items-center gap-1.5"
-              >
-                <RotateCcw className="w-3 h-3" /> Reset
-              </button>
             </div>
           </div>
 
-          {/* Custom-Schieberegler */}
-          <div className="bg-slate-900 rounded-2xl p-5">
-            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4">Eigenes Szenario</p>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-8">
-              <ParamSlider
-                label="Kursänderung"
-                value={scenPricePct}
-                min={-60} max={60} step={1} unit="%"
-                onChange={v => { setScenPricePct(v); setActivePreset(null); }}
-              />
-              <ParamSlider
-                label="Vola-Änderung"
-                value={scenVolaPct}
-                min={-80} max={100} step={1} unit="%"
-                onChange={v => { setScenVolaPct(v); setActivePreset(null); }}
-              />
-              <ParamSlider
-                label="Zeitablauf"
-                value={scenDays}
-                min={0} max={Math.max(1, T - 1)} step={1} unit="Tage"
-                onChange={v => { setScenDays(v); setActivePreset(null); }}
-              />
+          {/* Ladezustand */}
+          {aiLoading && (
+            <div className="flex items-center gap-3 py-6 justify-center">
+              <Loader2 className="w-5 h-5 text-violet-500 animate-spin" />
+              <p className="text-sm font-bold text-slate-500">Gemini analysiert Greeks &amp; historische Muster …</p>
             </div>
+          )}
 
-            {/* Szenario-Parameter Übersicht */}
-            <div className="grid grid-cols-3 gap-3 mt-3">
-              {[
-                { label: 'Szenario-Kurs',   val: `${fmtEur(scenS)} €`,       sub: `${scenPricePct >= 0 ? '+' : ''}${scenPricePct} %` },
-                { label: 'Szenario-Vola',   val: `${scenSigma.toFixed(1)} %`, sub: `${scenVolaPct >= 0 ? '+' : ''}${scenVolaPct} %` },
-                { label: 'Szenario-Laufzeit', val: `${Math.max(0, T - scenDays)} Tage`, sub: `−${scenDays} Tage` },
-              ].map(s => (
-                <div key={s.label} className="bg-slate-800 rounded-xl px-4 py-3">
-                  <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">{s.label}</p>
-                  <p className="text-sm font-black text-slate-200 font-mono mt-1">{s.val}</p>
-                  <p className="text-[10px] text-slate-500 font-mono">{s.sub}</p>
-                </div>
-              ))}
+          {/* Fehler */}
+          {aiError && !aiLoading && (
+            <div className="bg-rose-50 border border-rose-200 rounded-2xl px-5 py-4">
+              <p className="text-xs font-bold text-rose-700">{aiError}</p>
             </div>
-          </div>
+          )}
 
-          {/* Ergebnis-Vergleich */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            {/* Basis-Preis */}
-            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5">
-              <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Basis (jetzt)</p>
-              <p className="text-3xl font-black text-slate-900 font-mono tabular-nums">{fmtEur(optPrice)}</p>
-              <p className="text-[10px] text-slate-400 font-mono mt-1">EUR</p>
-            </div>
-
-            {/* Pfeil */}
-            <div className="hidden sm:flex items-center justify-center">
-              <div className="flex flex-col items-center gap-1">
-                <ChevronRight className="w-8 h-8 text-slate-300" />
-                <span className="text-[9px] text-slate-400 font-mono uppercase tracking-widest">Szenario</span>
-              </div>
-            </div>
-
-            {/* Szenario-Preis */}
-            <div className={`rounded-2xl p-5 border ${
-              diff > 0
-                ? 'bg-emerald-50 border-emerald-200'
-                : diff < 0
-                  ? 'bg-rose-50 border-rose-200'
-                  : 'bg-slate-50 border-slate-200'
-            }`}>
-              <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Szenario-Preis</p>
-              <p className={`text-3xl font-black font-mono tabular-nums ${
-                diff > 0 ? 'text-emerald-700' : diff < 0 ? 'text-rose-700' : 'text-slate-900'
-              }`}>{fmtEur(scenPrice)}</p>
-              <div className="flex items-center gap-1.5 mt-1">
-                {diff > 0
-                  ? <TrendingUp className="w-3 h-3 text-emerald-500" />
-                  : diff < 0
-                    ? <TrendingDown className="w-3 h-3 text-rose-500" />
-                    : null}
-                <p className={`text-xs font-black font-mono ${
-                  diff > 0 ? 'text-emerald-600' : diff < 0 ? 'text-rose-600' : 'text-slate-400'
-                }`}>
-                  {diff >= 0 ? '+' : ''}{fmtEur(diff)} EUR ({diffPct >= 0 ? '+' : ''}{diffPct.toFixed(1)} %)
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Greek-Attribution */}
-          <div className="border border-slate-100 rounded-2xl overflow-hidden">
-            <div className="bg-slate-50 px-5 py-3 border-b border-slate-100">
-              <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Preisänderungs-Attribution (näherungsweise)</p>
-            </div>
-            <div className="divide-y divide-slate-100">
-              {[
-                { label: 'Delta-Effekt',  desc: `Kurs ${scenPricePct >= 0 ? '+' : ''}${scenPricePct} %`,  val: deltaContrib, color: 'text-sky-600' },
-                { label: 'Vega-Effekt',   desc: `Vola ${scenVolaPct >= 0 ? '+' : ''}${scenVolaPct} %`,    val: vegaContrib,  color: 'text-emerald-600' },
-                { label: 'Theta-Effekt',  desc: `${scenDays} Tage Zeitablauf`,                             val: thetaContrib, color: 'text-rose-600' },
-                { label: 'Residuum',      desc: 'Gamma & Kreuzeffekte',                                    val: residual,     color: 'text-violet-600' },
-                { label: 'Gesamt',        desc: 'Summe aller Effekte',                                     val: diff,         color: diff >= 0 ? 'text-emerald-700' : 'text-rose-700', bold: true },
-              ].map(row => (
-                <div key={row.label} className={`flex items-center px-5 py-3 ${row.bold ? 'bg-slate-50' : ''}`}>
-                  <div className="flex-1">
-                    <p className={`text-xs font-black ${row.bold ? 'text-slate-900' : 'text-slate-700'}`}>{row.label}</p>
-                    <p className="text-[10px] text-slate-400">{row.desc}</p>
+          {/* Ergebnis */}
+          {aiResult && !aiLoading && (
+            <div className="space-y-4">
+              {/* Impact-Header */}
+              <div className="flex items-start justify-between gap-4 bg-slate-50 rounded-2xl px-5 py-4">
+                <div className="flex-1">
+                  <p className="text-xs font-black text-slate-700 mb-1">{aiResult.estimatedImpact}</p>
+                  <div className="flex gap-2 mt-2 flex-wrap">
+                    {(aiResult.affectedBy ?? []).map((tag: string) => (
+                      <span key={tag} className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-violet-100 text-violet-700 border border-violet-200">
+                        {tag}
+                      </span>
+                    ))}
+                    {aiResult.dominantGreek && (
+                      <span className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-slate-200 text-slate-700 border border-slate-300">
+                        Dominant: {aiResult.dominantGreek}
+                      </span>
+                    )}
                   </div>
-                  <p className={`text-sm font-black font-mono tabular-nums ${row.color}`}>
-                    {row.val >= 0 ? '+' : ''}{fmtEur(row.val)} €
+                </div>
+                <div className="text-right shrink-0">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Wertänderung</p>
+                  <p className={`text-2xl font-black font-mono tabular-nums ${
+                    (aiResult.impactPercent ?? 0) >= 0 ? 'text-emerald-600' : 'text-rose-600'
+                  }`}>
+                    {(aiResult.impactPercent ?? 0) >= 0 ? '+' : ''}{(aiResult.impactPercent ?? 0).toFixed(1)} %
                   </p>
                 </div>
-              ))}
-            </div>
-          </div>
-        </div>
+              </div>
 
-        <div className="px-6 py-3 bg-slate-50 border-t border-slate-100">
-          <p className="text-[9px] text-slate-400 font-mono">
-            Black-Scholes Modell · Europäische Optionen · Keine Dividenden berücksichtigt · Keine Anlageberatung
-          </p>
+              {/* Greek-Analyse */}
+              {aiResult.greekAnalysis && (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {[
+                    { key: 'deltaEffect', label: 'Δ Delta-Effekt', color: 'text-sky-600' },
+                    { key: 'vegaEffect',  label: 'ν Vega-Effekt',  color: 'text-emerald-600' },
+                    { key: 'thetaEffect', label: 'Θ Theta-Effekt', color: 'text-rose-600' },
+                  ].map(g => (
+                    <div key={g.key} className="bg-slate-50 border border-slate-200 rounded-2xl p-4">
+                      <p className={`text-[10px] font-black uppercase tracking-widest mb-1 ${g.color}`}>{g.label}</p>
+                      <p className="text-xs text-slate-600 leading-snug">{aiResult.greekAnalysis[g.key]}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Erklärung */}
+              {aiResult.explanation && (
+                <div className="bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Erklärung</p>
+                  <p className="text-xs text-slate-700 leading-relaxed">{aiResult.explanation}</p>
+                </div>
+              )}
+
+              {/* Historischer Vergleich */}
+              {aiResult.historicalComparison && (
+                <div className="border-l-2 border-violet-300 pl-4">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-violet-500 mb-1">Historischer Vergleich</p>
+                  <p className="text-xs text-slate-600 leading-relaxed">{aiResult.historicalComparison}</p>
+                </div>
+              )}
+
+              {/* Rechtlicher Hinweis */}
+              <p className="text-[9px] text-slate-400 font-mono">
+                Rein bildungsorientierte KI-Einschätzung · Keine Anlageberatung · Historische Muster garantieren keine zukünftigen Ergebnisse
+              </p>
+            </div>
+          )}
         </div>
       </div>
     </div>
