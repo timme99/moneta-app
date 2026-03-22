@@ -7,9 +7,10 @@
  *  1. Lade ALLE angefragten Symbole auf einmal aus stock_events (eine DB-Query).
  *  2. Trenne sofort in "fresh" (< 30 Tage alt) und "stale" (fehlt oder > 30 Tage).
  *  3. Fresh-Daten werden SOFORT im Response geliefert.
- *  4. Stale: Max. BATCH_SIZE (10) Symbole per Request:
+ *  4. Stale: Max. BATCH_SIZE (20) Symbole per Request:
  *       - Symbol 0: Alpha Vantage OVERVIEW (höchste Datenqualität)
- *       - Symbole 1–9: ein einziger Gemini-Batch-Prompt (alle auf einmal)
+ *       - Symbole 1–19: ein einziger Gemini-Batch-Prompt (alle auf einmal)
+ *  noData-Ergebnisse: kürzere TTL (7 Tage statt 30) für schnelleres Re-Scan.
  *  5. Alle gescannten Ergebnisse in stock_events persistieren.
  *  6. Response enthält fresh + neu gescannte Daten sowie Cache-Statistik.
  *
@@ -23,9 +24,10 @@ const AV_BASE_URL         = 'https://www.alphavantage.co/query';
 const DIVIDEND_EVENT_TYPE = 'dividend_info';
 const DIV_SCAN_SENTINEL   = '_div_scanned';
 const SENTINEL_DATE       = '1970-01-01';
-const CACHE_TTL_MS        = 30 * 24 * 60 * 60 * 1000; // 30 Tage
+const CACHE_TTL_MS        = 30 * 24 * 60 * 60 * 1000; // 30 Tage (bekannte Dividende)
+const NODATA_TTL_MS       = 7  * 24 * 60 * 60 * 1000; // 7 Tage  (noData → früher retry)
 const SCAN_TIMEOUT_MS     = 10_000;
-const BATCH_SIZE          = 10; // Max Symbole pro Gemini-Prompt
+const BATCH_SIZE          = 20; // Max Symbole pro Gemini-Prompt
 
 export interface DividendInfo {
   symbol:           string;
@@ -76,8 +78,7 @@ export default async function handler(req: any, res: any): Promise<void> {
   const symbols = rawSymbols
     .split(',')
     .map(s => s.trim().toUpperCase())
-    .filter(Boolean)
-    .slice(0, 20);
+    .filter(Boolean);
 
   const admin = getSupabaseAdmin();
 
@@ -95,12 +96,16 @@ export default async function handler(req: any, res: any): Promise<void> {
 
   const rows: any[] = allRows ?? [];
 
-  // ── 2. Scan-Zeitstempel (Sentinel) pro Symbol ─────────────────────────────
+  // ── 2. Scan-Zeitstempel + noData-Flag pro Symbol aus Sentinels ───────────
   const scanTimes = new Map<string, number>();
+  const noDataMap = new Map<string, boolean>();
   for (const r of rows) {
     if (r.event_type === DIV_SCAN_SENTINEL) {
       const t = new Date(r.last_updated).getTime();
-      if (t > (scanTimes.get(r.symbol) ?? 0)) scanTimes.set(r.symbol, t);
+      if (t > (scanTimes.get(r.symbol) ?? 0)) {
+        scanTimes.set(r.symbol, t);
+        noDataMap.set(r.symbol, r.details?.noData === true);
+      }
     }
   }
 
@@ -116,10 +121,14 @@ export default async function handler(req: any, res: any): Promise<void> {
     }
   }
 
-  // ── 4. Stale-Symbole identifizieren (nie gescannt ODER > 30 Tage alt) ─────
+  // ── 4. Stale-Symbole identifizieren ───────────────────────────────────────
+  // noData-Ergebnisse werden nach 7 Tagen erneut geprüft (statt 30),
+  // damit falsch-negative Gemini-Antworten schnell korrigiert werden.
   const staleSymbols = symbols.filter(s => {
     const last = scanTimes.get(s);
-    return !last || Date.now() - last > CACHE_TTL_MS;
+    if (!last) return true; // noch nie gescannt
+    const ttl = noDataMap.get(s) ? NODATA_TTL_MS : CACHE_TTL_MS;
+    return Date.now() - last > ttl;
   });
 
   // ── 5. Batch-Scan: bis zu BATCH_SIZE stale Symbole pro Request ────────────
@@ -191,7 +200,9 @@ export default async function handler(req: any, res: any): Promise<void> {
       });
       sentinelRows.push({
         symbol: sym, event_type: DIV_SCAN_SENTINEL,
-        event_date: SENTINEL_DATE, details: {}, last_updated: now,
+        event_date: SENTINEL_DATE,
+        details: { noData: info?.noData ?? false }, // für TTL-Logik beim nächsten Request
+        last_updated: now,
       });
     }
 
