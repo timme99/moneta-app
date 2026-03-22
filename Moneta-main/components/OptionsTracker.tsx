@@ -6,8 +6,7 @@
  */
 
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
-import { RotateCcw, Info, Sparkles, Loader2 } from 'lucide-react';
-import { analyzeOptionScenario } from '../services/geminiService';
+import { RotateCcw, Info, Loader2 } from 'lucide-react';
 import { getSupabaseBrowser } from '../lib/supabaseBrowser';
 
 // ─── Black-Scholes Mathematik ─────────────────────────────────────────────────
@@ -100,6 +99,39 @@ function fmt(v: number, decimals = 4): string {
 
 function fmtEur(v: number): string {
   return v.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// ─── Impl. Vola Schätzung (rein regelbasiert, keine KI) ───────────────────────
+
+/**
+ * Sektorbasierte Schätzung der impliziten Volatilität (σ) in Prozent.
+ * Regelbasiert auf historischen durchschnittlichen IV-Bereichen je Sektor (CBOE-Daten).
+ * Wird automatisch gesetzt wenn ein Titel aus der Suche gewählt wird.
+ */
+function estimateImpliedVol(ticker: string, sector: string | null): number {
+  const t = ticker.toUpperCase();
+  // Breite Welt-ETFs (niedrigste Vola)
+  if (/^(EUNL|IWDA|VWRL|VWCE|SXR8|CSPX|VUSA|VUAA|ISAC|SWRD|AWORLD|SPPW|SSAC|WEBG|LGGG|HMWO|FWRG)/.test(t)) return 13;
+  // Wachstums-/Tech-ETFs
+  if (/^(EQQQ|QQQ|QQQS|CNDX|IUIT|SXRP|TQQQ|XNAS|CNXT)/.test(t)) return 22;
+  // Sektor-Heuristiken (aus ticker_mapping.sector)
+  if (sector === 'Technology')                                    return 35;
+  if (sector === 'Consumer Cyclical')                             return 32;
+  if (sector === 'Communication Services')                        return 29;
+  if (sector === 'Energy')                                        return 30;
+  if (sector === 'Financial Services' || sector === 'Financials') return 25;
+  if (sector === 'Healthcare')                                    return 23;
+  if (sector === 'Industrials')                                   return 24;
+  if (sector === 'Basic Materials')                               return 27;
+  if (sector === 'Real Estate')                                   return 22;
+  if (sector === 'Utilities')                                     return 17;
+  if (sector === 'Consumer Defensive')                            return 18;
+  // Geographische Heuristiken (Ticker-Suffix)
+  if (t.includes('.DE'))                                          return 28;
+  if (t.includes('.PA') || t.includes('.MI') || t.includes('.MC') || t.includes('.AS')) return 27;
+  if (t.includes('.L'))                                           return 25;
+  // Default: US Large-Cap ohne Sektor-Info
+  return 28;
 }
 
 // ─── Slider ───────────────────────────────────────────────────────────────────
@@ -220,6 +252,7 @@ export default function OptionsTracker() {
   const [K,          setK]          = useState(105);
   const [T,          setT]          = useState(90);
   const [sigma,      setSigma]      = useState(20);
+  const [ivEstimated, setIvEstimated] = useState(false); // true = Schätzung aus Suche, false = manuell
   const [r,          setR]          = useState(2.5);
   const [q,          setQ]          = useState(0);    // Dividendenrendite p.a. in %
   const [ratio,      setRatio]      = useState(1);
@@ -233,7 +266,7 @@ export default function OptionsTracker() {
   // ── Symbol-Suche (DB-first → AV-Fallback) ─────────────────────────────────
   const sb = getSupabaseBrowser();
   const [symbolQuery,      setSymbolQuery]      = useState('');
-  const [suggestions,      setSuggestions]      = useState<{symbol: string; company_name: string}[]>([]);
+  const [suggestions,      setSuggestions]      = useState<{symbol: string; company_name: string; sector: string | null}[]>([]);
   const [showDrop,         setShowDrop]         = useState(false);
   const [isFetchingSymbol, setIsFetchingSymbol] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -246,7 +279,7 @@ export default function OptionsTracker() {
       setIsFetchingSymbol(true);
       // Phase 1: Supabase ticker_mapping (DB-first)
       const { data } = sb
-        ? await sb.from('ticker_mapping').select('symbol, company_name')
+        ? await sb.from('ticker_mapping').select('symbol, company_name, sector')
             .or(`symbol.ilike.%${q}%,company_name.ilike.%${q}%`).limit(6)
         : { data: [] as any[] };
       if (data && data.length > 0) {
@@ -270,12 +303,12 @@ export default function OptionsTracker() {
     }, 300);
   }, [sb]);
 
-  const handleSymbolSelect = async (sym: string) => {
+  const handleSymbolSelect = async (sym: string, sector: string | null) => {
     setSymbol(sym);
     setSymbolQuery(sym);
     setSuggestions([]);
     setShowDrop(false);
-    // Aktuellen Kurs laden und S-Slider vorbelegen
+    // 1. Aktuellen Kurs laden → S-Slider vorbelegen
     try {
       const res = await fetch(`/api/financial-data?ticker=${encodeURIComponent(sym)}`);
       if (res.ok) {
@@ -283,6 +316,9 @@ export default function OptionsTracker() {
         if (json.price > 0) setS(parseFloat(Number(json.price).toFixed(2)));
       }
     } catch { /* kein Kurs verfügbar */ }
+    // 2. Impl. Vola schätzen (regelbasiert) → σ-Slider vorbelegen
+    setSigma(estimateImpliedVol(sym, sector));
+    setIvEstimated(true);
   };
 
   // Dropdown bei Klick außerhalb schließen
@@ -293,12 +329,6 @@ export default function OptionsTracker() {
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
-
-  // ── KI-Szenario-Analyse ────────────────────────────────────────────────────
-  const [aiLoading,  setAiLoading]  = useState(false);
-  const [aiResult,   setAiResult]   = useState<any>(null);
-  const [aiError,    setAiError]    = useState<string | null>(null);
-  const [aiScenario, setAiScenario] = useState<string | null>(null);
 
   // ── Berechnungen ───────────────────────────────────────────────────────────
   const TY = T / 365;
@@ -346,47 +376,6 @@ export default function OptionsTracker() {
   const thetaContrib = bs.theta / ratio * scenDays;
   const residual     = diff - deltaContrib - vegaContrib - thetaContrib;
 
-  // ── KI-Analyse Handler ──────────────────────────────────────────────────────
-  const OPTION_SCENARIO_LIST = [
-    { name: 'Marktkorrektur −30%', desc: 'Breiter Markteinbruch von 30 % analog zu historischen Bärenmärkten (2008, COVID-2020)' },
-    { name: 'Zinsanstieg +3%',     desc: 'Schneller Anstieg der Leitzinsen um 3 Prozentpunkte' },
-    { name: 'Inflationsschock',    desc: 'Anhaltende Inflation über 8 % – Auswirkungen auf Volatilität und Marktrisiko' },
-    { name: 'Tech-Selloff −40%',  desc: 'Massive Korrektur im Technologiesektor (Dotcom-Blase 2000–2002)' },
-    { name: 'VIX-Spike (Crash)',  desc: 'Extremer Volatilitätsanstieg +150 % – Vola-Effekt dominiert' },
-  ];
-
-  const runAiAnalysis = async (scenName: string, scenDesc: string) => {
-    setAiScenario(scenName);
-    setAiResult(null);
-    setAiError(null);
-    setAiLoading(true);
-    try {
-      const data = await analyzeOptionScenario(
-        {
-          symbol: symbol || 'N/A',
-          optionType,
-          S, K, T: T, sigma, q,
-          delta: bs.delta / ratio,
-          theta: bs.theta / ratio,
-          vega:  bs.vega  / ratio,
-          optPrice,
-          ratio,
-        },
-        scenName,
-        scenDesc,
-      );
-      setAiResult(data);
-    } catch (e: any) {
-      setAiError(
-        e?.message?.includes(':')
-          ? e.message.split(':').slice(1).join(':').trim()
-          : 'KI-Analyse vorübergehend nicht verfügbar. Bitte erneut versuchen.',
-      );
-    } finally {
-      setAiLoading(false);
-    }
-  };
-
   return (
     <div className="space-y-6">
 
@@ -429,7 +418,7 @@ export default function OptionsTracker() {
                   {suggestions.map(s => (
                     <button
                       key={s.symbol}
-                      onMouseDown={e => { e.preventDefault(); handleSymbolSelect(s.symbol); }}
+                      onMouseDown={e => { e.preventDefault(); handleSymbolSelect(s.symbol, s.sector ?? null); }}
                       className="w-full text-left px-4 py-2.5 hover:bg-slate-700 transition-colors flex items-center justify-between gap-2"
                     >
                       <span className="text-xs font-black text-emerald-400 font-mono shrink-0">{s.symbol}</span>
@@ -507,7 +496,13 @@ export default function OptionsTracker() {
           <ParamSlider label="Kurs (S)"              value={S}     min={1}   max={500}  step={0.5}  unit="€"  onChange={setS}     />
           <ParamSlider label="Basispreis (K)"         value={K}     min={1}   max={500}  step={0.5}  unit="€"  onChange={setK}     />
           <ParamSlider label="Restlaufzeit (T)"       value={T}     min={1}   max={730}  step={1}    unit="Tage" onChange={setT}   />
-          <ParamSlider label="Impl. Volatilität (σ)"  value={sigma} min={1}   max={150}  step={0.5}  unit="%"  onChange={setSigma} />
+          <ParamSlider label="Impl. Volatilität (σ)"  value={sigma} min={1}   max={150}  step={0.5}  unit="%"
+            onChange={v => { setSigma(v); setIvEstimated(false); }} />
+          {ivEstimated && (
+            <p className="text-[9px] text-amber-400 font-mono -mt-4 mb-5">
+              ↑ Sektorbasierte Schätzung – manuell anpassbar
+            </p>
+          )}
           <ParamSlider label="Zinssatz (r)"           value={r}     min={0}   max={10}   step={0.1}  unit="%"  onChange={setR}     />
           <ParamSlider label="Dividendenrendite (q)" value={q}     min={0}   max={15}   step={0.1}  unit="%"  onChange={setQ}     />
           <ParamSlider label="Bezugsverhältnis"       value={ratio} min={1}   max={1000} step={1}    unit=":1" onChange={setRatio} />
@@ -606,125 +601,6 @@ export default function OptionsTracker() {
         </div>
       </div>
 
-      {/* ── KI-Szenario-Analyse ──────────────────────────────────────────────── */}
-      <div className="bg-white border border-slate-200 rounded-[28px] overflow-hidden shadow-sm">
-        <div className="px-6 py-5 border-b border-slate-100 flex items-center gap-3">
-          <Sparkles className="w-5 h-5 text-violet-500" />
-          <div>
-            <h2 className="text-sm font-black text-slate-900 uppercase tracking-widest">KI-Szenario-Analyse</h2>
-            <p className="text-[10px] text-slate-400 font-medium mt-0.5">
-              Gemini analysiert, wie dieses Makro-Szenario historisch auf die Greeks dieser Optionsposition gewirkt hätte.
-            </p>
-          </div>
-        </div>
-
-        <div className="p-6 space-y-4">
-          {/* Szenario-Auswahl */}
-          <div>
-            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Szenario wählen</p>
-            <div className="flex flex-wrap gap-2">
-              {OPTION_SCENARIO_LIST.map(sc => (
-                <button
-                  key={sc.name}
-                  onClick={() => runAiAnalysis(sc.name, sc.desc)}
-                  disabled={aiLoading}
-                  className={`px-4 py-2 rounded-xl text-[11px] font-black transition-all border ${
-                    aiScenario === sc.name && !aiLoading
-                      ? 'bg-violet-600 text-white border-violet-600 shadow-md'
-                      : 'bg-slate-50 text-slate-600 border-slate-200 hover:border-violet-300 hover:bg-violet-50 disabled:opacity-40 disabled:cursor-not-allowed'
-                  }`}
-                >
-                  {sc.name}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Ladezustand */}
-          {aiLoading && (
-            <div className="flex items-center gap-3 py-6 justify-center">
-              <Loader2 className="w-5 h-5 text-violet-500 animate-spin" />
-              <p className="text-sm font-bold text-slate-500">Gemini analysiert Greeks &amp; historische Muster …</p>
-            </div>
-          )}
-
-          {/* Fehler */}
-          {aiError && !aiLoading && (
-            <div className="bg-rose-50 border border-rose-200 rounded-2xl px-5 py-4">
-              <p className="text-xs font-bold text-rose-700">{aiError}</p>
-            </div>
-          )}
-
-          {/* Ergebnis */}
-          {aiResult && !aiLoading && (
-            <div className="space-y-4">
-              {/* Impact-Header */}
-              <div className="flex items-start justify-between gap-4 bg-slate-50 rounded-2xl px-5 py-4">
-                <div className="flex-1">
-                  <p className="text-xs font-black text-slate-700 mb-1">{aiResult.estimatedImpact}</p>
-                  <div className="flex gap-2 mt-2 flex-wrap">
-                    {(aiResult.affectedBy ?? []).map((tag: string) => (
-                      <span key={tag} className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-violet-100 text-violet-700 border border-violet-200">
-                        {tag}
-                      </span>
-                    ))}
-                    {aiResult.dominantGreek && (
-                      <span className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-slate-200 text-slate-700 border border-slate-300">
-                        Dominant: {aiResult.dominantGreek}
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <div className="text-right shrink-0">
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Wertänderung</p>
-                  <p className={`text-2xl font-black font-mono tabular-nums ${
-                    (aiResult.impactPercent ?? 0) >= 0 ? 'text-emerald-600' : 'text-rose-600'
-                  }`}>
-                    {(aiResult.impactPercent ?? 0) >= 0 ? '+' : ''}{(aiResult.impactPercent ?? 0).toFixed(1)} %
-                  </p>
-                </div>
-              </div>
-
-              {/* Greek-Analyse */}
-              {aiResult.greekAnalysis && (
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {[
-                    { key: 'deltaEffect', label: 'Δ Delta-Effekt', color: 'text-sky-600' },
-                    { key: 'vegaEffect',  label: 'ν Vega-Effekt',  color: 'text-emerald-600' },
-                    { key: 'thetaEffect', label: 'Θ Theta-Effekt', color: 'text-rose-600' },
-                  ].map(g => (
-                    <div key={g.key} className="bg-slate-50 border border-slate-200 rounded-2xl p-4">
-                      <p className={`text-[10px] font-black uppercase tracking-widest mb-1 ${g.color}`}>{g.label}</p>
-                      <p className="text-xs text-slate-600 leading-snug">{aiResult.greekAnalysis[g.key]}</p>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Erklärung */}
-              {aiResult.explanation && (
-                <div className="bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4">
-                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Erklärung</p>
-                  <p className="text-xs text-slate-700 leading-relaxed">{aiResult.explanation}</p>
-                </div>
-              )}
-
-              {/* Historischer Vergleich */}
-              {aiResult.historicalComparison && (
-                <div className="border-l-2 border-violet-300 pl-4">
-                  <p className="text-[10px] font-black uppercase tracking-widest text-violet-500 mb-1">Historischer Vergleich</p>
-                  <p className="text-xs text-slate-600 leading-relaxed">{aiResult.historicalComparison}</p>
-                </div>
-              )}
-
-              {/* Rechtlicher Hinweis */}
-              <p className="text-[9px] text-slate-400 font-mono">
-                Rein bildungsorientierte KI-Einschätzung · Keine Anlageberatung · Historische Muster garantieren keine zukünftigen Ergebnisse
-              </p>
-            </div>
-          )}
-        </div>
-      </div>
     </div>
   );
 }
