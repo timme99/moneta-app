@@ -124,12 +124,42 @@ export default async function handler(req: any, res: any): Promise<void> {
   // ── 4. Stale-Symbole identifizieren ───────────────────────────────────────
   // noData-Ergebnisse werden nach 7 Tagen erneut geprüft (statt 30),
   // damit falsch-negative Gemini-Antworten schnell korrigiert werden.
+  // Ausnahme: valide dividend_info ohne Sentinel (z. B. manuell eingefügt)
+  // werden NICHT als stale markiert, um Gemini-Überschreibung zu verhindern.
   const staleSymbols = symbols.filter(s => {
     const last = scanTimes.get(s);
-    if (!last) return true; // noch nie gescannt
+    if (!last) {
+      // Kein Sentinel – aber valide Dividenden-Daten in DB? → nicht stale
+      const existing = cachedMap.get(s);
+      if (existing && !existing.noData && existing.dividendPerShare > 0) return false;
+      return true; // wirklich noch nie gescannt
+    }
     const ttl = noDataMap.get(s) ? NODATA_TTL_MS : CACHE_TTL_MS;
     return Date.now() - last > ttl;
   });
+
+  // Sentinel-Backfill: Symbole mit validen Daten aber fehlendem Sentinel absichern.
+  // Verhindert, dass manuelle/extern eingefügte dividend_info-Zeilen beim
+  // nächsten Request von Gemini überschrieben werden.
+  const missSentinels = symbols.filter(s => {
+    const existing = cachedMap.get(s);
+    return existing && !existing.noData && existing.dividendPerShare > 0 && !scanTimes.has(s);
+  });
+  if (missSentinels.length > 0) {
+    const nowSentinel = new Date().toISOString();
+    // Kein await – fire-and-forget, blockiert nicht den Response
+    (admin as any).from('stock_events').upsert(
+      missSentinels.map(sym => ({
+        symbol: sym, event_type: DIV_SCAN_SENTINEL, event_date: SENTINEL_DATE,
+        details: { noData: false }, last_updated: nowSentinel,
+      })),
+      { onConflict: 'symbol,event_type,event_date' },
+    ).then(() =>
+      console.log(`[dividends] Sentinel-Backfill für: ${missSentinels.join(', ')}`),
+    ).catch((e: any) =>
+      console.warn('[dividends] Sentinel-Backfill fehlgeschlagen:', e?.message),
+    );
+  }
 
   // ── 5. Batch-Scan: bis zu BATCH_SIZE stale Symbole pro Request ────────────
   const batchToScan = staleSymbols.slice(0, BATCH_SIZE);
