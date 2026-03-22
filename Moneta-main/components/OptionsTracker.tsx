@@ -6,7 +6,8 @@
  */
 
 import React, { useState, useMemo } from 'react';
-import { TrendingUp, TrendingDown, Activity, ChevronRight, RotateCcw, Info } from 'lucide-react';
+import { TrendingUp, TrendingDown, Activity, ChevronRight, RotateCcw, Info, Sparkles, Loader2 } from 'lucide-react';
+import { analyzeOptionScenario } from '../services/geminiService';
 
 // ─── Black-Scholes Mathematik ─────────────────────────────────────────────────
 
@@ -41,37 +42,45 @@ interface BSResult {
   Nd2: number;
 }
 
+/**
+ * Black-Scholes-Merton mit kontinuierlicher Dividendenrendite q (Merton 1973).
+ * Formel: S_adj = S * e^(-qT) ersetzt S im Standard-BS-Modell.
+ * q = 0 → identisch mit klassischem Black-Scholes ohne Dividenden.
+ */
 function blackScholes(
   S: number, K: number, T: number, r: number, sigma: number,
   type: 'call' | 'put',
+  q = 0,   // kontinuierliche Dividendenrendite p.a. (dezimal, z.B. 0.02 = 2 %)
 ): BSResult {
   if (T <= 0) {
     const intrinsic = type === 'call' ? Math.max(S - K, 0) : Math.max(K - S, 0);
     const delta = type === 'call' ? (S > K ? 1 : 0) : (S < K ? -1 : 0);
     return { price: intrinsic, delta, gamma: 0, theta: 0, vega: 0, rho: 0, d1: 0, d2: 0, Nd1: 0, Nd2: 0 };
   }
-  const d1 = (Math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * Math.sqrt(T));
+  // Merton-Anpassung: dividendenbereinigter Kurs
+  const Sq = S * Math.exp(-q * T);
+  const d1 = (Math.log(Sq / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * Math.sqrt(T));
   const d2 = d1 - sigma * Math.sqrt(T);
   const Nd1 = normCDF(d1), Nd2 = normCDF(d2);
   const nd1 = normPDF(d1);
-  const Km = K * Math.exp(-r * T);
+  const Km  = K  * Math.exp(-r * T);
 
   let price: number, delta: number, theta: number, rho: number;
   if (type === 'call') {
-    price = S * Nd1 - Km * Nd2;
-    delta = Nd1;
-    theta = (-(S * nd1 * sigma) / (2 * Math.sqrt(T)) - r * Km * Nd2) / 365;
+    price = Sq * Nd1 - Km * Nd2;
+    delta = Math.exp(-q * T) * Nd1;
+    theta = (-(Sq * nd1 * sigma) / (2 * Math.sqrt(T)) + q * Sq * Nd1 - r * Km * Nd2) / 365;
     rho = Km * T * Nd2 / 100;
   } else {
     const Nnd1 = normCDF(-d1), Nnd2 = normCDF(-d2);
-    price = Km * Nnd2 - S * Nnd1;
-    delta = Nd1 - 1;
-    theta = (-(S * nd1 * sigma) / (2 * Math.sqrt(T)) + r * Km * Nnd2) / 365;
+    price = Km * Nnd2 - Sq * Nnd1;
+    delta = Math.exp(-q * T) * (Nd1 - 1);
+    theta = (-(Sq * nd1 * sigma) / (2 * Math.sqrt(T)) - q * Sq * Nnd1 + r * Km * Nnd2) / 365;
     rho = -Km * T * Nnd2 / 100;
   }
 
-  const gamma = nd1 / (S * sigma * Math.sqrt(T));
-  const vega  = S * nd1 * Math.sqrt(T) / 100;
+  const gamma = nd1 / (Sq * sigma * Math.sqrt(T));
+  const vega  = Sq * nd1 * Math.sqrt(T) / 100;
   return { price, delta, gamma, theta, vega, rho, d1, d2, Nd1, Nd2 };
 }
 
@@ -135,15 +144,23 @@ function ParamSlider({ label, value, min, max, step, unit, onChange }: SliderPro
 
 // ─── Payoff Chart ─────────────────────────────────────────────────────────────
 
-function PayoffChart({ S, K, premium, ratio, type }: {
+// React.memo verhindert Neuberechnungen der 80-Punkte-SVG-Kurve bei Szenario-Slider-
+// Bewegungen, die S/K/premium/ratio/type NICHT verändern (z.B. scenPricePct-Änderungen).
+const PayoffChart = React.memo(function PayoffChart({ S, K, premium, ratio, type }: {
   S: number; K: number; premium: number; ratio: number; type: 'call' | 'put';
 }) {
   const W = 300, H = 110;
-  const spots = Array.from({ length: 80 }, (_, i) => S * (0.65 + i * 0.009));
-  const payoffs = spots.map(s => {
-    const intrinsic = type === 'call' ? Math.max(0, s - K) : Math.max(0, K - s);
-    return intrinsic / ratio - premium;
-  });
+  const spots = React.useMemo(
+    () => Array.from({ length: 80 }, (_, i) => S * (0.65 + i * 0.009)),
+    [S],
+  );
+  const payoffs = React.useMemo(
+    () => spots.map(s => {
+      const intrinsic = type === 'call' ? Math.max(0, s - K) : Math.max(0, K - s);
+      return intrinsic / ratio - premium;
+    }),
+    [spots, K, ratio, premium, type],
+  );
   const minP = Math.min(...payoffs, -premium * 1.2);
   const maxP = Math.max(...payoffs, premium * 0.5);
   const range = maxP - minP || 1;
@@ -180,7 +197,7 @@ function PayoffChart({ S, K, premium, ratio, type }: {
       </svg>
     </div>
   );
-}
+});
 
 // ─── Szenarien ────────────────────────────────────────────────────────────────
 
@@ -203,6 +220,7 @@ export default function OptionsTracker() {
   const [T,          setT]          = useState(90);
   const [sigma,      setSigma]      = useState(20);
   const [r,          setR]          = useState(2.5);
+  const [q,          setQ]          = useState(0);    // Dividendenrendite p.a. in %
   const [ratio,      setRatio]      = useState(1);
 
   // ── Szenario-Parameter ─────────────────────────────────────────────────────
@@ -211,11 +229,17 @@ export default function OptionsTracker() {
   const [scenDays,     setScenDays]     = useState(0);
   const [activePreset, setActivePreset] = useState<string | null>('bullish');
 
+  // ── KI-Szenario-Analyse ────────────────────────────────────────────────────
+  const [aiLoading,  setAiLoading]  = useState(false);
+  const [aiResult,   setAiResult]   = useState<any>(null);
+  const [aiError,    setAiError]    = useState<string | null>(null);
+  const [aiScenario, setAiScenario] = useState<string | null>(null);
+
   // ── Berechnungen ───────────────────────────────────────────────────────────
   const TY = T / 365;
   const bs = useMemo(
-    () => blackScholes(S, K, TY, r / 100, sigma / 100, optionType),
-    [S, K, TY, r, sigma, optionType],
+    () => blackScholes(S, K, TY, r / 100, sigma / 100, optionType, q / 100),
+    [S, K, TY, r, sigma, optionType, q],
   );
   const optPrice = bs.price / ratio;
 
@@ -223,8 +247,8 @@ export default function OptionsTracker() {
   const scenSigma = Math.max(1, sigma * (1 + scenVolaPct / 100));
   const scenT     = Math.max(0, T - scenDays) / 365;
   const bsScen = useMemo(
-    () => blackScholes(scenS, K, scenT, r / 100, scenSigma / 100, optionType),
-    [scenS, K, scenT, r, scenSigma, optionType],
+    () => blackScholes(scenS, K, scenT, r / 100, scenSigma / 100, optionType, q / 100),
+    [scenS, K, scenT, r, scenSigma, optionType, q],
   );
   const scenPrice = bsScen.price / ratio;
   const diff      = scenPrice - optPrice;
@@ -257,6 +281,47 @@ export default function OptionsTracker() {
   const thetaContrib = bs.theta / ratio * scenDays;
   const residual     = diff - deltaContrib - vegaContrib - thetaContrib;
 
+  // ── KI-Analyse Handler ──────────────────────────────────────────────────────
+  const OPTION_SCENARIO_LIST = [
+    { name: 'Marktkorrektur −30%', desc: 'Breiter Markteinbruch von 30 % analog zu historischen Bärenmärkten (2008, COVID-2020)' },
+    { name: 'Zinsanstieg +3%',     desc: 'Schneller Anstieg der Leitzinsen um 3 Prozentpunkte' },
+    { name: 'Inflationsschock',    desc: 'Anhaltende Inflation über 8 % – Auswirkungen auf Volatilität und Marktrisiko' },
+    { name: 'Tech-Selloff −40%',  desc: 'Massive Korrektur im Technologiesektor (Dotcom-Blase 2000–2002)' },
+    { name: 'VIX-Spike (Crash)',  desc: 'Extremer Volatilitätsanstieg +150 % – Vola-Effekt dominiert' },
+  ];
+
+  const runAiAnalysis = async (scenName: string, scenDesc: string) => {
+    setAiScenario(scenName);
+    setAiResult(null);
+    setAiError(null);
+    setAiLoading(true);
+    try {
+      const data = await analyzeOptionScenario(
+        {
+          symbol: symbol || 'N/A',
+          optionType,
+          S, K, T: T, sigma, q,
+          delta: bs.delta / ratio,
+          theta: bs.theta / ratio,
+          vega:  bs.vega  / ratio,
+          optPrice,
+          ratio,
+        },
+        scenName,
+        scenDesc,
+      );
+      setAiResult(data);
+    } catch (e: any) {
+      setAiError(
+        e?.message?.includes(':')
+          ? e.message.split(':').slice(1).join(':').trim()
+          : 'KI-Analyse vorübergehend nicht verfügbar. Bitte erneut versuchen.',
+      );
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
 
@@ -264,7 +329,7 @@ export default function OptionsTracker() {
       <div className="flex items-center gap-2 bg-amber-50 border border-amber-100 rounded-2xl px-5 py-3">
         <Info className="w-4 h-4 text-amber-500 shrink-0" />
         <p className="text-[10px] text-amber-700 font-bold">
-          Kein Anlageberatungsangebot. Black-Scholes gilt für europäische Optionen ohne Dividenden. Alle Angaben ohne Gewähr.
+          Kein Anlageberatungsangebot. Black-Scholes-Merton-Modell (europäische Optionen, kontinuierliche Dividendenrendite q nach Merton 1973). Alle Angaben ohne Gewähr.
         </p>
       </div>
 
@@ -317,6 +382,7 @@ export default function OptionsTracker() {
           <ParamSlider label="Restlaufzeit (T)"       value={T}     min={1}   max={730}  step={1}    unit="Tage" onChange={setT}   />
           <ParamSlider label="Impl. Volatilität (σ)"  value={sigma} min={1}   max={150}  step={0.5}  unit="%"  onChange={setSigma} />
           <ParamSlider label="Zinssatz (r)"           value={r}     min={0}   max={10}   step={0.1}  unit="%"  onChange={setR}     />
+          <ParamSlider label="Dividendenrendite (q)" value={q}     min={0}   max={15}   step={0.1}  unit="%"  onChange={setQ}     />
           <ParamSlider label="Bezugsverhältnis"       value={ratio} min={1}   max={1000} step={1}    unit=":1" onChange={setRatio} />
 
           <PayoffChart S={S} K={K} premium={optPrice} ratio={ratio} type={optionType} />
@@ -356,9 +422,9 @@ export default function OptionsTracker() {
                 {T} Tage verbleibend
               </span>
               <span className="text-[10px] font-black px-3 py-1 rounded-lg border bg-slate-800 border-slate-700 text-slate-300">
-                BE: {optionType === 'call'
-                  ? (K + bs.price).toLocaleString('de-DE', { maximumFractionDigits: 2 })
-                  : (K - bs.price).toLocaleString('de-DE', { maximumFractionDigits: 2 })} €
+                  BE: {optionType === 'call'
+                  ? (K + optPrice).toLocaleString('de-DE', { maximumFractionDigits: 2 })
+                  : (K - optPrice).toLocaleString('de-DE', { maximumFractionDigits: 2 })} €
               </span>
             </div>
           </div>
@@ -542,8 +608,128 @@ export default function OptionsTracker() {
 
         <div className="px-6 py-3 bg-slate-50 border-t border-slate-100">
           <p className="text-[9px] text-slate-400 font-mono">
-            Black-Scholes Modell · Europäische Optionen · Keine Dividenden berücksichtigt · Keine Anlageberatung
+            Black-Scholes-Merton Modell · Europäische Optionen · Dividendenrendite q berücksichtigt · Keine Anlageberatung
           </p>
+        </div>
+      </div>
+
+      {/* ── KI-Szenario-Analyse ──────────────────────────────────────────────── */}
+      <div className="bg-white border border-slate-200 rounded-[28px] overflow-hidden shadow-sm">
+        <div className="px-6 py-5 border-b border-slate-100 flex items-center gap-3">
+          <Sparkles className="w-5 h-5 text-violet-500" />
+          <div>
+            <h2 className="text-sm font-black text-slate-900 uppercase tracking-widest">KI-Szenario-Analyse</h2>
+            <p className="text-[10px] text-slate-400 font-medium mt-0.5">
+              Gemini analysiert, wie dieses Makro-Szenario historisch auf die Greeks dieser Optionsposition gewirkt hätte.
+            </p>
+          </div>
+        </div>
+
+        <div className="p-6 space-y-4">
+          {/* Szenario-Auswahl */}
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Szenario wählen</p>
+            <div className="flex flex-wrap gap-2">
+              {OPTION_SCENARIO_LIST.map(sc => (
+                <button
+                  key={sc.name}
+                  onClick={() => runAiAnalysis(sc.name, sc.desc)}
+                  disabled={aiLoading}
+                  className={`px-4 py-2 rounded-xl text-[11px] font-black transition-all border ${
+                    aiScenario === sc.name && !aiLoading
+                      ? 'bg-violet-600 text-white border-violet-600 shadow-md'
+                      : 'bg-slate-50 text-slate-600 border-slate-200 hover:border-violet-300 hover:bg-violet-50 disabled:opacity-40 disabled:cursor-not-allowed'
+                  }`}
+                >
+                  {sc.name}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Ladezustand */}
+          {aiLoading && (
+            <div className="flex items-center gap-3 py-6 justify-center">
+              <Loader2 className="w-5 h-5 text-violet-500 animate-spin" />
+              <p className="text-sm font-bold text-slate-500">Gemini analysiert Greeks &amp; historische Muster …</p>
+            </div>
+          )}
+
+          {/* Fehler */}
+          {aiError && !aiLoading && (
+            <div className="bg-rose-50 border border-rose-200 rounded-2xl px-5 py-4">
+              <p className="text-xs font-bold text-rose-700">{aiError}</p>
+            </div>
+          )}
+
+          {/* Ergebnis */}
+          {aiResult && !aiLoading && (
+            <div className="space-y-4">
+              {/* Impact-Header */}
+              <div className="flex items-start justify-between gap-4 bg-slate-50 rounded-2xl px-5 py-4">
+                <div className="flex-1">
+                  <p className="text-xs font-black text-slate-700 mb-1">{aiResult.estimatedImpact}</p>
+                  <div className="flex gap-2 mt-2 flex-wrap">
+                    {(aiResult.affectedBy ?? []).map((tag: string) => (
+                      <span key={tag} className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-violet-100 text-violet-700 border border-violet-200">
+                        {tag}
+                      </span>
+                    ))}
+                    {aiResult.dominantGreek && (
+                      <span className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-slate-200 text-slate-700 border border-slate-300">
+                        Dominant: {aiResult.dominantGreek}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="text-right shrink-0">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Wertänderung</p>
+                  <p className={`text-2xl font-black font-mono tabular-nums ${
+                    (aiResult.impactPercent ?? 0) >= 0 ? 'text-emerald-600' : 'text-rose-600'
+                  }`}>
+                    {(aiResult.impactPercent ?? 0) >= 0 ? '+' : ''}{(aiResult.impactPercent ?? 0).toFixed(1)} %
+                  </p>
+                </div>
+              </div>
+
+              {/* Greek-Analyse */}
+              {aiResult.greekAnalysis && (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {[
+                    { key: 'deltaEffect', label: 'Δ Delta-Effekt', color: 'text-sky-600' },
+                    { key: 'vegaEffect',  label: 'ν Vega-Effekt',  color: 'text-emerald-600' },
+                    { key: 'thetaEffect', label: 'Θ Theta-Effekt', color: 'text-rose-600' },
+                  ].map(g => (
+                    <div key={g.key} className="bg-slate-50 border border-slate-200 rounded-2xl p-4">
+                      <p className={`text-[10px] font-black uppercase tracking-widest mb-1 ${g.color}`}>{g.label}</p>
+                      <p className="text-xs text-slate-600 leading-snug">{aiResult.greekAnalysis[g.key]}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Erklärung */}
+              {aiResult.explanation && (
+                <div className="bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Erklärung</p>
+                  <p className="text-xs text-slate-700 leading-relaxed">{aiResult.explanation}</p>
+                </div>
+              )}
+
+              {/* Historischer Vergleich */}
+              {aiResult.historicalComparison && (
+                <div className="border-l-2 border-violet-300 pl-4">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-violet-500 mb-1">Historischer Vergleich</p>
+                  <p className="text-xs text-slate-600 leading-relaxed">{aiResult.historicalComparison}</p>
+                </div>
+              )}
+
+              {/* Rechtlicher Hinweis */}
+              <p className="text-[9px] text-slate-400 font-mono">
+                Rein bildungsorientierte KI-Einschätzung · Keine Anlageberatung · Historische Muster garantieren keine zukünftigen Ergebnisse
+              </p>
+            </div>
+          )}
         </div>
       </div>
     </div>
