@@ -723,9 +723,9 @@ const App: React.FC = () => {
                     <Calendar className={`w-5 h-5 ${activeView === 'earnings' ? 'text-white' : 'text-emerald-600'}`} />
                   </div>
                   <div>
-                    <p className={`text-[10px] font-black uppercase tracking-widest ${activeView === 'earnings' ? 'text-emerald-100' : 'text-slate-400'}`}>Dividenden</p>
-                    <p className={`text-sm font-black mt-0.5 ${activeView === 'earnings' ? 'text-white' : 'text-slate-900'}`}>Dividenden</p>
-                    <p className={`text-[10px] font-medium mt-0.5 ${activeView === 'earnings' ? 'text-emerald-100' : 'text-slate-400'}`}>Dividenden & Quartalszahlen</p>
+                    <p className={`text-[10px] font-black uppercase tracking-widest ${activeView === 'earnings' ? 'text-emerald-100' : 'text-slate-400'}`}>Dividenden & Earnings</p>
+                    <p className={`text-sm font-black mt-0.5 ${activeView === 'earnings' ? 'text-white' : 'text-slate-900'}`}>Dividenden & Earnings</p>
+                    <p className={`text-[10px] font-medium mt-0.5 ${activeView === 'earnings' ? 'text-emerald-100' : 'text-slate-400'}`}>Dividenden · Quartalszahlen · Kalender</p>
                   </div>
                 </button>
 
