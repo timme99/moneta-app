@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Calendar, Clock, TrendingUp, Loader2, RefreshCcw, AlertTriangle, Info, DollarSign, TrendingDown, Database, Lock, Sparkles, ShieldCheck } from 'lucide-react';
+import { Calendar, Clock, TrendingUp, Loader2, RefreshCcw, AlertTriangle, Info, DollarSign, Database, Sparkles, ShieldCheck } from 'lucide-react';
 import { EarningsEvent, HoldingRow } from '../types';
 import { getSupabaseBrowser } from '../lib/supabaseBrowser';
-import { PLAN_LIMITS } from '../lib/useSubscription';
 
 const DIVIDEND_EVENT_TYPE = 'dividend_info';
 const SENTINEL_DATE       = '1970-01-01';
@@ -36,6 +35,7 @@ interface HoldingDividend {
   isPaid: boolean;      // Ex-Date in diesem Jahr bereits vergangen
   isEstimated: boolean; // true = Gemini-Schätzung, false = Alpha Vantage DB
   isFromDb: boolean;    // true = aus Datenbank-Cache
+  noData: boolean;      // true = keine Dividende bekannt / nicht-ausschüttend
 }
 
 // ── Helper ─────────────────────────────────────────────────────────────────────
@@ -90,10 +90,6 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
   const divScanTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Portfolio-Positionen nach Positionsgröße (Stückzahl × Kaufpreis) sortieren
-  const earningsLimit = isPremium
-    ? PLAN_LIMITS.premium.maxEarningsHoldings
-    : PLAN_LIMITS.free.maxEarningsHoldings;
-
   const portfolioSorted = holdings
     .filter(h => !h.watchlist && h.shares != null && h.buy_price != null)
     .sort((a, b) => (b.shares! * b.buy_price!) - (a.shares! * a.buy_price!));
@@ -102,17 +98,10 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
     .filter(h => h.watchlist)
     .sort((a, b) => (a.ticker?.symbol ?? a.symbol ?? '').localeCompare(b.ticker?.symbol ?? b.symbol ?? ''));
 
-  // Free: nur Top-N Portfolio-Positionen; Premium: alle; dann Watchlist alphabetisch
-  const limitedPortfolio = Number.isFinite(earningsLimit)
-    ? portfolioSorted.slice(0, earningsLimit)
-    : portfolioSorted;
-
-  const earningsHoldingsTrimmed = !isPremium && portfolioSorted.length > earningsLimit;
-
-  const tickers = [...limitedPortfolio, ...watchlistSorted]
+  // Alle Portfolio-Positionen + Watchlist – kein Limit
+  const tickers = [...portfolioSorted, ...watchlistSorted]
     .map(h => h.ticker?.symbol ?? h.symbol)
-    .filter(Boolean)
-    .slice(0, 12);
+    .filter(Boolean) as string[];
 
   const tickerKey = tickers.slice().sort().join(',');
 
@@ -182,8 +171,7 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
     const portfolioTickers = [...portfolioHoldings]
       .sort((a, b) => (b.shares! * (b.buy_price ?? 0)) - (a.shares! * (a.buy_price ?? 0)))
       .map(h => h.ticker?.symbol ?? h.symbol)
-      .filter(Boolean)
-      .slice(0, 20) as string[];
+      .filter(Boolean) as string[];
 
     try {
       const sb = getSupabaseBrowser();
@@ -255,54 +243,51 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
   today.setHours(0, 0, 0, 0);
 
   const holdingDividends: HoldingDividend[] = useMemo(() => {
-    if (dividendData.length === 0) return [];
+    // Alle Portfolio-Positionen anzeigen – auch solche ohne Dividende
+    return portfolioHoldings.map(h => {
+      const sym     = h.ticker?.symbol ?? h.symbol;
+      const divInfo = dividendData.find(d => d.symbol === sym);
 
-    const result = portfolioHoldings
-      .map(h => {
-        const sym = h.ticker?.symbol ?? h.symbol;
-        const divInfo = dividendData.find(d => d.symbol === sym);
-        if (!divInfo || divInfo.noData || divInfo.dividendPerShare === 0) return null;
+      const shares           = h.shares ?? 0;
+      const dividendPerShare = divInfo?.dividendPerShare ?? 0;
+      const annualIncome     = shares * dividendPerShare;
+      const noData           = !divInfo || divInfo.noData || dividendPerShare === 0;
 
-        const shares = h.shares ?? 0;
-        const annualIncome = shares * divInfo.dividendPerShare;
+      let isPaid = false;
+      if (divInfo?.exDividendDate) {
+        const exDate = new Date(divInfo.exDividendDate);
+        isPaid = exDate.getFullYear() === currentYear && exDate <= today;
+      }
 
-        let isPaid = false;
-        if (divInfo.exDividendDate) {
-          const exDate = new Date(divInfo.exDividendDate);
-          isPaid = exDate.getFullYear() === currentYear && exDate <= today;
-        }
-
-        return {
-          symbol:          sym,
-          name:            h.ticker?.company_name ?? h.name ?? sym,
-          shares,
-          dividendPerShare: divInfo.dividendPerShare,
-          annualIncome,
-          exDividendDate:  divInfo.exDividendDate,
-          isPaid,
-          isEstimated:     divInfo.isEstimated ?? false,
-          isFromDb:        divInfo.isFromDb    ?? false,
-        } as HoldingDividend;
-      })
-      .filter((x): x is HoldingDividend => x !== null);
-
-    // Chronologischer Fahrplan: zukünftige Ex-Daten aufsteigend, dann vergangene, dann ohne Datum
-    return result.sort((a, b) => {
+      return {
+        symbol:           sym,
+        name:             h.ticker?.company_name ?? h.name ?? sym,
+        shares,
+        dividendPerShare,
+        annualIncome,
+        exDividendDate:   divInfo?.exDividendDate ?? '',
+        isPaid,
+        isEstimated:      divInfo?.isEstimated ?? false,
+        isFromDb:         divInfo?.isFromDb    ?? false,
+        noData,
+      } as HoldingDividend;
+    }).sort((a, b) => {
+      // Positionen ohne Dividende ans Ende
+      if (a.noData && !b.noData) return 1;
+      if (!a.noData && b.noData) return -1;
+      // Chronologisch nach Ex-Datum
       const hasA = Boolean(a.exDividendDate);
       const hasB = Boolean(b.exDividendDate);
       if (!hasA && !hasB) return b.annualIncome - a.annualIncome;
       if (!hasA) return 1;
       if (!hasB) return -1;
-      const dateA = new Date(a.exDividendDate).getTime();
-      const dateB = new Date(b.exDividendDate).getTime();
-      const now   = today.getTime();
+      const dateA   = new Date(a.exDividendDate).getTime();
+      const dateB   = new Date(b.exDividendDate).getTime();
+      const now     = today.getTime();
       const futureA = dateA >= now;
       const futureB = dateB >= now;
-      // Beide zukünftig: nächste zuerst
       if (futureA && futureB) return dateA - dateB;
-      // Beide vergangen: neueste zuerst
       if (!futureA && !futureB) return dateB - dateA;
-      // Zukünftig vor vergangen
       return futureA ? -1 : 1;
     });
   }, [dividendData, portfolioHoldings, currentYear]);
@@ -533,16 +518,52 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
             </div>
           )}
 
-          {/* Per-Position-Liste */}
-          {(holdingDividends.length > 0 || (isDivLoading && portfolioHoldings.length > 0)) && (
+          {/* Per-Position-Liste – alle Positionen, auch ohne Dividende */}
+          {(portfolioHoldings.length > 0) && (
             <div className="bg-white border border-slate-200 rounded-[24px] overflow-hidden shadow-sm">
-              <div className="px-6 py-4 border-b border-slate-100">
+              <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
                 <p className="text-[10px] font-black text-slate-900 uppercase tracking-widest">Dividenden je Position</p>
+                <p className="text-[9px] text-slate-400 font-mono">
+                  {holdingDividends.filter(h => !h.noData).length} von {portfolioHoldings.length} zahlen Dividende
+                </p>
               </div>
 
               <div className="divide-y divide-slate-100">
-                {/* Positionen mit Dividenden-Daten – chronologisch nach Ex-Datum */}
-                {holdingDividends.map((h, i) => {
+                {/* Alle Positionen – chronologisch, noData ans Ende */}
+                {isDivLoading && holdingDividends.length === 0
+                  ? portfolioHoldings.slice(0, 5).map((_, i) => (
+                    <div key={`sk-${i}`} className="px-6 py-4 flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-2 h-2 rounded-full bg-slate-200 animate-pulse" />
+                        <div>
+                          <div className="h-3.5 w-28 bg-slate-100 rounded animate-pulse mb-1" />
+                          <div className="h-2.5 w-20 bg-slate-100 rounded animate-pulse" />
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="h-3.5 w-16 bg-slate-100 rounded animate-pulse mb-1" />
+                        <div className="h-2.5 w-12 bg-slate-100 rounded animate-pulse" />
+                      </div>
+                    </div>
+                  ))
+                  : holdingDividends.map((h, i) => {
+                  if (h.noData) {
+                    return (
+                      <div key={i} className="px-6 py-3 flex items-center justify-between opacity-40 hover:opacity-60 transition-opacity">
+                        <div className="flex items-center gap-3">
+                          <span className="text-slate-300 text-base font-light w-3.5 text-center">–</span>
+                          <div>
+                            <p className="text-sm font-bold text-slate-500">{h.name}</p>
+                            <p className="text-[10px] font-mono text-slate-300">
+                              {h.symbol} · {h.shares} Stk ·{' '}
+                              {isDivLoading ? 'Wird geladen…' : 'Keine Dividende bekannt'}
+                            </p>
+                          </div>
+                        </div>
+                        <p className="text-[10px] text-slate-300 font-mono tabular-nums">0,00 €</p>
+                      </div>
+                    );
+                  }
                   const daysToEx = h.exDividendDate ? daysUntil(h.exDividendDate) : null;
                   const isSoon   = daysToEx !== null && daysToEx >= 0 && daysToEx <= 30;
                   return (
@@ -590,26 +611,6 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
                     </div>
                   );
                 })}
-
-                {/* Skeleton für Positionen die noch geladen werden */}
-                {isDivLoading && portfolioHoldings
-                  .filter(h => !holdingDividends.find(d => d.symbol === (h.ticker?.symbol ?? h.symbol)))
-                  .slice(0, 3)
-                  .map((h, i) => (
-                    <div key={`loading-${i}`} className="px-6 py-4 flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="w-2 h-2 rounded-full bg-slate-200 animate-pulse" />
-                        <div>
-                          <div className="h-3.5 w-28 bg-slate-100 rounded animate-pulse mb-1" />
-                          <div className="h-2.5 w-20 bg-slate-100 rounded animate-pulse" />
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="h-3.5 w-16 bg-slate-100 rounded animate-pulse mb-1" />
-                        <div className="h-2.5 w-12 bg-slate-100 rounded animate-pulse" />
-                      </div>
-                    </div>
-                  ))}
               </div>
 
               <div className="px-6 py-3 bg-slate-50 border-t border-slate-100 flex items-center gap-3 flex-wrap">
@@ -640,7 +641,7 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3">
             <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">
-              {tickers.length} Position{tickers.length !== 1 ? 'en' : ''}
+              {portfolioSorted.length} Depot{watchlistSorted.length > 0 ? ` · ${watchlistSorted.length} Watchlist` : ''}
             </p>
             {cacheStats && (
               <div className="flex items-center gap-1.5 text-[9px] font-black text-slate-400 bg-slate-50 border border-slate-100 px-2.5 py-1 rounded-lg">
@@ -649,12 +650,6 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
                 {scannedSymbol && (
                   <span className="text-emerald-500 ml-1">· {scannedSymbol} gescannt</span>
                 )}
-              </div>
-            )}
-            {earningsHoldingsTrimmed && (
-              <div className="flex items-center gap-1 text-[9px] font-black text-amber-600 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-lg">
-                <Lock className="w-2.5 h-2.5" />
-                Top {earningsLimit} von {portfolioSorted.length} · Premium für alle
               </div>
             )}
           </div>
