@@ -203,9 +203,12 @@ const PayoffChart = React.memo(function PayoffChart({ S, K, premium, ratio, type
   const zeroY = toY(0);
 
   const linePath = spots.map((_, i) => `${i === 0 ? 'M' : 'L'}${toX(i)},${toY(payoffs[i])}`).join(' ');
-  const beIdx = payoffs.findIndex(p => p >= 0);
-  const beX = beIdx > 0 ? toX(beIdx) : null;
+  const beIdx   = payoffs.findIndex(p => p >= 0);
+  const beX     = beIdx > 0 ? toX(beIdx) : null;
+  const bePrice = beIdx > 0 ? spots[beIdx] : null;
   const currentX = toX(spots.findIndex(s => s >= S));
+  const kIdx    = spots.findIndex(s => s >= K);
+  const kX      = kIdx >= 0 && kIdx < spots.length - 1 ? toX(kIdx) : null;
 
   return (
     <div className="mt-5 pt-4 border-t border-slate-700">
@@ -213,9 +216,23 @@ const PayoffChart = React.memo(function PayoffChart({ S, K, premium, ratio, type
         Auszahlungsprofil bei Fälligkeit
       </p>
       <svg width="100%" viewBox={`0 0 ${W} ${H}`} className="overflow-visible">
+        {/* Verlustzone – rote Fläche unter der Nulllinie */}
+        <rect x={0} y={zeroY} width={W} height={Math.max(0, H - zeroY - 4)} fill="#ef444409" />
+
+        {/* Nulllinie */}
         <line x1={0} y1={zeroY} x2={W} y2={zeroY} stroke="#475569" strokeWidth="1" strokeDasharray="4,3" />
-        {beX && <line x1={beX} y1={0} x2={beX} y2={H} stroke="#f59e0b55" strokeWidth="1" strokeDasharray="3,3" />}
-        {currentX > 0 && <line x1={currentX} y1={0} x2={currentX} y2={H} stroke="#10b98155" strokeWidth="1" strokeDasharray="3,3" />}
+
+        {/* Basispreis K (violett) */}
+        {kX !== null && (
+          <line x1={kX} y1={0} x2={kX} y2={H} stroke="#a78bfa66" strokeWidth="1" strokeDasharray="2,3" />
+        )}
+
+        {/* Break-Even (orange) */}
+        {beX && <line x1={beX} y1={0} x2={beX} y2={H} stroke="#f59e0b77" strokeWidth="1" strokeDasharray="3,3" />}
+
+        {/* Aktueller Kurs S (grün) */}
+        {currentX > 0 && <line x1={currentX} y1={0} x2={currentX} y2={H} stroke="#10b98166" strokeWidth="1" strokeDasharray="3,3" />}
+
         <defs>
           <linearGradient id="optGrad" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="#10b981" stopOpacity="0.35" />
@@ -224,10 +241,58 @@ const PayoffChart = React.memo(function PayoffChart({ S, K, premium, ratio, type
         </defs>
         <path d={`${linePath} L${W},${H} L0,${H} Z`} fill="url(#optGrad)" />
         <path d={linePath} fill="none" stroke="#10b981" strokeWidth="1.5" />
-        <text x={4} y={zeroY - 3} fontSize="8" fill="#64748b" fontFamily="monospace">0</text>
-        {beX && <text x={beX + 3} y={10} fontSize="8" fill="#f59e0b" fontFamily="monospace">BE</text>}
-        {currentX > 0 && <text x={currentX + 3} y={H - 4} fontSize="8" fill="#10b981" fontFamily="monospace">Jetzt</text>}
+
+        {/* Zonen-Labels */}
+        {maxP > 0 && (
+          <text x={W - 4} y={12} fontSize="8" fill="#10b981" fontFamily="monospace" textAnchor="end">▲ Gewinn</text>
+        )}
+        {minP < 0 && (
+          <text x={4} y={H - 4} fontSize="8" fill="#ef4444" fontFamily="monospace">▼ Verlust</text>
+        )}
+
+        {/* Nulllinie Label */}
+        <text x={4} y={zeroY - 3} fontSize="7.5" fill="#64748b" fontFamily="monospace">0 €</text>
+
+        {/* Break-Even mit Kurswert */}
+        {beX !== null && bePrice !== null && (
+          <text x={Math.min(beX + 3, W - 72)} y={zeroY - 4} fontSize="7.5" fill="#f59e0b" fontFamily="monospace">
+            {`BE: ${bePrice.toFixed(0)} €`}
+          </text>
+        )}
+
+        {/* K-Beschriftung */}
+        {kX !== null && (
+          <text x={kX + 2} y={H - 10} fontSize="7" fill="#a78bfa" fontFamily="monospace">
+            {`K=${K.toFixed(0)}`}
+          </text>
+        )}
+
+        {/* Aktueller Kurs */}
+        {currentX > 0 && (
+          <text x={currentX + 3} y={H - 2} fontSize="7.5" fill="#10b981" fontFamily="monospace">
+            {`S=${S.toFixed(0)}`}
+          </text>
+        )}
       </svg>
+
+      {/* Legende */}
+      <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2">
+        <span className="text-[8px] text-slate-400 font-mono flex items-center gap-1.5">
+          <span className="inline-block w-4 border-t border-emerald-500" />Auszahlung
+        </span>
+        <span className="text-[8px] text-amber-400 font-mono flex items-center gap-1.5">
+          <span className="inline-block w-4 border-t border-dashed border-amber-400" />Break-Even
+        </span>
+        <span className="text-[8px] text-emerald-400 font-mono flex items-center gap-1.5">
+          <span className="inline-block w-4 border-t border-dashed border-emerald-400" />Akt. Kurs
+        </span>
+        <span className="text-[8px] text-violet-400 font-mono flex items-center gap-1.5">
+          <span className="inline-block w-4 border-t border-dashed border-violet-400" />Basispreis K
+        </span>
+      </div>
+      <p className="text-[8px] text-slate-600 font-mono mt-1">
+        X-Achse: Kurs bei Fälligkeit · Y-Achse: Gewinn / Verlust (€)
+      </p>
     </div>
   );
 });
@@ -313,7 +378,11 @@ export default function OptionsTracker() {
       const res = await fetch(`/api/financial-data?ticker=${encodeURIComponent(sym)}`);
       if (res.ok) {
         const json = await res.json();
-        if (json.price > 0) setS(parseFloat(Number(json.price).toFixed(2)));
+        if (json.price > 0) {
+          const price = parseFloat(Number(json.price).toFixed(2));
+          setS(price);
+          setK(Math.round(price)); // ATM-Start: Basispreis = aktueller Kurs (gerundet)
+        }
       }
     } catch { /* kein Kurs verfügbar */ }
     // 2. Impl. Vola schätzen (regelbasiert) → σ-Slider vorbelegen
@@ -493,8 +562,8 @@ export default function OptionsTracker() {
         <div className="bg-slate-900 rounded-[28px] p-6">
           <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-5">Parameter</p>
 
-          <ParamSlider label="Kurs (S)"              value={S}     min={1}   max={500}  step={0.5}  unit="€"  onChange={setS}     />
-          <ParamSlider label="Basispreis (K)"         value={K}     min={1}   max={500}  step={0.5}  unit="€"  onChange={setK}     />
+          <ParamSlider label="Kurs (S)"              value={S}     min={1}   max={Math.max(500, Math.ceil(S / 50) * 100)}  step={S > 100 ? 1 : 0.5}  unit="€"  onChange={setS}     />
+          <ParamSlider label="Basispreis (K)"         value={K}     min={1}   max={Math.max(500, Math.ceil(S / 50) * 100)}  step={S > 100 ? 1 : 0.5}  unit="€"  onChange={setK}     />
           <ParamSlider label="Restlaufzeit (T)"       value={T}     min={1}   max={730}  step={1}    unit="Tage" onChange={setT}   />
           <ParamSlider label="Impl. Volatilität (σ)"  value={sigma} min={1}   max={150}  step={0.5}  unit="%"
             onChange={v => { setSigma(v); setIvEstimated(false); }} />
