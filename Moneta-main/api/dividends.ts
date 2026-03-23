@@ -19,14 +19,14 @@
 
 import { createClientWithToken, getSupabaseAdmin } from '../lib/supabaseClient.js';
 
-const GEMINI_MODEL        = 'gemini-2.5-flash';
+const GEMINI_MODEL        = process.env.GEMINI_MODEL ?? 'gemini-2.0-flash';
 const AV_BASE_URL         = 'https://www.alphavantage.co/query';
 const DIVIDEND_EVENT_TYPE = 'dividend_info';
 const DIV_SCAN_SENTINEL   = '_div_scanned';
 const SENTINEL_DATE       = '1970-01-01';
 const CACHE_TTL_MS        = 30 * 24 * 60 * 60 * 1000; // 30 Tage (bekannte Dividende)
 const NODATA_TTL_MS       = 7  * 24 * 60 * 60 * 1000; // 7 Tage  (noData → früher retry)
-const SCAN_TIMEOUT_MS     = 10_000;
+const SCAN_TIMEOUT_MS     = 25_000;
 const BATCH_SIZE          = 20; // Max Symbole pro Gemini-Prompt
 
 export interface DividendInfo {
@@ -56,6 +56,7 @@ export default async function handler(req: any, res: any): Promise<void> {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
 
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'GET')    return res.status(405).json({ error: 'Nur GET erlaubt.' });
@@ -190,6 +191,9 @@ export default async function handler(req: any, res: any): Promise<void> {
     const avKey     = process.env.ALPHA_VANTAGE_API_KEY;
     const geminiKey = process.env.GEMINI_API_KEY;
 
+    if (!avKey)     console.warn('[dividends] ALPHA_VANTAGE_API_KEY fehlt');
+    if (!geminiKey) console.error('[dividends] GEMINI_API_KEY fehlt – Gemini-Scan deaktiviert!');
+
     // a) Symbol 0: Alpha Vantage versuchen (höchste Qualität)
     let avResult: DividendInfo | null = null;
     if (avKey) {
@@ -229,6 +233,20 @@ export default async function handler(req: any, res: any): Promise<void> {
             scannedSymbols.push(sym);
           }
         }
+      }
+    }
+
+    // Wenn kein Gemini-Key: geminiSymbols als "nicht verfügbar" markieren
+    // → verhindert Endlos-Retry (stale bleibt 0 statt > 0 für immer)
+    if (geminiSymbols.length > 0 && !geminiKey) {
+      for (const sym of geminiSymbols) {
+        if (!cachedMap.has(sym)) {
+          cachedMap.set(sym, {
+            symbol: sym, dividendPerShare: 0, exDividendDate: '', dividendDate: '',
+            dividendYield: 0, price: 0, noData: true, isEstimated: false, isFromDb: false,
+          });
+        }
+        scannedSymbols.push(sym);
       }
     }
 
