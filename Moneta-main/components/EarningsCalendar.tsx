@@ -168,9 +168,15 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
     setDivError(null);
 
     // Portfolio-Tickers nach Positionsgröße sortiert (größte zuerst)
+    // Format: "SYMBOL:FirmennamUrlEncoded" – Firmenname hilft Gemini bei europäischen Symbolen
     const portfolioTickers = [...portfolioHoldings]
       .sort((a, b) => (b.shares! * (b.buy_price ?? 0)) - (a.shares! * (a.buy_price ?? 0)))
-      .map(h => h.ticker?.symbol ?? h.symbol)
+      .map(h => {
+        const sym  = h.ticker?.symbol ?? h.symbol;
+        const name = h.ticker?.company_name ?? h.name;
+        if (sym && name && name !== sym) return `${sym}:${encodeURIComponent(name)}`;
+        return sym;
+      })
       .filter(Boolean) as string[];
 
     try {

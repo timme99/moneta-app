@@ -75,9 +75,21 @@ export default async function handler(req: any, res: any): Promise<void> {
   const rawSymbols = ((req.query.symbols as string) ?? '').trim();
   if (!rawSymbols) return res.status(400).json({ error: 'Parameter "symbols" fehlt.' });
 
+  // Format: "AAPL,MBG.DE:Mercedes-Benz Group,DHL.DE:Deutsche Post"
+  // Firmennamen-Map aufbauen (für bessere Gemini-Ergebnisse bei europäischen Symbolen)
+  const nameMap = new Map<string, string>();
+  for (const entry of rawSymbols.split(',')) {
+    const colonIdx = entry.indexOf(':');
+    if (colonIdx > -1) {
+      const sym  = entry.slice(0, colonIdx).trim().toUpperCase();
+      const name = decodeURIComponent(entry.slice(colonIdx + 1).trim());
+      if (sym && name) nameMap.set(sym, name);
+    }
+  }
+
   const symbols = rawSymbols
     .split(',')
-    .map(s => s.trim().toUpperCase())
+    .map(s => s.split(':')[0].trim().toUpperCase())
     .filter(Boolean);
 
   const admin = getSupabaseAdmin();
@@ -118,6 +130,15 @@ export default async function handler(req: any, res: any): Promise<void> {
         ...(r.details as object),
         isFromDb: true,
       } as DividendInfo);
+    }
+  }
+
+  // ── 3b. noDataMap aus dividend_info ergänzen ──────────────────────────────
+  // Sentinel-Details können {} sein (alter Code schrieb kein noData-Flag) →
+  // Fallback auf dividend_info.noData damit 7-Tage-TTL korrekt greift.
+  for (const [sym, info] of cachedMap) {
+    if (info.noData && !noDataMap.get(sym)) {
+      noDataMap.set(sym, true);
     }
   }
 
@@ -189,7 +210,7 @@ export default async function handler(req: any, res: any): Promise<void> {
 
     if (geminiSymbols.length > 0 && geminiKey) {
       try {
-        const batchResults = await fetchDividendsBatchViaGemini(geminiSymbols, geminiKey);
+        const batchResults = await fetchDividendsBatchViaGemini(geminiSymbols, geminiKey, nameMap);
         for (const [sym, info] of batchResults) {
           info.isFromDb = false;
           cachedMap.set(sym, info);
@@ -299,18 +320,36 @@ async function fetchDividendViaAlphaVantage(symbol: string, apiKey: string): Pro
   }
 }
 
-// ── Gemini Batch (bis zu 10 Symbole in einem Prompt) ──────────────────────────
+// ── Gemini Batch (bis zu 20 Symbole in einem Prompt) ─────────────────────────
 
 async function fetchDividendsBatchViaGemini(
   symbols: string[],
   geminiKey: string,
+  nameMap?: Map<string, string>,
 ): Promise<Map<string, DividendInfo>> {
   const year = new Date().getFullYear();
-  const symbolList = symbols.join(', ');
+
+  // Firmennamen-Hints in Symbollist einbauen (z.B. "MBG.DE (Mercedes-Benz Group AG)")
+  const symbolsWithNames = symbols.map(s => {
+    const name = nameMap?.get(s);
+    return name ? `${s} (${name})` : s;
+  });
+  const symbolList = symbolsWithNames.join(', ');
+
+  // Europäische Börsen-Hinweise falls .DE/.PA/.VI/... in der Liste
+  const hasEuropean = symbols.some(s => /\.(DE|PA|VI|AS|MI|MC|SW|L|ST|HE|CO|OL)$/.test(s));
+  const exchangeHint = hasEuropean
+    ? `\nWICHTIG – Europäische Börsen-Suffixe:\n` +
+      `".DE" = XETRA Frankfurt (MBG.DE=Mercedes-Benz, DHL.DE=Deutsche Post/DHL Group, ` +
+      `EOAN.DE=E.ON, DWS.DE=DWS Group, BAS.DE=BASF, ADS.DE=adidas, SIE.DE=Siemens, ` +
+      `ALV.DE=Allianz, BMW.DE=BMW, DBK.DE=Deutsche Bank, SAP.DE=SAP, VOW3.DE=Volkswagen)\n` +
+      `".PA" = Euronext Paris | ".VI" = Wien | ".AS" = Amsterdam | ".L" = London\n` +
+      `Für europäische Symbole: Gib die Jahresdividende (Summe aller Tranchen) als dividendPerShare an.\n`
+    : '';
 
   const prompt =
 `Du bist ein Finanzinformations-Assistent. Nenne für JEDES der folgenden Börsensymbole die aktuellen Dividenden-Informationen für ${year}.
-
+${exchangeHint}
 Symbole: ${symbolList}
 
 Antworte NUR mit einem JSON-Array (kein anderer Text, keine Erklärungen):
@@ -328,9 +367,9 @@ Antworte NUR mit einem JSON-Array (kein anderer Text, keine Erklärungen):
 Regeln:
 - Für JEDES Symbol EINEN Eintrag im Array, in gleicher Reihenfolge wie die Eingabe
 - dividendYield als Prozentzahl (z. B. 1.5 für 1,5 %)
-- Falls keine Dividende: noData: true, alle Zahlenwerte 0
+- Falls keine Dividende bekannt: noData: true, alle Zahlenwerte 0
 - Datum als YYYY-MM-DD oder leerer String ""
-- symbol exakt wie in der Eingabe übernehmen
+- symbol exakt wie in der Eingabe übernehmen (ohne den Firmennamen in Klammern)
 - Nur das JSON-Array als Antwort`;
 
   const ctrl  = new AbortController();
