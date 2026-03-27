@@ -19,13 +19,13 @@
 
 import { createClientWithToken, getSupabaseAdmin } from '../lib/supabaseClient.js';
 
-const GEMINI_MODEL        = process.env.GEMINI_MODEL ?? 'gemini-2.0-flash';
+const GEMINI_MODEL        = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
 const AV_BASE_URL         = 'https://www.alphavantage.co/query';
 const DIVIDEND_EVENT_TYPE = 'dividend_info';
 const DIV_SCAN_SENTINEL   = '_div_scanned';
 const SENTINEL_DATE       = '1970-01-01';
 const CACHE_TTL_MS        = 30 * 24 * 60 * 60 * 1000; // 30 Tage (bekannte Dividende)
-const NODATA_TTL_MS       = 7  * 24 * 60 * 60 * 1000; // 7 Tage  (noData → früher retry)
+const NODATA_TTL_MS       = 1  * 24 * 60 * 60 * 1000; // 1 Tag   (noData → schneller retry)
 const SCAN_TIMEOUT_MS     = 25_000;
 const BATCH_SIZE          = 20; // Max Symbole pro Gemini-Prompt
 
@@ -401,7 +401,7 @@ Regeln:
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0.1, maxOutputTokens: 1500 },
+          generationConfig: { temperature: 0.1, maxOutputTokens: 4096 },
         }),
         signal: ctrl.signal,
       },

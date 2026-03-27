@@ -59,7 +59,7 @@ export default async function handler(req: any, res: any): Promise<void> {
     .split(',')
     .map(s => s.trim().toUpperCase())
     .filter(Boolean)
-    .slice(0, 15);
+    .slice(0, 100);
 
   const today = new Date().toISOString().split('T')[0];
   const admin = getSupabaseAdmin();
