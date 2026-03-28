@@ -69,6 +69,7 @@ export default async function handler(req: any, res: any): Promise<void> {
     .filter(Boolean)
     .slice(0, 100);
 
+  const force = req.query.force === '1' || req.query.force === 'true';
   const today = new Date().toISOString().split('T')[0];
   const admin = getSupabaseAdmin();
 
@@ -98,11 +99,13 @@ export default async function handler(req: any, res: any): Promise<void> {
     scanMap.set(r.symbol, new Date(r.scanned_at).getTime());
   }
 
-  // Symbole, die noch nie oder vor > 30 Tagen gescannt wurden
-  const staleSymbols = symbols.filter(s => {
-    const last = scanMap.get(s);
-    return !last || Date.now() - last > CACHE_TTL_MS;
-  });
+  // Symbole, die noch nie oder vor > 30 Tagen gescannt wurden (oder force=1)
+  const staleSymbols = force
+    ? symbols.slice(0, 1)  // force: immer das erste Symbol neu scannen
+    : symbols.filter(s => {
+        const last = scanMap.get(s);
+        return !last || Date.now() - last > CACHE_TTL_MS;
+      });
 
   // ── 3. Genau EIN Symbol scannen (Yahoo Finance → Gemini Fallback) ─────────
   let scannedSymbol: string | null = null;
@@ -137,11 +140,19 @@ export default async function handler(req: any, res: any): Promise<void> {
       }
     }
 
-    // Alte vergangene Termine für dieses Symbol aufräumen
-    await (admin as any).from('earnings_cache')
-      .delete()
-      .eq('symbol', sym)
-      .lt('event_date', today);
+    // Alte Termine für dieses Symbol aufräumen
+    // Bei force=1: alle Einträge löschen (inkl. zukünftige) + aus rows entfernen
+    if (force) {
+      await (admin as any).from('earnings_cache').delete().eq('symbol', sym);
+      for (let i = rows.length - 1; i >= 0; i--) {
+        if (rows[i].symbol === sym) rows.splice(i, 1);
+      }
+    } else {
+      await (admin as any).from('earnings_cache')
+        .delete()
+        .eq('symbol', sym)
+        .lt('event_date', today);
+    }
 
     // Neue zukünftige Termine einfügen
     const now = new Date().toISOString();
