@@ -360,8 +360,7 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
 
   // ── Earnings-Aufteilung ────────────────────────────────────────────────────
 
-  const upcoming = events.filter(e => daysUntil(e.date) >= 0);
-  const past = events.filter(e => daysUntil(e.date) < 0);
+  // upcoming / past werden im per-Symbol-Layout direkt aus events.filter() abgeleitet
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
