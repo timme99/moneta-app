@@ -1,11 +1,8 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Calendar, Clock, TrendingUp, Loader2, RefreshCcw, AlertTriangle, Info, DollarSign, Database, Sparkles, ShieldCheck } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { Calendar, Clock, TrendingUp, Loader2, RefreshCcw, AlertTriangle, Info, DollarSign, Database, Sparkles, ShieldCheck, Download } from 'lucide-react';
 import { EarningsEvent, HoldingRow } from '../types';
 import { getSupabaseBrowser } from '../lib/supabaseBrowser';
 
-const DIVIDEND_EVENT_TYPE = 'dividend_info';
-const SENTINEL_DATE       = '1970-01-01';
-const CACHE_TTL_MS        = 30 * 24 * 60 * 60 * 1000; // 30 Tage (sync mit API)
 
 interface EarningsCalendarProps {
   holdings: HoldingRow[];
@@ -22,7 +19,7 @@ interface DividendInfo {
   dividendYield: number;
   price: number;
   noData: boolean;
-  isEstimated?: boolean; // true wenn aus Gemini-Fallback
+  isEstimated?: boolean; // true = Gemini-Schätzung, false = Yahoo Finance / Alpha Vantage
 }
 
 interface HoldingDividend {
@@ -89,6 +86,13 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
   const isDivScanningRef = useRef(false);
   const divScanTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Scan-Status direkt aus Supabase (für per-Symbol Statusanzeige)
+  const [earnScanMap, setEarnScanMap] = useState<Map<string, string>>(new Map()); // sym → scanned_at ISO
+  const [divScanMap,  setDivScanMap]  = useState<Map<string, string>>(new Map()); // sym → scanned_at ISO
+  // Aktuell per-Symbol abgerufenes Symbol
+  const [fetchingEarnSym, setFetchingEarnSym] = useState<string | null>(null);
+  const [fetchingDivSym,  setFetchingDivSym]  = useState<string | null>(null);
+
   // Portfolio-Positionen nach Positionsgröße (Stückzahl × Kaufpreis) sortieren
   const portfolioSorted = holdings
     .filter(h => !h.watchlist && h.shares != null && h.buy_price != null)
@@ -141,15 +145,7 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
       setCacheStats(json.cacheStats ?? null);
       setLastFetch(new Date());
 
-      // Noch unbekannte Symbole? → automatisch nächsten Scan auslösen (1,5 s Pause)
-      if ((json.cacheStats?.stale ?? 0) > 0) {
-        autoScanTimerRef.current = setTimeout(() => {
-          isScanningRef.current = false;
-          loadEarnings(true);
-        }, 1500);
-      } else {
-        isScanningRef.current = false;
-      }
+      isScanningRef.current = false;
     } catch (e: any) {
       isScanningRef.current = false;
       setError(e?.message?.includes(':') ? e.message.split(':')[1] : 'Earnings-Daten konnten nicht geladen werden.');
@@ -205,20 +201,63 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
       setScannedDivSymbol(json.scannedSymbol ?? null);
       setIsDivFallback(results.some((r: DividendInfo) => r.isEstimated));
 
-      // Noch stale Symbole? → auto-retry nach 2 s
-      if ((stats?.stale ?? 0) > 0) {
-        divScanTimerRef.current = setTimeout(() => {
-          isDivScanningRef.current = false;
-          loadDividends(true);
-        }, 2000);
-      } else {
-        isDivScanningRef.current = false;
-      }
+      isDivScanningRef.current = false;
     } catch (e: any) {
       isDivScanningRef.current = false;
       setDivError(e?.message ?? 'Dividenden-Daten konnten nicht geladen werden.');
     } finally {
       setIsDivLoading(false);
+    }
+  };
+
+  // ── Scan-Status direkt aus Supabase laden ──────────────────────────────────
+
+  const loadScanStatus = useCallback(async () => {
+    if (tickers.length === 0) return;
+    const sb = getSupabaseBrowser();
+    if (!sb) return;
+    const [{ data: earnData }, { data: divData }] = await Promise.all([
+      sb.from('scan_log').select('symbol, scanned_at').in('symbol', tickers).eq('type', 'earnings'),
+      sb.from('scan_log').select('symbol, scanned_at').in('symbol', tickers).eq('type', 'dividend'),
+    ]);
+    setEarnScanMap(new Map((earnData ?? []).map((r: any) => [r.symbol, r.scanned_at])));
+    setDivScanMap(new Map((divData  ?? []).map((r: any) => [r.symbol, r.scanned_at])));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tickerKey]);
+
+  // ── Per-Symbol manueller Abruf ─────────────────────────────────────────────
+
+  const fetchEarningsForSymbol = async (sym: string) => {
+    if (fetchingEarnSym) return;
+    setFetchingEarnSym(sym);
+    try {
+      const sb = getSupabaseBrowser();
+      if (!sb) return;
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session?.access_token) return;
+      await fetch(`/api/earnings?symbols=${encodeURIComponent(sym)}&force=1`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      await Promise.all([loadEarnings(), loadScanStatus()]);
+    } finally {
+      setFetchingEarnSym(null);
+    }
+  };
+
+  const fetchDividendForSymbol = async (sym: string) => {
+    if (fetchingDivSym) return;
+    setFetchingDivSym(sym);
+    try {
+      const sb = getSupabaseBrowser();
+      if (!sb) return;
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session?.access_token) return;
+      await fetch(`/api/dividends?symbols=${encodeURIComponent(sym)}&force=1`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      await Promise.all([loadDividends(), loadScanStatus()]);
+    } finally {
+      setFetchingDivSym(null);
     }
   };
 
@@ -232,6 +271,7 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
     if (tickers.length > 0) {
       loadEarnings();
       loadDividends();
+      loadScanStatus();
     } else {
       setDividendData([]);
     }
@@ -320,8 +360,7 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
 
   // ── Earnings-Aufteilung ────────────────────────────────────────────────────
 
-  const upcoming = events.filter(e => daysUntil(e.date) >= 0);
-  const past = events.filter(e => daysUntil(e.date) < 0);
+  // upcoming / past werden im per-Symbol-Layout direkt aus events.filter() abgeleitet
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
@@ -387,7 +426,7 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
               <div className="flex-1 min-w-0">
                 <span className="text-[11px] font-black text-slate-700 block">
                   {divCacheStats && divCacheStats.stale > 0
-                    ? `Scanne ${Math.min(10, divCacheStats.stale)} Symbol${divCacheStats.stale > 1 ? 'e' : ''} via KI-Batch…`
+                    ? `Aktualisiere ${divCacheStats.stale} Symbol${divCacheStats.stale > 1 ? 'e' : ''} via Yahoo Finance…`
                     : 'Lade Dividenden-Daten…'}
                 </span>
                 {divCacheStats && divCacheStats.total > 0 && (
@@ -554,19 +593,37 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
                   ))
                   : holdingDividends.map((h, i) => {
                   if (h.noData) {
+                    const neverScanned = !divScanMap.has(h.symbol);
+                    const isFetchingThis = fetchingDivSym === h.symbol;
                     return (
-                      <div key={i} className="px-6 py-3 flex items-center justify-between gap-2 opacity-40 hover:opacity-60 transition-opacity">
+                      <div key={i} className="px-6 py-3 flex items-center justify-between gap-2 hover:bg-slate-50/50 transition-opacity">
                         <div className="flex items-center gap-3 min-w-0">
-                          <span className="text-slate-300 text-base font-light w-3.5 text-center shrink-0">–</span>
+                          <span className={`text-base font-light w-3.5 text-center shrink-0 ${neverScanned ? 'text-amber-300' : 'text-slate-300'}`}>
+                            {neverScanned ? '?' : '–'}
+                          </span>
                           <div className="min-w-0">
                             <p className="text-sm font-bold text-slate-500 truncate">{h.name}</p>
-                            <p className="text-[10px] font-mono text-slate-300 truncate">
+                            <p className="text-[10px] font-mono text-slate-400 truncate">
                               {h.symbol} · {h.shares} Stk ·{' '}
-                              {isDivLoading ? 'Wird geladen…' : 'Keine Dividende bekannt'}
+                              {isDivLoading ? 'Wird geladen…' : neverScanned ? 'Noch nicht abgerufen' : 'Keine Dividende bekannt'}
                             </p>
                           </div>
                         </div>
-                        <p className="text-[10px] text-slate-300 font-mono tabular-nums shrink-0">0,00 €</p>
+                        <button
+                          onClick={() => fetchDividendForSymbol(h.symbol)}
+                          disabled={!!fetchingDivSym}
+                          title={neverScanned ? 'Dividendendaten jetzt abrufen' : 'Neu laden (Yahoo Finance)'}
+                          className={`flex items-center gap-1 text-[8px] font-black uppercase tracking-wide shrink-0 px-2 py-1 rounded-lg transition-colors disabled:opacity-40 ${
+                            neverScanned
+                              ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                              : 'bg-slate-100 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50'
+                          }`}
+                        >
+                          {isFetchingThis
+                            ? <Loader2 className="w-3 h-3 animate-spin" />
+                            : <Download className="w-3 h-3" />}
+                          {neverScanned ? 'Abrufen' : 'Neu'}
+                        </button>
                       </div>
                     );
                   }
@@ -576,7 +633,7 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
                     <div key={i} className={`px-6 py-4 flex items-center justify-between gap-2 hover:bg-slate-50 transition-colors ${isSoon ? 'bg-emerald-50/30' : ''}`}>
                       <div className="flex items-center gap-3 min-w-0">
                         {/* Quelle-Icon: DB (grün) vs KI-Schätzung (amber) */}
-                        <div title={h.isEstimated ? 'KI-Schätzung (Gemini)' : 'Aus Datenbank (Alpha Vantage)'}>
+                        <div title={h.isEstimated ? 'KI-Schätzung (Gemini)' : 'Echte Daten (Yahoo Finance / Alpha Vantage)'}>
                           {h.isEstimated
                             ? <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                             : <Database className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
@@ -621,7 +678,7 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
 
               <div className="px-6 py-3 bg-slate-50 border-t border-slate-100 flex items-center gap-3 flex-wrap">
                 <span className="flex items-center gap-1 text-[9px] text-slate-400">
-                  <Database className="w-3 h-3 text-emerald-500" /> Alpha Vantage (verifiziert)
+                  <Database className="w-3 h-3 text-emerald-500" /> Yahoo Finance / Alpha Vantage
                 </span>
                 <span className="flex items-center gap-1 text-[9px] text-slate-400">
                   <Sparkles className="w-3 h-3 text-amber-400" /> KI-Schätzung (Gemini)
@@ -644,159 +701,194 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
       )}
 
       {tickers.length > 0 && (
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-3">
-            <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">
-              {portfolioSorted.length} Depot{watchlistSorted.length > 0 ? ` · ${watchlistSorted.length} Watchlist` : ''}
-            </p>
-            {cacheStats && (
-              <div className="flex items-center gap-1.5 text-[9px] font-black text-slate-400 bg-slate-50 border border-slate-100 px-2.5 py-1 rounded-lg">
-                <Database className="w-2.5 h-2.5" />
-                {cacheStats.cached}/{cacheStats.total} gecacht
-                {scannedSymbol && (
-                  <span className="text-emerald-500 ml-1">· {scannedSymbol} gescannt</span>
-                )}
+        <>
+          {/* ── Header: Titel + Aktualisieren ──────────────────────────────── */}
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div className="flex items-center gap-3">
+              <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-[0.2em] flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-emerald-600" /> Earnings-Kalender
+              </h3>
+              <span className="text-[9px] font-bold text-slate-400 bg-slate-50 border border-slate-100 px-2 py-1 rounded-lg">
+                {portfolioSorted.length} Depot{watchlistSorted.length > 0 ? ` · ${watchlistSorted.length} Watchlist` : ''}
+              </span>
+            </div>
+            <button
+              onClick={() => { loadEarnings(); loadScanStatus(); }}
+              disabled={isLoading}
+              className="flex items-center gap-2 text-[10px] font-black text-emerald-600 uppercase tracking-widest hover:text-slate-900 transition-colors disabled:opacity-50"
+            >
+              <RefreshCcw className={`w-3 h-3 ${isLoading ? 'animate-spin' : ''}`} />
+              {lastFetch ? `Aktualisiert ${lastFetch.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}` : 'Laden'}
+            </button>
+          </div>
+
+          {/* ── Ladefehler ─────────────────────────────────────────────────── */}
+          {error && (
+            <div className="bg-rose-50 border border-rose-100 p-4 rounded-[16px] text-rose-700 text-xs font-medium">
+              {error}
+            </div>
+          )}
+
+          {/* ── Per-Aktie Status-Liste ──────────────────────────────────────── */}
+          <div className="bg-white border border-slate-200 rounded-[24px] overflow-hidden shadow-sm">
+
+            {/* Legende + "Alle fehlenden abrufen" */}
+            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-center gap-4">
+                <span className="text-[9px] text-slate-400 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block shrink-0" /> Termin bekannt
+                </span>
+                <span className="text-[9px] text-slate-400 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-slate-300 inline-block shrink-0" /> Kein Termin
+                </span>
+                <span className="text-[9px] text-slate-400 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-amber-400 inline-block shrink-0" /> Noch nicht abgerufen
+                </span>
+              </div>
+              {(() => {
+                const missing = tickers.filter(sym => !earnScanMap.has(sym) && !events.find(e => e.ticker === sym));
+                if (missing.length === 0) return null;
+                return (
+                  <button
+                    onClick={() => fetchEarningsForSymbol(missing[0])}
+                    disabled={!!fetchingEarnSym || isLoading}
+                    className="flex items-center gap-1.5 text-[9px] font-black bg-emerald-600 text-white px-3 py-1.5 rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-40"
+                  >
+                    {fetchingEarnSym ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+                    {missing.length} fehlende abrufen
+                  </button>
+                );
+              })()}
+            </div>
+
+            {/* Lade-Skeleton */}
+            {isLoading && (
+              <div className="px-5 py-4 flex items-center gap-3">
+                <Loader2 className="w-4 h-4 animate-spin text-emerald-600 shrink-0" />
+                <span className="text-xs font-medium text-slate-500">Lade Earnings-Daten aus Datenbank…</span>
               </div>
             )}
-          </div>
-          <button
-            onClick={() => { loadEarnings(); loadDividends(); }}
-            disabled={isLoading || isDivLoading}
-            className="flex items-center gap-2 text-[10px] font-black text-emerald-600 uppercase tracking-widest hover:text-slate-900 transition-colors disabled:opacity-50"
-          >
-            <RefreshCcw className={`w-3 h-3 ${(isLoading || isDivLoading) ? 'animate-spin' : ''}`} />
-            {lastFetch ? `Aktualisiert ${lastFetch.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}` : 'Laden'}
-          </button>
-        </div>
-      )}
 
-      {isLoading && (
-        <div className="flex justify-center py-8">
-          <div className="bg-white px-6 py-4 rounded-2xl shadow-xl border border-slate-100 flex items-center gap-3 max-w-sm w-full">
-            <Loader2 className="w-5 h-5 animate-spin text-emerald-600 shrink-0" />
-            <div className="flex-1 min-w-0">
-              <span className="text-xs font-black text-slate-900 uppercase tracking-widest block">
-                {cacheStats && cacheStats.stale > 0
-                  ? `Scanne Symbol ${cacheStats.cached + 1} von ${cacheStats.total}…`
-                  : 'Lade Earnings-Kalender…'}
-              </span>
-              {cacheStats && cacheStats.total > 0 && (
-                <div className="mt-2">
-                  <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-emerald-500 rounded-full transition-all duration-500"
-                      style={{ width: `${Math.round((cacheStats.cached / cacheStats.total) * 100)}%` }}
-                    />
-                  </div>
-                  <span className="text-[10px] text-slate-400 font-mono mt-1 block">
-                    {cacheStats.cached}/{cacheStats.total} gecacht
-                    {scannedSymbol ? ` · ${scannedSymbol} gescannt` : ''}
-                  </span>
-                </div>
-              )}
+            {/* Per-Aktie Zeilen */}
+            <div className="divide-y divide-slate-100">
+              {tickers.map(sym => {
+                const stockEvents = events.filter(e => e.ticker === sym);
+                const hasEvent    = stockEvents.length > 0;
+                const lastScan    = earnScanMap.get(sym);
+                const isScanned   = !!lastScan;
+                const isFetching  = fetchingEarnSym === sym;
+
+                const holding = [...portfolioSorted, ...watchlistSorted].find(
+                  h => (h.ticker?.symbol ?? h.symbol) === sym,
+                );
+                const name = holding?.ticker?.company_name ?? holding?.name ?? sym;
+
+                if (hasEvent) {
+                  // ── Termin(e) in DB vorhanden ──────────────────────────────
+                  return stockEvents.map((event, idx) => {
+                    const days = daysUntil(event.date);
+                    const soon = days >= 0 && days <= 7;
+                    return (
+                      <div
+                        key={`${sym}-${idx}`}
+                        className={`px-5 py-3.5 flex items-start gap-3 hover:bg-slate-50 transition-colors ${soon ? 'bg-emerald-50/40' : ''}`}
+                      >
+                        <span className="mt-1 w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                            <span className="text-xs font-black text-slate-900 font-mono">{sym}</span>
+                            {name !== sym && <span className="text-[10px] text-slate-500 truncate">{name}</span>}
+                            {soon && days >= 0 && (
+                              <span className="text-[8px] font-black bg-emerald-600 text-white px-1.5 py-0.5 rounded uppercase tracking-widest shrink-0">
+                                {days === 0 ? 'Heute' : `in ${days}d`}
+                              </span>
+                            )}
+                            <span className={`text-[8px] font-black px-1.5 py-0.5 rounded border uppercase tracking-widest ${timeOfDayColor(event.timeOfDay)}`}>
+                              {event.timeOfDay}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-3 text-[10px] text-slate-500 flex-wrap">
+                            <span className="flex items-center gap-1">
+                              <Clock className="w-3 h-3" />{formatDate(event.date)}
+                            </span>
+                            {event.epsEstimate && <span>EPS: <strong>{event.epsEstimate}</strong></span>}
+                            {event.revenueEstimate && <span>Umsatz: <strong>{event.revenueEstimate}</strong></span>}
+                            {event.quarter && <span className="text-slate-300">{event.quarter}</span>}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-[9px] font-mono text-slate-400">
+                            {days >= 0 ? (days === 0 ? 'Heute' : `in ${days}d`) : `vor ${Math.abs(days)}d`}
+                          </span>
+                          <button
+                            onClick={() => fetchEarningsForSymbol(sym)}
+                            disabled={!!fetchingEarnSym}
+                            title="Neu laden"
+                            className="text-slate-300 hover:text-emerald-500 transition-colors disabled:opacity-30"
+                          >
+                            {isFetching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCcw className="w-3.5 h-3.5" />}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  });
+                } else if (isScanned) {
+                  // ── Gescannt, kein bevorstehender Termin ──────────────────
+                  const scanDate = new Date(lastScan!).toLocaleDateString('de-DE', {
+                    day: '2-digit', month: 'short', year: 'numeric',
+                  });
+                  return (
+                    <div key={sym} className="px-5 py-3 flex items-center gap-3 hover:bg-slate-50 transition-colors">
+                      <span className="w-2 h-2 rounded-full bg-slate-300 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-black text-slate-600 font-mono">{sym}</span>
+                          {name !== sym && <span className="text-[10px] text-slate-400 truncate">{name}</span>}
+                        </div>
+                        <p className="text-[10px] text-slate-400">Kein bevorstehender Termin bekannt · Scan: {scanDate}</p>
+                      </div>
+                      <button
+                        onClick={() => fetchEarningsForSymbol(sym)}
+                        disabled={!!fetchingEarnSym}
+                        title="Neu laden (Yahoo Finance → KI)"
+                        className="flex items-center gap-1 text-[8px] font-black text-slate-400 hover:text-emerald-600 uppercase tracking-wide transition-colors disabled:opacity-40 shrink-0 px-2 py-1 rounded-lg hover:bg-emerald-50"
+                      >
+                        {isFetching ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCcw className="w-3 h-3" />}
+                        Neu laden
+                      </button>
+                    </div>
+                  );
+                } else {
+                  // ── Noch nie gescannt ─────────────────────────────────────
+                  return (
+                    <div key={sym} className="px-5 py-3 flex items-center gap-3 bg-amber-50/30 hover:bg-amber-50/60 transition-colors">
+                      <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-black text-slate-700 font-mono">{sym}</span>
+                          {name !== sym && <span className="text-[10px] text-slate-500 truncate">{name}</span>}
+                        </div>
+                        <p className="text-[10px] text-amber-600">Noch nicht abgerufen – kein Eintrag in Datenbank</p>
+                      </div>
+                      <button
+                        onClick={() => fetchEarningsForSymbol(sym)}
+                        disabled={!!fetchingEarnSym}
+                        className="flex items-center gap-1.5 text-[9px] font-black bg-emerald-600 text-white px-2.5 py-1.5 rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-40 shrink-0"
+                      >
+                        {isFetching ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+                        Jetzt abrufen
+                      </button>
+                    </div>
+                  );
+                }
+              })}
+            </div>
+
+            <div className="px-5 py-3 bg-slate-50 border-t border-slate-100">
+              <p className="text-[9px] text-slate-400 italic">Daten aus Datenbank-Cache (Yahoo Finance / KI) · Keine Anlageberatung · Offizielle Termine beim Unternehmen prüfen</p>
             </div>
           </div>
-        </div>
-      )}
-
-      {error && (
-        <div className="bg-rose-50 border border-rose-100 p-5 rounded-[20px] text-rose-700 text-sm font-medium">
-          {error}
-        </div>
-      )}
-
-      {!isLoading && upcoming.length > 0 && (
-        <div className="space-y-4">
-          <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-[0.2em] flex items-center gap-2">
-            <TrendingUp className="w-4 h-4 text-emerald-600" /> Bevorstehende Earnings
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {upcoming.map((event, i) => {
-              const days = daysUntil(event.date);
-              const isVerySoon = days <= 7;
-              return (
-                <div
-                  key={i}
-                  className={`bg-white border rounded-[24px] p-6 shadow-sm transition-all hover:shadow-md ${
-                    isVerySoon ? 'border-emerald-200 ring-1 ring-emerald-600' : 'border-slate-200'
-                  }`}
-                >
-                  <div className="flex items-start justify-between mb-4 gap-2">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 mb-1 flex-wrap">
-                        <span className="font-black text-slate-900 text-base truncate">{event.company}</span>
-                        {isVerySoon && (
-                          <span className="text-[9px] font-black bg-emerald-600 text-white px-2 py-0.5 rounded-full uppercase tracking-widest shrink-0">
-                            Bald
-                          </span>
-                        )}
-                      </div>
-                      <span className="text-[10px] font-mono text-slate-400">{event.ticker} · {event.quarter}</span>
-                    </div>
-                    <span className="text-[10px] font-black text-slate-400 bg-slate-50 border border-slate-100 px-2.5 py-1 rounded-lg whitespace-nowrap shrink-0">
-                      {days === 0 ? 'Heute' : `in ${days} Tag${days !== 1 ? 'en' : ''}`}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-2 mb-4">
-                    <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                    <span className="text-xs font-medium text-slate-600">{formatDate(event.date)}</span>
-                    <span className={`text-[9px] font-black px-2 py-0.5 rounded-lg border uppercase tracking-widest ${timeOfDayColor(event.timeOfDay)}`}>
-                      {event.timeOfDay}
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">EPS-Schätzung*</p>
-                      <p className="text-sm font-black text-slate-800">{event.epsEstimate}</p>
-                    </div>
-                    <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Umsatz-Schätzung*</p>
-                      <p className="text-sm font-black text-slate-800">{event.revenueEstimate}</p>
-                    </div>
-                  </div>
-                  <p className="text-[9px] text-slate-400 mt-2 italic">* KI-Schätzung · keine Anlageberatung · Datum beim Unternehmen prüfen</p>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {!isLoading && past.length > 0 && (
-        <div className="space-y-4">
-          <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Vergangene Earnings</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {past.map((event, i) => (
-              <div key={i} className="bg-slate-50 border border-slate-100 rounded-[20px] p-5 opacity-70">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <span className="font-bold text-slate-700 text-sm">{event.company}</span>
-                    <span className="text-[10px] font-mono text-slate-400 ml-2">{event.ticker}</span>
-                  </div>
-                  <span className="text-[10px] font-bold text-slate-400">{event.quarter}</span>
-                </div>
-                <p className="text-[11px] text-slate-500 mt-1">{formatDate(event.date)}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {events.length === 0 && tickers.length > 0 && !error && (
-        <div className="bg-white border border-slate-200 rounded-[28px] p-12 text-center shadow-sm">
-          <Info className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-          {isLoading ? (
-            <p className="text-slate-500 font-medium text-sm">
-              Analysiere {tickers.map(t => <span key={t} className="font-mono font-bold text-emerald-600">{t}</span>).reduce<React.ReactNode[]>((acc, el, i) => i === 0 ? [el] : [...acc, ', ', el], [])}…
-            </p>
-          ) : (
-            <p className="text-slate-500 font-medium text-sm">
-              {lastFetch ? 'Keine Earnings-Daten gefunden. Bitte erneut versuchen.' : 'Lade Earnings-Daten…'}
-            </p>
-          )}
-        </div>
+        </>
       )}
     </div>
   );

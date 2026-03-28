@@ -317,7 +317,9 @@ export default function OptionsTracker() {
   const [K,          setK]          = useState(105);
   const [T,          setT]          = useState(90);
   const [sigma,      setSigma]      = useState(20);
-  const [ivEstimated, setIvEstimated] = useState(false); // true = Schätzung aus Suche, false = manuell
+  const [isFetchingMarketData, setIsFetchingMarketData] = useState(false);
+  const [priceSource, setPriceSource] = useState<'api' | 'manual'>('manual');
+  const [ivSource, setIvSource]       = useState<'options' | 'estimated' | 'manual'>('manual');
   const [r,          setR]          = useState(2.5);
   const [q,          setQ]          = useState(0);    // Dividendenrendite p.a. in %
   const [ratio,      setRatio]      = useState(1);
@@ -354,7 +356,7 @@ export default function OptionsTracker() {
       } else {
         // Phase 2: /api/financial-data Fallback (Gemini → Alpha Vantage)
         try {
-          const res = await fetch(`/api/financial-data?ticker=${encodeURIComponent(q)}`);
+          const res = await fetch(`/api/financial-data?q=${encodeURIComponent(q)}`);
           if (res.ok) {
             const json = await res.json();
             if (json.ticker) {
@@ -373,21 +375,54 @@ export default function OptionsTracker() {
     setSymbolQuery(sym);
     setSuggestions([]);
     setShowDrop(false);
-    // 1. Aktuellen Kurs laden → S-Slider vorbelegen
+    setIsFetchingMarketData(true);
+    setPriceSource('manual');
+    setIvSource('manual');
+
+    // Auth-Token für options-data API
+    let authHeader = '';
     try {
-      const res = await fetch(`/api/financial-data?ticker=${encodeURIComponent(sym)}`);
-      if (res.ok) {
-        const json = await res.json();
-        if (json.price > 0) {
-          const price = parseFloat(Number(json.price).toFixed(2));
-          setS(price);
-          setK(Math.round(price)); // ATM-Start: Basispreis = aktueller Kurs (gerundet)
-        }
+      if (sb) {
+        const { data: { session } } = await sb.auth.getSession();
+        if (session?.access_token) authHeader = `Bearer ${session.access_token}`;
       }
-    } catch { /* kein Kurs verfügbar */ }
-    // 2. Impl. Vola schätzen (regelbasiert) → σ-Slider vorbelegen
-    setSigma(estimateImpliedVol(sym, sector));
-    setIvEstimated(true);
+    } catch { /* kein Auth */ }
+
+    // Kurs + IV in einem einzigen API-Call (?iv=1 holt ATM-Volatilität dazu)
+    try {
+      const res = await fetch(
+        `/api/financial-data?q=${encodeURIComponent(sym)}&iv=1`,
+        authHeader ? { headers: { Authorization: authHeader } } : {},
+      );
+      if (res.ok) {
+        const data = await res.json();
+
+        // Kurs anwenden
+        if (data?.price > 0) {
+          const price = parseFloat(Number(data.price).toFixed(2));
+          setS(price);
+          setK(Math.round(price));
+          setPriceSource('api');
+        }
+
+        // Impl. Vola aus Optionsmarkt oder Sektor-Schätzung
+        if (data?.atmIV > 0 && data?.ivSource === 'options') {
+          setSigma(data.atmIV);
+          setIvSource('options');
+        } else {
+          setSigma(estimateImpliedVol(sym, sector));
+          setIvSource('estimated');
+        }
+      } else {
+        setSigma(estimateImpliedVol(sym, sector));
+        setIvSource('estimated');
+      }
+    } catch {
+      setSigma(estimateImpliedVol(sym, sector));
+      setIvSource('estimated');
+    }
+
+    setIsFetchingMarketData(false);
   };
 
   // Dropdown bei Klick außerhalb schließen
@@ -518,6 +553,47 @@ export default function OptionsTracker() {
           </div>
         </div>
 
+        {/* Marktdaten-Infostreifen (sichtbar sobald ein Symbol gewählt ist) */}
+        {symbol && (
+          <div className="flex flex-wrap items-center gap-4 mt-3 pt-3 border-t border-slate-800">
+            {isFetchingMarketData ? (
+              <span className="text-[10px] text-slate-400 font-mono flex items-center gap-1.5">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                Marktdaten werden geladen…
+              </span>
+            ) : (
+              <>
+                <span className="text-[10px] font-mono text-slate-400">
+                  Kurs (S):&nbsp;
+                  <span className="text-slate-100 font-black tabular-nums">
+                    {S.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €
+                  </span>
+                  <span className={`ml-1.5 text-[8px] px-1.5 py-0.5 rounded font-black uppercase tracking-wide ${
+                    priceSource === 'api'
+                      ? 'bg-emerald-900/60 text-emerald-400'
+                      : 'bg-slate-800 text-slate-500'
+                  }`}>
+                    {priceSource === 'api' ? 'Live' : 'Manuell'}
+                  </span>
+                </span>
+                <span className="text-[10px] font-mono text-slate-400">
+                  Impl. Vola (σ):&nbsp;
+                  <span className="text-slate-100 font-black tabular-nums">{sigma.toFixed(1)} %</span>
+                  <span className={`ml-1.5 text-[8px] px-1.5 py-0.5 rounded font-black uppercase tracking-wide ${
+                    ivSource === 'options'
+                      ? 'bg-sky-900/60 text-sky-400'
+                      : ivSource === 'estimated'
+                      ? 'bg-amber-900/60 text-amber-400'
+                      : 'bg-slate-800 text-slate-500'
+                  }`}>
+                    {ivSource === 'options' ? 'Optionsmarkt' : ivSource === 'estimated' ? 'Schätzung' : 'Manuell'}
+                  </span>
+                </span>
+              </>
+            )}
+          </div>
+        )}
+
         {/* Zweite Zeile: Quick-Szenario-Buttons + Ergebnis-Badge */}
         <div className="flex flex-wrap items-center gap-2 pt-3 mt-4 border-t border-slate-800">
           <span className="text-[9px] font-black uppercase tracking-widest text-slate-500 mr-1">Szenarien:</span>
@@ -562,14 +638,16 @@ export default function OptionsTracker() {
         <div className="bg-slate-900 rounded-[28px] p-6">
           <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-5">Parameter</p>
 
-          <ParamSlider label="Kurs (S)"              value={S}     min={1}   max={Math.max(500, Math.ceil(S / 50) * 100)}  step={S > 100 ? 1 : 0.5}  unit="€"  onChange={setS}     />
+          <ParamSlider label="Kurs (S)"              value={S}     min={1}   max={Math.max(500, Math.ceil(S / 50) * 100)}  step={S > 100 ? 1 : 0.5}  unit="€"  onChange={v => { setS(v); setPriceSource('manual'); }}     />
           <ParamSlider label="Basispreis (K)"         value={K}     min={1}   max={Math.max(500, Math.ceil(S / 50) * 100)}  step={S > 100 ? 1 : 0.5}  unit="€"  onChange={setK}     />
           <ParamSlider label="Restlaufzeit (T)"       value={T}     min={1}   max={730}  step={1}    unit="Tage" onChange={setT}   />
           <ParamSlider label="Impl. Volatilität (σ)"  value={sigma} min={1}   max={150}  step={0.5}  unit="%"
-            onChange={v => { setSigma(v); setIvEstimated(false); }} />
-          {ivEstimated && (
-            <p className="text-[9px] text-amber-400 font-mono -mt-4 mb-5">
-              ↑ Sektorbasierte Schätzung – manuell anpassbar
+            onChange={v => { setSigma(v); setIvSource('manual'); }} />
+          {ivSource !== 'manual' && (
+            <p className={`text-[9px] font-mono -mt-4 mb-5 ${ivSource === 'options' ? 'text-sky-400' : 'text-amber-400'}`}>
+              {ivSource === 'options'
+                ? '↑ Optionsmarkt (Yahoo Finance) – manuell anpassbar'
+                : '↑ Sektorbasierte Schätzung – manuell anpassbar'}
             </p>
           )}
           <ParamSlider label="Zinssatz (r)"           value={r}     min={0}   max={10}   step={0.1}  unit="%"  onChange={setR}     />

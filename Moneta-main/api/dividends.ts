@@ -90,6 +90,8 @@ export default async function handler(req: any, res: any): Promise<void> {
     .map(s => s.split(':')[0].trim().toUpperCase())
     .filter(Boolean);
 
+  const force = req.query.force === '1' || req.query.force === 'true';
+
   const admin = getSupabaseAdmin();
 
   // ── 1. Lade dividend_cache + scan_log für alle Symbole ────────────────────
@@ -141,13 +143,18 @@ export default async function handler(req: any, res: any): Promise<void> {
   }
 
   // ── 4. Stale-Symbole identifizieren ───────────────────────────────────────
-  const staleSymbols = symbols.filter(s => {
-    const scanTime = scanMap.get(s);
-    if (!scanTime) return true; // noch nie gescannt
-    const isNoData = cacheMap.get(s)?.no_data === true;
-    const ttl = isNoData ? NODATA_TTL_MS : CACHE_TTL_MS;
-    return Date.now() - scanTime.getTime() > ttl;
-  });
+  const staleSymbols = force
+    ? symbols.slice(0, 1)  // force=1: erstes Symbol immer neu scannen
+    : symbols.filter(s => {
+        const scanTime = scanMap.get(s);
+        if (!scanTime) return true; // noch nie gescannt
+        const isNoData = cacheMap.get(s)?.no_data === true;
+        const ttl = isNoData ? NODATA_TTL_MS : CACHE_TTL_MS;
+        return Date.now() - scanTime.getTime() > ttl;
+      });
+
+  // Bei force=1: alten Cache-Eintrag ignorieren → frische Daten zurückgeben
+  if (force && symbols.length > 0) cachedMap.delete(symbols[0]);
 
   // ── 5. Genau EIN stale Symbol pro Request scannen ─────────────────────────
   const scannedSymbols: string[] = [];

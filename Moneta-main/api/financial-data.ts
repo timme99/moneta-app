@@ -39,7 +39,12 @@ export default async function handler(req: any, res: any): Promise<void> {
     return res.status(405).json({ error: 'Nur GET erlaubt.' });
   }
 
-  const rawInput = ((req.query.q as string) ?? '').trim();
+  // ?q= ist primär; ?ticker= und ?symbol= werden als Alias akzeptiert
+  const rawInput = (
+    (req.query.q as string) ?? (req.query.ticker as string) ?? (req.query.symbol as string) ?? ''
+  ).trim();
+
+  const fetchIV = req.query.iv === '1'; // optional: ATM Implied Volatility mitholen
 
   if (!rawInput) {
     return res.status(400).json({ error: 'Parameter "q" fehlt (z. B. ?q=Mercedes oder ?q=SAP.DE).' });
@@ -96,13 +101,20 @@ export default async function handler(req: any, res: any): Promise<void> {
       const ageMs = Date.now() - new Date(cached.last_updated).getTime();
       if (ageMs < CACHE_TTL_MINUTES * 60 * 1000) {
         const result: FinancialDataResult = buildResult(tickerEntry, cached.price, cached.last_updated, true);
-        return res.status(200).json(result);
+        const iv = fetchIV ? await fetchOptionsIV(tickerEntry.symbol) : {};
+        return res.status(200).json({ ...result, ...iv });
       }
     }
 
-    // ── 4. API-PHASE (Alpha Vantage) ──────────────────────────────────────────
+    // ── 4. API-PHASE (Alpha Vantage) + optional IV – parallel ────────────────
 
-    const quote = await fetchFromAlphaVantage(tickerEntry.symbol);
+    const [quoteResult, ivResult] = await Promise.allSettled([
+      fetchFromAlphaVantage(tickerEntry.symbol),
+      fetchIV ? fetchOptionsIV(tickerEntry.symbol) : Promise.resolve({}),
+    ]);
+
+    if (quoteResult.status === 'rejected') throw quoteResult.reason;
+    const quote = quoteResult.value;
 
     // ── 5. CACHE UPDATE ───────────────────────────────────────────────────────
 
@@ -114,6 +126,7 @@ export default async function handler(req: any, res: any): Promise<void> {
         { onConflict: 'ticker_id' }
       );
 
+    const iv = ivResult.status === 'fulfilled' ? ivResult.value : {};
     const result: FinancialDataResult = {
       ...buildResult(tickerEntry, quote.price, nowIso, false),
       change       : quote.change,
@@ -122,7 +135,7 @@ export default async function handler(req: any, res: any): Promise<void> {
       currency     : quote.currency,
     };
 
-    return res.status(200).json(result);
+    return res.status(200).json({ ...result, ...iv });
 
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Unbekannter Fehler';
@@ -355,4 +368,43 @@ function buildResult(
     fromCache,
     lastUpdated,
   };
+}
+
+// ── Implied Volatility (ATM) via Yahoo Finance Options-Chain ──────────────────
+
+const YF_OPT_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+              + '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Accept': 'application/json, text/plain, */*',
+};
+
+/** Holt ATM Implied Volatility aus Yahoo Finance Options-Chain.
+ *  Gibt { atmIV: 0, ivSource: 'none' } zurück wenn kein Optionsmarkt vorhanden. */
+async function fetchOptionsIV(symbol: string): Promise<{ atmIV: number; ivSource: string }> {
+  try {
+    const url = `https://query2.finance.yahoo.com/v7/finance/options/${encodeURIComponent(symbol)}`;
+    const resp = await fetch(url, {
+      headers: YF_OPT_HEADERS,
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!resp.ok) return { atmIV: 0, ivSource: 'none' };
+
+    const data = await resp.json();
+    const result = data?.optionChain?.result?.[0];
+    if (!result) return { atmIV: 0, ivSource: 'none' };
+
+    const currentPrice: number = result.quote?.regularMarketPrice ?? 0;
+    const calls: any[]         = result.options?.[0]?.calls ?? [];
+    if (calls.length === 0 || currentPrice <= 0) return { atmIV: 0, ivSource: 'none' };
+
+    const atmCall = calls.reduce((best: any, c: any) =>
+      Math.abs(c.strike - currentPrice) < Math.abs(best.strike - currentPrice) ? c : best,
+    );
+    const rawIV: number = atmCall?.impliedVolatility ?? 0;
+    if (rawIV <= 0) return { atmIV: 0, ivSource: 'none' };
+
+    return { atmIV: Math.round(rawIV * 100 * 10) / 10, ivSource: 'options' };
+  } catch {
+    return { atmIV: 0, ivSource: 'none' };
+  }
 }
