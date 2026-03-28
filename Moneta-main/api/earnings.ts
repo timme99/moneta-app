@@ -1,14 +1,15 @@
 /**
  * GET /api/earnings?symbols=AAPL,SAP.DE
  *
- * Cache-First Earnings-Kalender via Supabase stock_events-Tabelle.
+ * Cache-First Earnings-Kalender via Supabase earnings_cache + scan_log.
  *
  * Ablauf:
- *  1. Lade alle gecachten Einträge aus stock_events für die übergebenen Symbole.
+ *  1. Lade alle gecachten Einträge aus earnings_cache für die übergebenen Symbole.
  *  2. Identifiziere das erste Symbol, das noch nie (oder vor >30 Tagen) gescannt wurde.
- *  3. Rufe Gemini genau für dieses EINE Symbol auf (< 8 s, weit unter Vercel-Limit).
- *  4. Schreibe neue Termine sofort per upsert in stock_events.
- *  5. Gib gecachte + neue zukünftige Termine zurück.
+ *  3. Rufe Yahoo Finance calendarEvents (0 Tokens!) für dieses EINE Symbol ab.
+ *  4. Fallback: Gemini (nur wenn Yahoo Finance kein Ergebnis liefert).
+ *  5. Schreibe neue Termine per upsert in earnings_cache, aktualisiere scan_log.
+ *  6. Gib gecachte + neue zukünftige Termine zurück.
  *
  *  Beim nächsten Seitenaufruf wird das nächste fehlende Symbol gescannt.
  *  Die Datenbank "füllt sich" so selbst – ohne jemals ein Timeout zu riskieren.
@@ -20,8 +21,15 @@ import { createClientWithToken, getSupabaseAdmin } from '../lib/supabaseClient.j
 
 const GEMINI_MODEL    = 'gemini-2.5-flash';
 const CACHE_TTL_MS    = 30 * 24 * 60 * 60 * 1000; // 30 Tage
-const SENTINEL_DATE   = '1970-01-01';               // Pseudo-Datum für Scan-Marker
-const SCAN_TIMEOUT_MS = 8_000;                      // 8 s AbortController-Timeout
+const YF_TIMEOUT_MS   = 8_000;
+const SCAN_TIMEOUT_MS = 8_000;
+
+const YF_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+              + '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Accept': 'application/json, text/plain, */*',
+  'Accept-Language': 'en-US,en;q=0.9',
+};
 
 function stripJsonFences(text: string): string {
   const m = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
@@ -64,102 +72,119 @@ export default async function handler(req: any, res: any): Promise<void> {
   const today = new Date().toISOString().split('T')[0];
   const admin = getSupabaseAdmin();
 
-  // ── 1. Lade alle vorhandenen Zeilen für diese Symbole ────────────────────────
-  const { data: allRows, error: dbErr } = await (admin as any)
-    .from('stock_events')
-    .select('symbol, event_type, event_date, quarter, details, last_updated')
-    .in('symbol', symbols);
+  // ── 1. Lade earnings_cache + scan_log für alle Symbole ────────────────────
+  const [{ data: cacheRows, error: cacheErr }, { data: scanRows, error: scanErr }] =
+    await Promise.all([
+      (admin as any).from('earnings_cache')
+        .select('symbol, event_date, quarter, company, eps_estimate, revenue_estimate, time_of_day')
+        .in('symbol', symbols)
+        .gte('event_date', today),
+      (admin as any).from('scan_log')
+        .select('symbol, scanned_at')
+        .in('symbol', symbols)
+        .eq('type', 'earnings'),
+    ]);
 
-  if (dbErr) {
-    console.error('[earnings] DB-Fehler beim Lesen:', dbErr.message);
+  if (cacheErr) {
+    console.error('[earnings] earnings_cache Fehler:', cacheErr.message);
     return res.status(500).json({ error: 'Datenbankfehler.' });
   }
 
-  const rows: any[] = allRows ?? [];
+  const rows: any[] = cacheRows ?? [];
 
-  // ── 2. Scan-Zeitstempel pro Symbol (aus '_scanned'-Sentinel-Zeilen) ──────────
-  const scanTimes = new Map<string, number>();
-  for (const r of rows) {
-    if (r.event_type === '_scanned') {
-      const t = new Date(r.last_updated).getTime();
-      if (t > (scanTimes.get(r.symbol) ?? 0)) {
-        scanTimes.set(r.symbol, t);
-      }
-    }
+  // ── 2. Scan-Zeitstempel pro Symbol aus scan_log ──────────────────────────
+  const scanMap = new Map<string, number>();
+  for (const r of (scanRows ?? [])) {
+    scanMap.set(r.symbol, new Date(r.scanned_at).getTime());
   }
 
   // Symbole, die noch nie oder vor > 30 Tagen gescannt wurden
   const staleSymbols = symbols.filter(s => {
-    const last = scanTimes.get(s);
+    const last = scanMap.get(s);
     return !last || Date.now() - last > CACHE_TTL_MS;
   });
 
-  // ── 3. Genau EIN Symbol per Gemini-Aufruf scannen ───────────────────────────
+  // ── 3. Genau EIN Symbol scannen (Yahoo Finance → Gemini Fallback) ─────────
   let scannedSymbol: string | null = null;
 
   if (staleSymbols.length > 0) {
     const sym = staleSymbols[0];
     scannedSymbol = sym;
 
+    let newEvents: any[] = [];
+    let source = 'gemini';
+
+    // Stufe 1: Yahoo Finance calendarEvents (0 Tokens)
     try {
-      const newEvents = await scanSingleStock(sym, today);
-      console.log(`[earnings] ${sym}: ${newEvents.length} neue Termine gefunden`);
-
-      for (const evt of newEvents) {
-        // Nur zukünftige Termine aufnehmen
-        if (!evt.date || evt.date <= today) continue;
-
-        await (admin
-          .from('stock_events')
-          .upsert({
-            symbol:       sym,
-            event_type:   'earnings',
-            event_date:   evt.date,
-            quarter:      evt.quarter ?? null,
-            details: {
-              company:         evt.company ?? sym,
-              epsEstimate:     evt.epsEstimate ?? '',
-              revenueEstimate: evt.revenueEstimate ?? '',
-              timeOfDay:       evt.timeOfDay ?? 'unbekannt',
-            },
-            last_updated: new Date().toISOString(),
-          } as any, { onConflict: 'symbol,event_type,event_date' }) as any);
-
-        // Direkt in rows aufnehmen, damit der Aufruf das sofort zurückgibt
-        rows.push({
-          symbol:     sym,
-          event_type: 'earnings',
-          event_date: evt.date,
-          quarter:    evt.quarter ?? null,
-          details: {
-            company:         evt.company ?? sym,
-            epsEstimate:     evt.epsEstimate ?? '',
-            revenueEstimate: evt.revenueEstimate ?? '',
-            timeOfDay:       evt.timeOfDay ?? 'unbekannt',
-          },
-        });
+      newEvents = await fetchEarningsViaYahooFinance(sym, today);
+      if (newEvents.length > 0) {
+        source = 'yahoo_finance';
+        console.log(`[earnings] ${sym}: Yahoo Finance OK (${newEvents.length} Termine)`);
+      } else {
+        console.log(`[earnings] ${sym}: Yahoo Finance – keine Termine, versuche Gemini`);
       }
-    } catch (scanErr: any) {
-      console.error(`[earnings] Scan für ${sym} fehlgeschlagen:`, scanErr?.message);
-      // Fehler beim Scan: Sentinel trotzdem setzen, damit nicht bei jedem Request neu versucht wird
+    } catch (e: any) {
+      console.warn(`[earnings] ${sym}: Yahoo Finance fehlgeschlagen (${e?.message}) → Gemini`);
     }
 
-    // Sentinel immer aktualisieren (markiert den Scan-Zeitpunkt)
-    await (admin
-      .from('stock_events')
-      .upsert({
-        symbol:       sym,
-        event_type:   '_scanned',
-        event_date:   SENTINEL_DATE,
-        details:      {},
-        last_updated: new Date().toISOString(),
-      } as any, { onConflict: 'symbol,event_type,event_date' }) as any);
+    // Stufe 2: Gemini (Fallback wenn YF kein Ergebnis)
+    if (newEvents.length === 0) {
+      try {
+        newEvents = await fetchEarningsViaGemini(sym, today);
+        console.log(`[earnings] ${sym}: Gemini OK (${newEvents.length} Termine)`);
+      } catch (scanErr: any) {
+        console.error(`[earnings] ${sym}: Gemini fehlgeschlagen:`, scanErr?.message);
+      }
+    }
+
+    // Alte vergangene Termine für dieses Symbol aufräumen
+    await (admin as any).from('earnings_cache')
+      .delete()
+      .eq('symbol', sym)
+      .lt('event_date', today);
+
+    // Neue zukünftige Termine einfügen
+    const now = new Date().toISOString();
+    for (const evt of newEvents) {
+      if (!evt.date || evt.date <= today) continue;
+
+      await (admin as any).from('earnings_cache').upsert(
+        [{
+          symbol:          sym,
+          event_date:      evt.date,
+          quarter:         evt.quarter ?? null,
+          company:         evt.company ?? sym,
+          eps_estimate:    evt.epsEstimate ?? '',
+          revenue_estimate: evt.revenueEstimate ?? '',
+          time_of_day:     evt.timeOfDay ?? 'unbekannt',
+          source,
+          last_updated:    now,
+        }],
+        { onConflict: 'symbol,event_date' },
+      );
+
+      rows.push({
+        symbol:          sym,
+        event_date:      evt.date,
+        quarter:         evt.quarter ?? null,
+        company:         evt.company ?? sym,
+        eps_estimate:    evt.epsEstimate ?? '',
+        revenue_estimate: evt.revenueEstimate ?? '',
+        time_of_day:     evt.timeOfDay ?? 'unbekannt',
+      });
+    }
+
+    // Scan-Zeitstempel aktualisieren
+    await (admin as any).from('scan_log').upsert(
+      [{ symbol: sym, type: 'earnings', scanned_at: now }],
+      { onConflict: 'symbol,type' },
+    );
   }
 
   // ── 4. Antwort: nur zukünftige echte Termine, dedupliziert, sortiert ──────────
   const seen = new Set<string>();
   const events = rows
-    .filter(r => r.event_type === 'earnings' && r.event_date >= today)
+    .filter(r => r.event_date >= today)
     .filter(r => {
       const key = `${r.symbol}::${r.event_date}`;
       if (seen.has(key)) return false;
@@ -168,12 +193,12 @@ export default async function handler(req: any, res: any): Promise<void> {
     })
     .map(r => ({
       ticker:          r.symbol,
-      company:         r.details?.company ?? r.symbol,
+      company:         r.company ?? r.symbol,
       date:            r.event_date,
-      quarter:         r.quarter ?? r.details?.quarter ?? '',
-      epsEstimate:     r.details?.epsEstimate ?? '',
-      revenueEstimate: r.details?.revenueEstimate ?? '',
-      timeOfDay:       r.details?.timeOfDay ?? 'unbekannt',
+      quarter:         r.quarter ?? '',
+      epsEstimate:     r.eps_estimate ?? '',
+      revenueEstimate: r.revenue_estimate ?? '',
+      timeOfDay:       r.time_of_day ?? 'unbekannt',
     }))
     .sort((a, b) => a.date.localeCompare(b.date));
 
@@ -188,9 +213,57 @@ export default async function handler(req: any, res: any): Promise<void> {
   });
 }
 
-// ── Gemini-Scan für genau ein Symbol ─────────────────────────────────────────
+// ── Yahoo Finance calendarEvents (0 Tokens, echte Daten) ─────────────────────
 
-async function scanSingleStock(symbol: string, today: string): Promise<any[]> {
+async function fetchEarningsViaYahooFinance(symbol: string, today: string): Promise<any[]> {
+  const url = `https://query2.finance.yahoo.com/v10/finance/quoteSummary/`
+            + `${encodeURIComponent(symbol)}?modules=calendarEvents`;
+
+  const resp = await fetch(url, {
+    headers: YF_HEADERS,
+    signal: AbortSignal.timeout(YF_TIMEOUT_MS),
+  });
+  if (!resp.ok) throw new Error(`Yahoo Finance HTTP ${resp.status}`);
+
+  const data = await resp.json();
+  const error = data?.quoteSummary?.error;
+  if (error) throw new Error(`Yahoo Finance Fehler: ${error.description ?? error.code}`);
+
+  const ce = data?.quoteSummary?.result?.[0]?.calendarEvents?.earnings;
+  if (!ce) return [];
+
+  // earningsDate ist ein Array (Bandbreite); erstes Element = wahrscheinlichstes Datum
+  const dates: string[] = (ce.earningsDate ?? [])
+    .map((d: any) => d.fmt as string)
+    .filter((d: string) => d && d > today);
+
+  if (dates.length === 0) return [];
+
+  // timeOfDay mapping
+  const callTime = ce.earningsCallTime ?? '';
+  let timeOfDay = 'unbekannt';
+  if (callTime === 'afterHours' || callTime === 'After Market Close') {
+    timeOfDay = 'nach Marktschluss';
+  } else if (callTime === 'beforeHours' || callTime === 'Before Market Open') {
+    timeOfDay = 'vor Marktöffnung';
+  }
+
+  const epsEstimate     = ce.earningsAverage?.fmt  ?? '';
+  const revenueEstimate = ce.revenueAverage?.fmt   ?? '';
+
+  return dates.map((date, i) => ({
+    date,
+    quarter:         '',   // Yahoo Finance liefert kein Quarter-Label
+    company:         symbol,
+    epsEstimate:     i === 0 ? epsEstimate     : '',
+    revenueEstimate: i === 0 ? revenueEstimate : '',
+    timeOfDay,
+  }));
+}
+
+// ── Gemini-Scan für genau ein Symbol (Fallback) ───────────────────────────────
+
+async function fetchEarningsViaGemini(symbol: string, today: string): Promise<any[]> {
   const geminiKey = process.env.GEMINI_API_KEY;
   if (!geminiKey) throw new Error('GEMINI_API_KEY nicht konfiguriert.');
 
