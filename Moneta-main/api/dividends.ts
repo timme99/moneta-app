@@ -1,17 +1,17 @@
 /**
  * GET /api/dividends?symbols=AAPL,SAP.DE
  *
- * Cache-First Dividenden-Daten via Supabase stock_events.
+ * Cache-First Dividenden-Daten via Supabase dividend_cache + scan_log.
  *
  * Ablauf:
- *  1. Lade ALLE angefragten Symbole auf einmal aus stock_events (eine DB-Query).
+ *  1. Lade ALLE angefragten Symbole auf einmal aus dividend_cache + scan_log.
  *  2. Trenne in "fresh" (innerhalb TTL) und "stale" (fehlt oder TTL abgelaufen).
  *  3. Fresh-Daten werden SOFORT im Response geliefert – kein API-Call.
  *  4. Stale: genau EIN Symbol pro Request scannen (Auto-Scan-Loop im Frontend):
  *       Stufe 1 – Yahoo Finance   (global, kein Key, US + DE + alle Märkte)
  *       Stufe 2 – Alpha Vantage  (US-Fallback, höhere Datenqualität)
  *       Stufe 3 – Gemini         (letzter Ausweg für unbekannte Symbole)
- *  5. Ergebnis in stock_events persistieren (isEstimated=false wenn echte Quelle).
+ *  5. Ergebnis in dividend_cache + scan_log persistieren.
  *  6. Response enthält fresh + neu gescannte Daten sowie Cache-Statistik.
  *     stale > 0 → Frontend-Loop ruft nach 2 s erneut auf, bis alles gescannt.
  *
@@ -20,15 +20,12 @@
 
 import { createClientWithToken, getSupabaseAdmin } from '../lib/supabaseClient.js';
 
-const GEMINI_MODEL        = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
-const AV_BASE_URL         = 'https://www.alphavantage.co/query';
-const DIVIDEND_EVENT_TYPE = 'dividend_info';
-const DIV_SCAN_SENTINEL   = '_div_scanned';
-const SENTINEL_DATE       = '1970-01-01';
-const CACHE_TTL_MS        = 30 * 24 * 60 * 60 * 1000; // 30 Tage (bekannte Dividende)
-const NODATA_TTL_MS       = 7  * 24 * 60 * 60 * 1000; // 7 Tage  (noData → retry)
-const YF_TIMEOUT_MS       = 8_000;
-const SCAN_TIMEOUT_MS     = 25_000;
+const GEMINI_MODEL    = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
+const AV_BASE_URL     = 'https://www.alphavantage.co/query';
+const CACHE_TTL_MS    = 30 * 24 * 60 * 60 * 1000; // 30 Tage (bekannte Dividende)
+const NODATA_TTL_MS   = 7  * 24 * 60 * 60 * 1000; // 7 Tage  (noData → retry)
+const YF_TIMEOUT_MS   = 8_000;
+const SCAN_TIMEOUT_MS = 25_000;
 
 export interface DividendInfo {
   symbol:           string;
@@ -78,7 +75,6 @@ export default async function handler(req: any, res: any): Promise<void> {
   if (!rawSymbols) return res.status(400).json({ error: 'Parameter "symbols" fehlt.' });
 
   // Format: "AAPL,MBG.DE:Mercedes-Benz Group,DHL.DE:Deutsche Post"
-  // Firmennamen-Map aufbauen (für Gemini-Fallback bei unbekannten Symbolen)
   const nameMap = new Map<string, string>();
   for (const entry of rawSymbols.split(',')) {
     const colonIdx = entry.indexOf(':');
@@ -96,91 +92,64 @@ export default async function handler(req: any, res: any): Promise<void> {
 
   const admin = getSupabaseAdmin();
 
-  // ── 1. ALLE vorhandenen Einträge für diese Symbole in einer Query laden ────
-  const { data: allRows, error: dbErr } = await (admin as any)
-    .from('stock_events')
-    .select('symbol, event_type, event_date, details, last_updated')
-    .in('symbol', symbols)
-    .in('event_type', [DIVIDEND_EVENT_TYPE, DIV_SCAN_SENTINEL]);
+  // ── 1. Lade dividend_cache + scan_log für alle Symbole ────────────────────
+  const [{ data: cacheRows, error: cacheErr }, { data: scanRows, error: scanErr }] =
+    await Promise.all([
+      (admin as any).from('dividend_cache')
+        .select('symbol, dividend_per_share, ex_dividend_date, payment_date, dividend_yield, no_data, source, last_updated')
+        .in('symbol', symbols),
+      (admin as any).from('scan_log')
+        .select('symbol, scanned_at')
+        .in('symbol', symbols)
+        .eq('type', 'dividend'),
+    ]);
 
-  if (dbErr) {
-    console.error('[dividends] DB-Fehler:', dbErr.message);
+  if (cacheErr) {
+    console.error('[dividends] dividend_cache Fehler:', cacheErr.message);
+    return res.status(500).json({ error: 'Datenbankfehler.' });
+  }
+  if (scanErr) {
+    console.error('[dividends] scan_log Fehler:', scanErr.message);
     return res.status(500).json({ error: 'Datenbankfehler.' });
   }
 
-  const rows: any[] = allRows ?? [];
-
-  // ── 2. Scan-Zeitstempel + noData-Flag pro Symbol aus Sentinels ───────────
-  const scanTimes = new Map<string, number>();
-  const noDataMap = new Map<string, boolean>();
-  for (const r of rows) {
-    if (r.event_type === DIV_SCAN_SENTINEL) {
-      const t = new Date(r.last_updated).getTime();
-      if (t > (scanTimes.get(r.symbol) ?? 0)) {
-        scanTimes.set(r.symbol, t);
-        noDataMap.set(r.symbol, r.details?.noData === true);
-      }
-    }
+  // ── 2. Maps aufbauen ──────────────────────────────────────────────────────
+  const cacheMap = new Map<string, any>();
+  for (const r of (cacheRows ?? [])) {
+    cacheMap.set(r.symbol, r);
   }
 
-  // ── 3. Gecachte Dividenden aus DB zusammenstellen (sofort nutzbar) ─────────
+  const scanMap = new Map<string, Date>();
+  for (const r of (scanRows ?? [])) {
+    scanMap.set(r.symbol, new Date(r.scanned_at));
+  }
+
+  // ── 3. DividendInfo aus dividend_cache zusammenbauen ─────────────────────
   const cachedMap = new Map<string, DividendInfo>();
-  for (const r of rows) {
-    if (r.event_type === DIVIDEND_EVENT_TYPE) {
-      cachedMap.set(r.symbol, {
-        symbol: r.symbol,
-        ...(r.details as object),
-        isFromDb: true,
-      } as DividendInfo);
-    }
-  }
-
-  // ── 3b. noDataMap aus dividend_info ergänzen ──────────────────────────────
-  // Sentinel-Details können {} sein (alter Code schrieb kein noData-Flag) →
-  // Fallback auf dividend_info.noData damit 7-Tage-TTL korrekt greift.
-  for (const [sym, info] of cachedMap) {
-    if (info.noData && !noDataMap.get(sym)) {
-      noDataMap.set(sym, true);
-    }
+  for (const r of (cacheRows ?? [])) {
+    cachedMap.set(r.symbol, {
+      symbol:           r.symbol,
+      dividendPerShare: Number(r.dividend_per_share) || 0,
+      exDividendDate:   r.ex_dividend_date ?? '',
+      dividendDate:     r.payment_date     ?? '',
+      dividendYield:    Number(r.dividend_yield) || 0,
+      price:            0,
+      noData:           r.no_data === true,
+      isEstimated:      r.source === 'gemini',
+      isFromDb:         true,
+    });
   }
 
   // ── 4. Stale-Symbole identifizieren ───────────────────────────────────────
   const staleSymbols = symbols.filter(s => {
-    const last = scanTimes.get(s);
-    if (!last) {
-      // Kein Sentinel – aber valide Dividenden-Daten in DB? → nicht stale
-      const existing = cachedMap.get(s);
-      if (existing && !existing.noData && existing.dividendPerShare > 0) return false;
-      return true; // noch nie gescannt
-    }
-    const ttl = noDataMap.get(s) ? NODATA_TTL_MS : CACHE_TTL_MS;
-    return Date.now() - last > ttl;
+    const scanTime = scanMap.get(s);
+    if (!scanTime) return true; // noch nie gescannt
+    const isNoData = cacheMap.get(s)?.no_data === true;
+    const ttl = isNoData ? NODATA_TTL_MS : CACHE_TTL_MS;
+    return Date.now() - scanTime.getTime() > ttl;
   });
-
-  // Sentinel-Backfill: Symbole mit validen Daten aber fehlendem Sentinel absichern.
-  const missSentinels = symbols.filter(s => {
-    const existing = cachedMap.get(s);
-    return existing && !existing.noData && existing.dividendPerShare > 0 && !scanTimes.has(s);
-  });
-  if (missSentinels.length > 0) {
-    const nowSentinel = new Date().toISOString();
-    (admin as any).from('stock_events').upsert(
-      missSentinels.map(sym => ({
-        symbol: sym, event_type: DIV_SCAN_SENTINEL, event_date: SENTINEL_DATE,
-        details: { noData: false }, last_updated: nowSentinel,
-      })),
-      { onConflict: 'symbol,event_type,event_date' },
-    ).then(() =>
-      console.log(`[dividends] Sentinel-Backfill für: ${missSentinels.join(', ')}`),
-    ).catch((e: any) =>
-      console.warn('[dividends] Sentinel-Backfill fehlgeschlagen:', e?.message),
-    );
-  }
 
   // ── 5. Genau EIN stale Symbol pro Request scannen ─────────────────────────
-  // Reihenfolge: Yahoo Finance → Alpha Vantage → Gemini
-  // Der Auto-Scan-Loop im Frontend (loadDividends, 2 s Pause) iteriert
-  // durch alle stale Symbole bis stale === 0.
   const scannedSymbols: string[] = [];
 
   if (staleSymbols.length > 0) {
@@ -189,11 +158,13 @@ export default async function handler(req: any, res: any): Promise<void> {
     const geminiKey = process.env.GEMINI_API_KEY;
 
     let result: DividendInfo | null = null;
+    let source: string = 'gemini';
 
     // Stufe 1: Yahoo Finance (global, kein Key nötig)
     try {
       result = await fetchDividendViaYahooFinance(symToScan);
       result.isFromDb = false;
+      source = 'yahoo_finance';
       console.log(`[dividends] ${symToScan}: Yahoo Finance OK (dps=${result.dividendPerShare})`);
     } catch (e: any) {
       console.warn(`[dividends] ${symToScan}: Yahoo Finance fehlgeschlagen (${e?.message}) → AV`);
@@ -204,6 +175,7 @@ export default async function handler(req: any, res: any): Promise<void> {
       try {
         result = await fetchDividendViaAlphaVantage(symToScan, avKey);
         result.isFromDb = false;
+        source = 'alpha_vantage';
         console.log(`[dividends] ${symToScan}: Alpha Vantage OK (dps=${result.dividendPerShare})`);
       } catch (e: any) {
         console.warn(`[dividends] ${symToScan}: Alpha Vantage fehlgeschlagen (${e?.message}) → Gemini`);
@@ -217,6 +189,7 @@ export default async function handler(req: any, res: any): Promise<void> {
           const gemRes = await fetchDividendViaGemini(symToScan, geminiKey, nameMap);
           gemRes.isFromDb = false;
           result = gemRes;
+          source = 'gemini';
           console.log(`[dividends] ${symToScan}: Gemini OK (dps=${result.dividendPerShare})`);
         } catch (e: any) {
           console.error(`[dividends] ${symToScan}: Gemini fehlgeschlagen (${e?.message})`);
@@ -237,19 +210,25 @@ export default async function handler(req: any, res: any): Promise<void> {
     cachedMap.set(symToScan, result);
     scannedSymbols.push(symToScan);
 
-    // Ergebnis in stock_events persistieren
+    // In dividend_cache + scan_log persistieren
     const now = new Date().toISOString();
-    const { symbol: _s, isFromDb: _f, ...details } = result;
     await Promise.all([
-      (admin as any).from('stock_events').upsert(
-        [{ symbol: symToScan, event_type: DIVIDEND_EVENT_TYPE, event_date: SENTINEL_DATE,
-           quarter: null, details, last_updated: now }],
-        { onConflict: 'symbol,event_type,event_date' },
+      (admin as any).from('dividend_cache').upsert(
+        [{
+          symbol:             symToScan,
+          dividend_per_share: result.dividendPerShare,
+          ex_dividend_date:   result.exDividendDate   || null,
+          payment_date:       result.dividendDate      || null,
+          dividend_yield:     result.dividendYield,
+          no_data:            result.noData,
+          source,
+          last_updated:       now,
+        }],
+        { onConflict: 'symbol' },
       ),
-      (admin as any).from('stock_events').upsert(
-        [{ symbol: symToScan, event_type: DIV_SCAN_SENTINEL, event_date: SENTINEL_DATE,
-           details: { noData: result.noData ?? false }, last_updated: now }],
-        { onConflict: 'symbol,event_type,event_date' },
+      (admin as any).from('scan_log').upsert(
+        [{ symbol: symToScan, type: 'dividend', scanned_at: now }],
+        { onConflict: 'symbol,type' },
       ),
     ]);
   }
@@ -405,7 +384,6 @@ Regeln:
     const data = await resp.json();
     const raw  = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '{}';
 
-    // Unterstütze sowohl Objekt- als auch Array-Antwort
     let parsed: any;
     const stripped = stripJsonFences(raw);
     parsed = JSON.parse(stripped);
