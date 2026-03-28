@@ -356,7 +356,7 @@ export default function OptionsTracker() {
       } else {
         // Phase 2: /api/financial-data Fallback (Gemini → Alpha Vantage)
         try {
-          const res = await fetch(`/api/financial-data?ticker=${encodeURIComponent(q)}`);
+          const res = await fetch(`/api/financial-data?q=${encodeURIComponent(q)}`);
           if (res.ok) {
             const json = await res.json();
             if (json.ticker) {
@@ -388,30 +388,36 @@ export default function OptionsTracker() {
       }
     } catch { /* kein Auth */ }
 
-    // Kurs + IV parallel laden
-    const [priceResult, ivResult] = await Promise.allSettled([
-      fetch(`/api/financial-data?ticker=${encodeURIComponent(sym)}`).then(r => r.ok ? r.json() : null),
-      authHeader
-        ? fetch(`/api/options-data?symbol=${encodeURIComponent(sym)}`, {
-            headers: { Authorization: authHeader },
-          }).then(r => r.ok ? r.json() : null)
-        : Promise.resolve(null),
-    ]);
+    // Kurs + IV in einem einzigen API-Call (?iv=1 holt ATM-Volatilität dazu)
+    try {
+      const res = await fetch(
+        `/api/financial-data?q=${encodeURIComponent(sym)}&iv=1`,
+        authHeader ? { headers: { Authorization: authHeader } } : {},
+      );
+      if (res.ok) {
+        const data = await res.json();
 
-    // Kurs anwenden
-    if (priceResult.status === 'fulfilled' && priceResult.value?.price > 0) {
-      const price = parseFloat(Number(priceResult.value.price).toFixed(2));
-      setS(price);
-      setK(Math.round(price));
-      setPriceSource('api');
-    }
+        // Kurs anwenden
+        if (data?.price > 0) {
+          const price = parseFloat(Number(data.price).toFixed(2));
+          setS(price);
+          setK(Math.round(price));
+          setPriceSource('api');
+        }
 
-    // Impl. Vola aus Optionsmarkt oder Sektor-Schätzung
-    const ivData = ivResult.status === 'fulfilled' ? ivResult.value : null;
-    if (ivData?.atmIV > 0 && ivData.ivSource === 'options') {
-      setSigma(ivData.atmIV);
-      setIvSource('options');
-    } else {
+        // Impl. Vola aus Optionsmarkt oder Sektor-Schätzung
+        if (data?.atmIV > 0 && data?.ivSource === 'options') {
+          setSigma(data.atmIV);
+          setIvSource('options');
+        } else {
+          setSigma(estimateImpliedVol(sym, sector));
+          setIvSource('estimated');
+        }
+      } else {
+        setSigma(estimateImpliedVol(sym, sector));
+        setIvSource('estimated');
+      }
+    } catch {
       setSigma(estimateImpliedVol(sym, sector));
       setIvSource('estimated');
     }
