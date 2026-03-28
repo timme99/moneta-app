@@ -427,291 +427,359 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
   }, [events, holdingDividends, holdingNameMap]);
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-500">
+    <div className="space-y-5 animate-in fade-in duration-500">
 
-      {/* ── Header mit integrierten KPI-Karten ──────────────────────────────── */}
+      {/* ── Dividenden-Header ─────────────────────────────────────────────────── */}
       <div className="bg-gradient-to-br from-slate-900 to-emerald-900 p-5 md:p-7 rounded-[40px] text-white relative overflow-hidden shadow-2xl">
-        <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-500/10 rounded-full -mr-16 -mt-16 blur-3xl" />
+        <div className="absolute top-0 right-0 w-72 h-72 bg-emerald-500/10 rounded-full -mr-20 -mt-20 blur-3xl" />
         <div className="relative z-10">
-          <div className="flex items-center gap-2 mb-3">
-            <Calendar className="w-5 h-5 text-emerald-400" />
-            <span className="text-emerald-400 font-black text-[10px] uppercase tracking-[0.3em]">Depot-Kalender</span>
+          <div className="flex items-center gap-2 mb-2">
+            <DollarSign className="w-4 h-4 text-emerald-400" />
+            <span className="text-emerald-400 font-black text-[10px] uppercase tracking-[0.3em]">Dividenden-Übersicht</span>
+            {isDivLoading && <Loader2 className="w-3 h-3 animate-spin text-white/40 ml-1" />}
           </div>
-          <h2 className="text-2xl md:text-3xl font-black mb-4 tracking-tighter">Earnings & Dividenden</h2>
 
-          {portfolioHoldings.length > 0 && (
-            <div className="grid grid-cols-3 gap-2 md:gap-3">
-              <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-3">
-                <p className="text-[8px] font-black text-emerald-300 uppercase tracking-widest mb-1">Ex-Datum vergangen</p>
-                <p className="text-base font-black text-white tabular-nums">
+          {portfolioHoldings.length === 0 ? (
+            <p className="text-white/50 text-sm mt-2">Füge Depot-Positionen hinzu, um deine Dividenden zu sehen.</p>
+          ) : (
+            <>
+              {/* Hauptzahl: Gesamt p.a. */}
+              <div className="mb-5">
+                <p className="text-4xl md:text-5xl font-black tabular-nums tracking-tighter">
                   {isDivLoading && holdingDividends.length === 0
-                    ? <span className="opacity-40">–</span>
-                    : `${formatCurrency(receivedDividends)} €`}
+                    ? <span className="opacity-30">–</span>
+                    : formatCurrency(totalAnnualDividend)}
+                  <span className="text-xl font-medium text-white/60 ml-2">€</span>
                 </p>
-                <p className="text-[8px] text-white/40 mt-0.5">{currentYear}</p>
-              </div>
-              <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-3">
-                <p className="text-[8px] font-black text-blue-300 uppercase tracking-widest mb-1">Bevorstehend</p>
-                <p className="text-base font-black text-white tabular-nums">
-                  {isDivLoading && holdingDividends.length === 0
-                    ? <span className="opacity-40">–</span>
-                    : `${formatCurrency(expectedDividends)} €`}
-                </p>
-                <p className="text-[8px] text-white/40 mt-0.5">Rest {currentYear}</p>
-              </div>
-              <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-3">
-                <p className="text-[8px] font-black text-slate-300 uppercase tracking-widest mb-1">Gesamt p.a.</p>
-                <p className="text-base font-black text-white tabular-nums">
-                  {isDivLoading && holdingDividends.length === 0
-                    ? <span className="opacity-40">–</span>
-                    : `${formatCurrency(totalAnnualDividend)} €`}
-                </p>
-                <p className="text-[8px] text-white/40 mt-0.5">
-                  {holdingDividends.filter(h => !h.noData).length} Pos. zahlen Div.
+                <p className="text-[11px] text-white/50 mt-1 font-medium">
+                  Jährliche Dividendeneinnahmen · {holdingDividends.filter(h => !h.noData).length} von {portfolioHoldings.length} Positionen
                 </p>
               </div>
-            </div>
+
+              {/* Erhalten vs. Erwartet */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-4">
+                  <p className="text-[8px] font-black text-emerald-300 uppercase tracking-widest mb-1.5">Bereits erhalten {currentYear}</p>
+                  <p className="text-xl font-black text-white tabular-nums">
+                    {isDivLoading && holdingDividends.length === 0
+                      ? <span className="opacity-30">–</span>
+                      : `${formatCurrency(receivedDividends)} €`}
+                  </p>
+                  {holdingDividends.filter(h => h.isPaid).length > 0 && (
+                    <p className="text-[9px] text-emerald-300/70 mt-1">
+                      {holdingDividends.filter(h => h.isPaid).length} Position{holdingDividends.filter(h => h.isPaid).length !== 1 ? 'en' : ''} ex-Datum vergangen
+                    </p>
+                  )}
+                </div>
+                <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-4">
+                  <p className="text-[8px] font-black text-blue-300 uppercase tracking-widest mb-1.5">Noch erwartet {currentYear}</p>
+                  <p className="text-xl font-black text-white tabular-nums">
+                    {isDivLoading && holdingDividends.length === 0
+                      ? <span className="opacity-30">–</span>
+                      : `${formatCurrency(expectedDividends)} €`}
+                  </p>
+                  {holdingDividends.filter(h => !h.isPaid && h.exDividendDate && new Date(h.exDividendDate) > today).length > 0 && (
+                    <p className="text-[9px] text-blue-300/70 mt-1">
+                      {holdingDividends.filter(h => !h.isPaid && h.exDividendDate && new Date(h.exDividendDate) > today).length} ausstehend
+                    </p>
+                  )}
+                </div>
+              </div>
+            </>
           )}
         </div>
       </div>
 
       {/* ── Sparerpauschbetrag ──────────────────────────────────────────────── */}
       {totalAnnualDividend > 0 && (
-        <div className="bg-white border border-slate-200 rounded-[20px] p-4 shadow-sm">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <ShieldCheck className="w-4 h-4 text-emerald-600" />
-              <span className="text-[10px] font-black text-slate-900 uppercase tracking-widest">
+        <div className="bg-white border border-slate-200 rounded-[20px] px-5 py-3.5 shadow-sm flex items-center gap-4">
+          <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[10px] font-black text-slate-700 uppercase tracking-widest">
                 Sparerpauschbetrag {currentYear}
               </span>
+              <span className={`text-[10px] font-black px-2 py-0.5 rounded-lg ${
+                pauschbetragPct >= 100
+                  ? 'bg-rose-50 text-rose-600 border border-rose-100'
+                  : pauschbetragPct >= 70
+                  ? 'bg-amber-50 text-amber-600 border border-amber-100'
+                  : 'bg-emerald-50 text-emerald-600 border border-emerald-100'
+              }`}>
+                {formatCurrency(Math.min(totalAnnualDividend, SPARERPAUSCHBETRAG))} / 1.000 €
+              </span>
             </div>
-            <span className={`text-[10px] font-black px-2 py-0.5 rounded-lg ${
-              pauschbetragPct >= 100
-                ? 'bg-rose-50 text-rose-600 border border-rose-100'
-                : pauschbetragPct >= 70
-                ? 'bg-amber-50 text-amber-600 border border-amber-100'
-                : 'bg-emerald-50 text-emerald-600 border border-emerald-100'
-            }`}>
-              {formatCurrency(Math.min(totalAnnualDividend, SPARERPAUSCHBETRAG))} / 1.000 €
-            </span>
+            <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all duration-700 ${
+                  pauschbetragPct >= 100 ? 'bg-rose-400' : pauschbetragPct >= 70 ? 'bg-amber-400' : 'bg-emerald-500'
+                }`}
+                style={{ width: `${Math.min(100, pauschbetragPct)}%` }}
+              />
+            </div>
+            <p className="text-[9px] text-slate-400 mt-1">
+              {pauschbetragPct >= 100
+                ? `Pauschbetrag überschritten · +${formatCurrency(totalAnnualDividend - SPARERPAUSCHBETRAG)} € steuerpflichtig (Schätzung)`
+                : `${pauschbetragPct.toFixed(0)} % ausgeschöpft · ${formatCurrency(SPARERPAUSCHBETRAG - Math.min(totalAnnualDividend, SPARERPAUSCHBETRAG))} € verbleibend`}
+              {' '}· Keine Steuerberatung
+            </p>
           </div>
-          <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-            <div
-              className={`h-full rounded-full transition-all duration-700 ${
-                pauschbetragPct >= 100 ? 'bg-rose-400' : pauschbetragPct >= 70 ? 'bg-amber-400' : 'bg-emerald-500'
-              }`}
-              style={{ width: `${Math.min(100, pauschbetragPct)}%` }}
-            />
-          </div>
-          <p className="text-[9px] text-slate-400 mt-1.5">
-            {pauschbetragPct >= 100
-              ? `Pauschbetrag überschritten · +${formatCurrency(totalAnnualDividend - SPARERPAUSCHBETRAG)} € steuerpflichtig (Schätzung)`
-              : `${pauschbetragPct.toFixed(0)} % ausgeschöpft · ${formatCurrency(SPARERPAUSCHBETRAG - Math.min(totalAnnualDividend, SPARERPAUSCHBETRAG))} € verbleibend`}
-            {' '}· Keine Steuerberatung
-          </p>
         </div>
       )}
 
-      {/* ── Unified Timeline ─────────────────────────────────────────────────── */}
-
-      {tickers.length === 0 ? (
-        <div className="bg-white border border-slate-200 rounded-[28px] p-12 text-center shadow-sm">
-          <Calendar className="w-12 h-12 text-slate-300 mx-auto mb-4" />
-          <p className="text-slate-500 font-medium">Füge Aktien hinzu, um Earnings-Termine und Dividenden anzuzeigen.</p>
-        </div>
-      ) : (
+      {/* ── Dividenden je Position (Haupttabelle) ───────────────────────────── */}
+      {portfolioHoldings.length > 0 && (
         <div className="bg-white border border-slate-200 rounded-[24px] overflow-hidden shadow-sm">
-
-          {/* Tabellen-Header */}
           <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-[0.2em]">Anstehende Events</h3>
-              {(isLoading || isDivLoading) && (
+              <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-[0.2em]">Dividenden je Position</h3>
+              {isDivLoading && (
                 <span className="flex items-center gap-1 text-[9px] text-emerald-600">
                   <Loader2 className="w-3 h-3 animate-spin" />
-                  Wird aktualisiert…
+                  Wird geladen…
                 </span>
               )}
             </div>
             <button
-              onClick={() => { loadEarnings(); loadDividends(); loadScanStatus(); }}
-              disabled={isLoading || isDivLoading}
+              onClick={() => { loadDividends(); loadScanStatus(); }}
+              disabled={isDivLoading}
               className="flex items-center gap-1.5 text-[9px] font-black text-slate-400 hover:text-emerald-600 uppercase tracking-wide transition-colors disabled:opacity-50"
             >
-              <RefreshCcw className={`w-3 h-3 ${isLoading || isDivLoading ? 'animate-spin' : ''}`} />
-              {lastFetch
-                ? lastFetch.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
-                : 'Laden'}
+              <RefreshCcw className={`w-3 h-3 ${isDivLoading ? 'animate-spin' : ''}`} />
+              Aktualisieren
             </button>
           </div>
 
-          {/* Fehler */}
-          {(error || divError) && (
-            <div className="mx-5 my-3 bg-rose-50 border border-rose-100 p-3 rounded-xl text-rose-700 text-xs">
-              {error || divError}
-            </div>
+          {divError && (
+            <div className="mx-5 my-3 bg-rose-50 border border-rose-100 p-3 rounded-xl text-rose-700 text-xs">{divError}</div>
           )}
 
           {/* Spalten-Labels (Desktop) */}
-          <div className="hidden md:grid md:grid-cols-[80px_100px_1fr_100px] px-5 py-2 bg-slate-50/60 border-b border-slate-100 gap-3">
-            <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Typ</p>
-            <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Datum</p>
-            <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Unternehmen</p>
-            <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest text-right">Betrag p.a.</p>
+          <div className="hidden md:grid md:grid-cols-[1fr_110px_90px_100px] px-5 py-2 bg-slate-50/60 border-b border-slate-100 gap-3">
+            <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Position</p>
+            <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Ex-Datum</p>
+            <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest text-right">je Aktie</p>
+            <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest text-right">p.a. gesamt</p>
           </div>
 
-          {/* Event-Zeilen */}
-          {unifiedEntries.length === 0 && !isLoading && !isDivLoading ? (
-            <div className="px-6 py-8 text-center">
-              <p className="text-slate-400 text-sm">Noch keine Daten verfügbar.</p>
-              <p className="text-slate-300 text-xs mt-1">Klicke auf „Laden" oder warte auf den Auto-Scan.</p>
-            </div>
-          ) : (
-            <div className="divide-y divide-slate-50">
-              {unifiedEntries
-                .filter(e => e.daysFromNow >= -90)
-                .map((entry, i) => {
-                  const isSoon  = !entry.isPast && entry.daysFromNow <= 7;
-                  const isToday = entry.daysFromNow === 0;
+          <div className="divide-y divide-slate-50">
+            {isDivLoading && holdingDividends.length === 0
+              ? Array.from({ length: Math.min(portfolioHoldings.length, 5) }).map((_, i) => (
+                <div key={i} className="px-5 py-3.5 flex items-center gap-3">
+                  <div className="flex-1 h-3.5 bg-slate-100 rounded animate-pulse" />
+                  <div className="w-20 h-3.5 bg-slate-100 rounded animate-pulse" />
+                  <div className="w-16 h-3.5 bg-slate-100 rounded animate-pulse" />
+                </div>
+              ))
+              : holdingDividends.map((h, i) => {
+                const daysToEx = h.exDividendDate ? daysUntil(h.exDividendDate) : null;
+                const isSoon   = daysToEx !== null && daysToEx >= 0 && daysToEx <= 30;
+                const neverScanned = !divScanMap.has(h.symbol);
+                const isFetchingThis = fetchingDivSym === h.symbol;
+
+                if (h.noData) {
                   return (
-                    <div
-                      key={`${entry.type}-${entry.symbol}-${entry.date}-${i}`}
-                      className={`px-5 py-3 grid grid-cols-[80px_1fr] md:grid-cols-[80px_100px_1fr_100px] gap-3 items-center transition-colors ${
-                        isToday      ? 'bg-emerald-50/60' :
-                        isSoon       ? 'bg-emerald-50/20' :
-                        entry.isPast ? 'opacity-40' :
-                        'hover:bg-slate-50/60'
-                      }`}
-                    >
-                      {/* Typ-Badge */}
-                      <div>
-                        {entry.type === 'earnings' ? (
-                          <span className="inline-block text-[7px] font-black bg-blue-50 text-blue-600 border border-blue-100 px-1.5 py-0.5 rounded-lg uppercase tracking-wide">
-                            Earnings
-                          </span>
-                        ) : (
-                          <span className="inline-block text-[7px] font-black bg-amber-50 text-amber-600 border border-amber-100 px-1.5 py-0.5 rounded-lg uppercase tracking-wide">
-                            Ex-Div.
-                          </span>
-                        )}
+                    <div key={i} className="px-5 py-3 flex items-center gap-3 opacity-50 hover:opacity-70 transition-opacity">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-bold text-slate-500 truncate">{h.name}</p>
+                        <p className="text-[9px] text-slate-400 font-mono">{h.symbol} · {h.shares} Stk</p>
                       </div>
-
-                      {/* Datum (Desktop) */}
-                      <div className="hidden md:block">
-                        <p className="text-[10px] font-black text-slate-700 tabular-nums">
-                          {new Date(entry.date).toLocaleDateString('de-DE', { day: '2-digit', month: 'short', year: '2-digit' })}
-                        </p>
-                        <p className={`text-[9px] tabular-nums ${
-                          entry.isPast ? 'text-slate-300' : isSoon ? 'text-emerald-600 font-bold' : 'text-slate-400'
-                        }`}>
-                          {entry.isPast
-                            ? `vor ${Math.abs(entry.daysFromNow)}d`
-                            : isToday ? 'Heute'
-                            : `in ${entry.daysFromNow}d`}
-                        </p>
-                      </div>
-
-                      {/* Unternehmen + Details */}
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          {/* Mobile: Datum inline */}
-                          <span className="md:hidden text-[9px] text-slate-400 font-mono tabular-nums">
-                            {new Date(entry.date).toLocaleDateString('de-DE', { day: '2-digit', month: 'short' })}
-                            {' · '}
-                            {entry.isPast
-                              ? `vor ${Math.abs(entry.daysFromNow)}d`
-                              : isToday ? 'Heute'
-                              : `in ${entry.daysFromNow}d`}
-                          </span>
-                          <span className="text-[10px] font-black text-slate-700 font-mono">{entry.symbol}</span>
-                          {entry.name !== entry.symbol && (
-                            <span className="text-[10px] text-slate-500 truncate max-w-[140px]">{entry.name}</span>
-                          )}
-                          {isSoon && !entry.isPast && (
-                            <span className="text-[7px] font-black bg-emerald-600 text-white px-1 py-0.5 rounded uppercase tracking-widest shrink-0">
-                              {isToday ? 'Heute' : 'Bald'}
-                            </span>
-                          )}
-                          {entry.isEstimated && (
-                            <span className="text-[7px] font-black bg-amber-50 text-amber-500 border border-amber-200 px-1 py-0.5 rounded uppercase tracking-widest shrink-0">KI</span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                          {entry.type === 'earnings' && (
-                            <>
-                              {entry.quarter && <span className="text-[9px] text-slate-400">{entry.quarter}</span>}
-                              {entry.timeOfDay && entry.timeOfDay !== 'unbekannt' && (
-                                <span className={`text-[7px] font-black px-1 py-0.5 rounded ${timeOfDayColor(entry.timeOfDay)}`}>
-                                  {entry.timeOfDay}
-                                </span>
-                              )}
-                              {entry.epsEstimate && (
-                                <span className="text-[9px] text-slate-400">EPS: <strong>{entry.epsEstimate}</strong></span>
-                              )}
-                            </>
-                          )}
-                          {entry.type === 'ex-dividend' && entry.shares != null && (
-                            <span className="text-[9px] text-slate-400">
-                              {entry.shares} Stk · {formatCurrency(entry.dividendPerShare ?? 0)} €/Aktie
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Betrag (Dividenden, Desktop) */}
-                      <div className="hidden md:block text-right">
-                        {entry.type === 'ex-dividend' && entry.annualIncome != null && (
-                          <p className="text-sm font-black text-slate-800 tabular-nums">{formatCurrency(entry.annualIncome)} €</p>
-                        )}
-                      </div>
+                      <button
+                        onClick={() => fetchDividendForSymbol(h.symbol)}
+                        disabled={!!fetchingDivSym}
+                        className={`flex items-center gap-1 text-[8px] font-black shrink-0 px-2 py-1 rounded-lg transition-colors disabled:opacity-40 ${
+                          neverScanned ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-400 hover:bg-emerald-50 hover:text-emerald-600'
+                        }`}
+                      >
+                        {isFetchingThis ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+                        {neverScanned ? 'Abrufen' : 'Keine Div.'}
+                      </button>
                     </div>
                   );
-                })}
+                }
+
+                return (
+                  <div
+                    key={i}
+                    className={`px-5 py-3.5 grid grid-cols-[1fr_auto] md:grid-cols-[1fr_110px_90px_100px] gap-x-3 gap-y-0.5 items-center transition-colors ${
+                      isSoon && !h.isPaid ? 'bg-emerald-50/40 hover:bg-emerald-50/60' : 'hover:bg-slate-50'
+                    }`}
+                  >
+                    {/* Position */}
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-sm font-bold text-slate-800 truncate">{h.name}</span>
+                        {isSoon && !h.isPaid && (
+                          <span className="text-[7px] font-black bg-emerald-600 text-white px-1 py-0.5 rounded uppercase tracking-widest shrink-0">Bald</span>
+                        )}
+                        {h.isPaid && (
+                          <span className="text-[7px] font-black bg-slate-100 text-slate-500 px-1 py-0.5 rounded uppercase tracking-widest shrink-0">✓ Ex-Datum vorbei</span>
+                        )}
+                        {h.isEstimated && (
+                          <span className="text-[7px] font-black bg-amber-50 text-amber-500 border border-amber-200 px-1 py-0.5 rounded uppercase tracking-widest shrink-0">KI</span>
+                        )}
+                      </div>
+                      <p className="text-[9px] text-slate-400 font-mono">{h.symbol} · {h.shares} Stk</p>
+                    </div>
+
+                    {/* Ex-Datum */}
+                    <div className={`text-right md:text-left ${h.isPaid ? 'opacity-50' : ''}`}>
+                      {h.exDividendDate ? (
+                        <>
+                          <p className={`text-[10px] font-black tabular-nums ${isSoon && !h.isPaid ? 'text-emerald-700' : 'text-slate-700'}`}>
+                            {new Date(h.exDividendDate).toLocaleDateString('de-DE', { day: '2-digit', month: 'short', year: '2-digit' })}
+                          </p>
+                          <p className={`text-[9px] tabular-nums ${
+                            h.isPaid ? 'text-slate-300' : isSoon ? 'text-emerald-600 font-bold' : 'text-slate-400'
+                          }`}>
+                            {h.isPaid
+                              ? `vor ${Math.abs(daysToEx ?? 0)}d`
+                              : daysToEx === 0 ? 'Heute'
+                              : daysToEx !== null && daysToEx > 0 ? `in ${daysToEx}d`
+                              : '–'}
+                          </p>
+                        </>
+                      ) : (
+                        <p className="text-[9px] text-slate-300">Termin offen</p>
+                      )}
+                    </div>
+
+                    {/* je Aktie (Desktop) */}
+                    <div className="hidden md:block text-right">
+                      <p className="text-[10px] font-bold text-slate-700 tabular-nums">{formatCurrency(h.dividendPerShare)} €</p>
+                    </div>
+
+                    {/* p.a. gesamt */}
+                    <div className="hidden md:block text-right">
+                      <p className="text-sm font-black text-slate-900 tabular-nums">{formatCurrency(h.annualIncome)} €</p>
+                    </div>
+
+                    {/* Mobile: Betrag neben Ex-Datum */}
+                    <div className="md:hidden col-start-2 row-start-1 text-right">
+                      <p className="text-sm font-black text-slate-900 tabular-nums">{formatCurrency(h.annualIncome)} €</p>
+                    </div>
+                  </div>
+                );
+              })}
+          </div>
+
+          <div className="px-5 py-3 bg-slate-50 border-t border-slate-100 flex items-center gap-3 flex-wrap">
+            <span className="text-[8px] text-slate-400 italic">Alle Angaben ohne Gewähr · Keine Anlageberatung · Schätzungen auf Basis historischer Daten</span>
+          </div>
+        </div>
+      )}
+
+      {/* ── Earnings (sekundär) ────────────────────────────────────────────── */}
+      {tickers.length > 0 && (
+        <div className="bg-white border border-slate-200 rounded-[24px] overflow-hidden shadow-sm">
+          <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-[0.2em]">Earnings-Termine</h3>
+              <span className="text-[9px] text-slate-400 bg-slate-50 border border-slate-100 px-2 py-0.5 rounded-lg">
+                {portfolioSorted.length} Depot{watchlistSorted.length > 0 ? ` · ${watchlistSorted.length} Watchlist` : ''}
+              </span>
+              {isLoading && <Loader2 className="w-3 h-3 animate-spin text-emerald-500" />}
             </div>
+            <button
+              onClick={() => { loadEarnings(); loadScanStatus(); }}
+              disabled={isLoading}
+              className="flex items-center gap-1.5 text-[9px] font-black text-slate-400 hover:text-emerald-600 uppercase tracking-wide transition-colors disabled:opacity-50"
+            >
+              <RefreshCcw className={`w-3 h-3 ${isLoading ? 'animate-spin' : ''}`} />
+              {lastFetch ? lastFetch.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) : 'Laden'}
+            </button>
+          </div>
+
+          {error && (
+            <div className="mx-5 my-3 bg-rose-50 border border-rose-100 p-3 rounded-xl text-rose-700 text-xs">{error}</div>
           )}
 
-          {/* Ausstehende Scans */}
+          {/* Pending-Scan-Hinweis */}
           {(() => {
-            const pendingEarnings = tickers.filter(sym => !earnScanMap.has(sym) && !events.find(e => e.ticker === sym));
-            const pendingDivs = portfolioHoldings
-              .map(h => h.ticker?.symbol ?? h.symbol)
-              .filter((sym): sym is string => !!sym && !divScanMap.has(sym));
-            const totalPending = pendingEarnings.length + pendingDivs.length;
-            if (totalPending === 0) return null;
+            const pending = tickers.filter(sym => !earnScanMap.has(sym) && !events.find(e => e.ticker === sym));
+            if (pending.length === 0) return null;
             return (
-              <div className="px-5 py-3 bg-amber-50/50 border-t border-amber-100/60 flex items-center justify-between gap-3">
-                <p className="text-[9px] text-amber-700 font-medium">
-                  {pendingEarnings.length > 0 && `${pendingEarnings.length} Earnings`}
-                  {pendingEarnings.length > 0 && pendingDivs.length > 0 && ' · '}
-                  {pendingDivs.length > 0 && `${pendingDivs.length} Dividenden`}
-                  {' '}noch nicht abgerufen
-                </p>
+              <div className="px-5 py-2.5 bg-amber-50/50 border-b border-amber-100/60 flex items-center justify-between gap-3">
+                <p className="text-[9px] text-amber-700 font-medium">{pending.length} Symbole noch nicht abgerufen</p>
                 <button
-                  onClick={() => {
-                    if (pendingEarnings.length > 0) fetchEarningsForSymbol(pendingEarnings[0]);
-                    else if (pendingDivs.length > 0) fetchDividendForSymbol(pendingDivs[0]);
-                  }}
-                  disabled={!!fetchingEarnSym || !!fetchingDivSym}
+                  onClick={() => fetchEarningsForSymbol(pending[0])}
+                  disabled={!!fetchingEarnSym}
                   className="flex items-center gap-1 text-[9px] font-black bg-amber-500 text-white px-2.5 py-1 rounded-lg hover:bg-amber-600 transition-colors disabled:opacity-40 shrink-0"
                 >
-                  {(fetchingEarnSym || fetchingDivSym)
-                    ? <Loader2 className="w-3 h-3 animate-spin" />
-                    : <Download className="w-3 h-3" />}
-                  Jetzt abrufen
+                  {fetchingEarnSym ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+                  Abrufen
                 </button>
               </div>
             );
           })()}
 
-          {/* Tabellen-Footer */}
-          <div className="px-5 py-3 bg-slate-50 border-t border-slate-100 flex items-center gap-2 flex-wrap">
-            <span className="text-[7px] font-black bg-blue-50 text-blue-600 border border-blue-100 px-1.5 py-0.5 rounded uppercase">Earnings</span>
-            <span className="text-[8px] text-slate-400">Quartalszahlen</span>
-            <span className="mx-1 text-slate-200">·</span>
-            <span className="text-[7px] font-black bg-amber-50 text-amber-600 border border-amber-100 px-1.5 py-0.5 rounded uppercase">Ex-Div.</span>
-            <span className="text-[8px] text-slate-400">Ex-Dividenden-Datum</span>
-            <span className="mx-1 text-slate-200">·</span>
-            <span className="text-[8px] text-slate-400 italic">Yahoo Finance / KI · Keine Anlageberatung</span>
+          <div className="divide-y divide-slate-50">
+            {unifiedEntries.filter(e => e.type === 'earnings' && e.daysFromNow >= -90).length === 0 && !isLoading ? (
+              <div className="px-5 py-6 text-center">
+                <p className="text-slate-400 text-sm">Keine bevorstehenden Earnings-Termine bekannt.</p>
+              </div>
+            ) : (
+              unifiedEntries
+                .filter(e => e.type === 'earnings' && e.daysFromNow >= -90)
+                .map((entry, i) => {
+                  const isSoon  = !entry.isPast && entry.daysFromNow <= 7;
+                  const isToday = entry.daysFromNow === 0;
+                  return (
+                    <div
+                      key={`earn-${entry.symbol}-${entry.date}-${i}`}
+                      className={`px-5 py-3 flex items-center gap-3 transition-colors ${
+                        isToday      ? 'bg-emerald-50/60' :
+                        isSoon       ? 'bg-emerald-50/20' :
+                        entry.isPast ? 'opacity-40' :
+                        'hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="shrink-0 w-24 text-right md:text-left">
+                        <p className="text-[10px] font-black text-slate-700 tabular-nums">
+                          {new Date(entry.date).toLocaleDateString('de-DE', { day: '2-digit', month: 'short', year: '2-digit' })}
+                        </p>
+                        <p className={`text-[9px] tabular-nums ${entry.isPast ? 'text-slate-300' : isSoon ? 'text-emerald-600 font-bold' : 'text-slate-400'}`}>
+                          {entry.isPast ? `vor ${Math.abs(entry.daysFromNow)}d` : isToday ? 'Heute' : `in ${entry.daysFromNow}d`}
+                        </p>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-[10px] font-black text-slate-700 font-mono">{entry.symbol}</span>
+                          {entry.name !== entry.symbol && <span className="text-[10px] text-slate-500 truncate">{entry.name}</span>}
+                          {isSoon && !entry.isPast && (
+                            <span className="text-[7px] font-black bg-emerald-600 text-white px-1 py-0.5 rounded uppercase tracking-widest shrink-0">
+                              {isToday ? 'Heute' : 'Bald'}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          {entry.quarter && <span className="text-[9px] text-slate-400">{entry.quarter}</span>}
+                          {entry.timeOfDay && entry.timeOfDay !== 'unbekannt' && (
+                            <span className={`text-[7px] font-black px-1 py-0.5 rounded ${timeOfDayColor(entry.timeOfDay)}`}>
+                              {entry.timeOfDay}
+                            </span>
+                          )}
+                          {entry.epsEstimate && <span className="text-[9px] text-slate-400">EPS: <strong>{entry.epsEstimate}</strong></span>}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => fetchEarningsForSymbol(entry.symbol)}
+                        disabled={!!fetchingEarnSym}
+                        title="Neu laden"
+                        className="text-slate-300 hover:text-emerald-500 transition-colors disabled:opacity-30 shrink-0"
+                      >
+                        {fetchingEarnSym === entry.symbol
+                          ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          : <RefreshCcw className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                  );
+                })
+            )}
+          </div>
+
+          <div className="px-5 py-3 bg-slate-50 border-t border-slate-100">
+            <p className="text-[9px] text-slate-400 italic">Daten aus Yahoo Finance / KI · Keine Anlageberatung · Offizielle Termine beim Unternehmen prüfen</p>
           </div>
         </div>
       )}
