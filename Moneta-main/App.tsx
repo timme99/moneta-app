@@ -20,12 +20,12 @@ import NewsletterQuickToggle from './components/NewsletterQuickToggle';
 import PerformanceChart from './components/PerformanceChart';
 import UpgradeModal from './components/UpgradeModal';
 import { PortfolioAnalysisReport, PortfolioHealthReport, PortfolioSavingsReport, UserAccount, HoldingRow } from './types';
-import { analyzePortfolio } from './services/geminiService';
+import { analyzePortfolio, generateHoldingTheses } from './services/geminiService';
 import { userService } from './services/userService';
 import { getSupabaseBrowser } from './lib/supabaseBrowser';
 import { loadUserHoldings, addTickersByName, deleteHolding } from './services/holdingsService';
 import { useSubscription, PLAN_LIMITS } from './lib/useSubscription';
-import { Clock, AlertTriangle, ShieldCheck, BarChart3, Loader2, BookMarked, Calendar, FlaskConical, Lock, Plus, X, Trash2, ChevronRight, Sparkles, TrendingUp, Zap } from 'lucide-react';
+import { AlertTriangle, ShieldCheck, BarChart3, Loader2, Calendar, FlaskConical, Lock, Plus, X, Trash2, ChevronRight, ChevronDown, Sparkles, TrendingUp, TrendingDown, Minus, Zap, RefreshCcw } from 'lucide-react';
 
 /** Erstellt ein UserAccount-Objekt aus einem Supabase-User */
 function userFromSupabase(sbUser: any): UserAccount {
@@ -63,6 +63,11 @@ const App: React.FC = () => {
     type: 'disclaimer'
   });
   const [showDepotDrawer, setShowDepotDrawer] = useState(false);
+
+  // ── KI-Einschätzungen je Position (in Portfolio-Tabelle) ─────────────────
+  const [theses,       setTheses]       = useState<{ ticker: string; thesis: string }[]>([]);
+  const [thesesLoading, setThesesLoading] = useState(false);
+  const [expandedHolding, setExpandedHolding] = useState<string | null>(null);
 
   // ── Cockpit-Import (Screenshot / Excel – für EmptyState-Buttons) ──────────
   const [cockpitImportState, setCockpitImportState] = useState<{ loading: boolean; message: string; error: string }>({
@@ -275,6 +280,24 @@ const App: React.FC = () => {
     return () => { sb.removeChannel(channel); };
   }, [userAccount?.id, fetchHoldings]);
 
+  // KI-Einschätzungen laden wenn sich die Portfolio-Positionen ändern
+  useEffect(() => {
+    const portfolioHoldings = holdings.filter(h => !h.watchlist);
+    if (portfolioHoldings.length === 0) { setTheses([]); return; }
+    const inputs = portfolioHoldings.map(h => ({
+      name:     h.ticker?.company_name ?? h.name ?? h.symbol,
+      ticker:   h.symbol,
+      shares:   h.shares,
+      buyPrice: h.buy_price,
+    }));
+    setThesesLoading(true);
+    generateHoldingTheses(inputs.slice(0, 8))
+      .then(setTheses)
+      .catch(() => {})
+      .finally(() => setThesesLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [holdings.filter(h => !h.watchlist).map(h => h.symbol).sort().join(',')]);
+
   const processMasterData = useCallback((masterData: any) => {
     if (!masterData || Object.keys(masterData).length === 0) return;
 
@@ -365,25 +388,28 @@ const App: React.FC = () => {
       
       <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 md:py-10 pb-24 lg:pb-10 w-full">
         {activeView === 'cockpit' ? (
-          <div className="space-y-6">
-            <div className="flex items-center justify-between mb-2">
+          <div className="space-y-5">
+
+            {/* ── Header ─────────────────────────────────────────────────── */}
+            <div className="flex items-center justify-between">
               <div>
                 <h1 className="text-2xl font-black text-slate-900 tracking-tight">Mein Cockpit</h1>
                 {lastUpdate && analysisReport && (
-                  <p className="text-[10px] text-slate-400 font-medium mt-0.5">
-                    Analysiert {lastUpdate}
+                  <p className="text-[10px] text-slate-400 font-medium mt-0.5 flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full inline-block" />
+                    KI-Analyse · {lastUpdate}
                   </p>
                 )}
               </div>
               <div className="flex items-center gap-3">
                 {analysisReport && (
                   <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest ${
-                    analysisReport.score >= 7 ? 'bg-emerald-50 text-emerald-700' :
-                    analysisReport.score >= 5 ? 'bg-amber-50 text-amber-700' :
-                    'bg-rose-50 text-rose-700'
+                    analysisReport.score >= 70 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
+                    analysisReport.score >= 50 ? 'bg-amber-50 text-amber-700 border border-amber-200' :
+                    'bg-rose-50 text-rose-700 border border-rose-200'
                   }`}>
                     <ShieldCheck className="w-3 h-3" />
-                    Score {analysisReport.score}/10
+                    Score {analysisReport.score}/100
                   </div>
                 )}
                 <button
@@ -396,9 +422,7 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            {/* Stats werden direkt im PerformanceChart-Header als Badges angezeigt */}
-
-            {/* ── Onboarding (wenn kein Depot) ─────────────────────────────── */}
+            {/* ── Onboarding (leeres Depot) ────────────────────────────────── */}
             {holdings.length === 0 && (
               <div className="bg-gradient-to-br from-emerald-50 to-slate-50 border border-emerald-100 rounded-3xl p-8 text-center">
                 <div className="w-14 h-14 bg-emerald-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
@@ -406,7 +430,7 @@ const App: React.FC = () => {
                 </div>
                 <h2 className="text-xl font-black text-slate-900 mb-2">Depot importieren oder aufbauen</h2>
                 <p className="text-sm text-slate-500 mb-6 max-w-sm mx-auto">
-                  Füge deine ersten Aktien hinzu – per Screenshot, PDF oder manuell über den Drawer.
+                  Füge deine ersten Aktien hinzu – per Screenshot, PDF oder manuell.
                 </p>
                 <button
                   onClick={() => setShowDepotDrawer(true)}
@@ -418,194 +442,18 @@ const App: React.FC = () => {
               </div>
             )}
 
-            {/* ── Live Depot-Übersicht (immer sichtbar wenn Holdings vorhanden) ── */}
-            {holdings.length > 0 && (
-              <div className="bg-white border border-slate-200 rounded-[28px] shadow-sm overflow-hidden">
-                <div className="px-6 py-4 border-b border-slate-100">
-                  <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-[0.2em]">Mein Depot</h3>
-                  <p className="text-[9px] text-slate-400 font-medium mt-0.5">
-                    {holdings.filter(h => !h.watchlist).length} Position{holdings.filter(h => !h.watchlist).length !== 1 ? 'en' : ''}
-                    {holdings.filter(h => h.watchlist).length > 0 && ` · ${holdings.filter(h => h.watchlist).length} Watchlist`}
-                  </p>
-                </div>
-
-                <div className="divide-y divide-slate-50">
-                  {[...holdings]
-                    .sort((a, b) => {
-                      // Portfolio-Positionen vor Watchlist
-                      if (a.watchlist !== b.watchlist) return a.watchlist ? 1 : -1;
-                      // Portfolio: nach Positionsgröße (Stückzahl × Kaufpreis) absteigend
-                      if (!a.watchlist) {
-                        const valA = (a.shares ?? 0) * (a.buy_price ?? 0);
-                        const valB = (b.shares ?? 0) * (b.buy_price ?? 0);
-                        return valB - valA;
-                      }
-                      // Watchlist: alphabetisch nach Symbol
-                      return (a.symbol ?? '').localeCompare(b.symbol ?? '');
-                    })
-                    .slice(0, 6)
-                    .map((h) => {
-                    // Aktuellen Kurs aus dem Analyse-Report auslesen (kein extra API-Aufruf)
-                    const reportEntry = analysisReport?.holdings?.find(
-                      (rh) => rh.ticker === h.symbol || rh.ticker === h.ticker?.symbol
-                    );
-                    const rawPrice = reportEntry?.currentPrice ?? '';
-                    const currentPrice = (() => {
-                      const cleaned = String(rawPrice).replace(/[€$£\s]/g, '').replace(/[A-Za-z]/g, '').trim();
-                      const n = parseFloat(cleaned.replace(',', '.'));
-                      return isFinite(n) && n > 0 ? n : null;
-                    })();
-                    const perfPct = (currentPrice && h.buy_price && h.buy_price > 0)
-                      ? ((currentPrice - h.buy_price) / h.buy_price) * 100
-                      : null;
-                    const fmt = (n: number, d = 2) =>
-                      n.toLocaleString('de-DE', { minimumFractionDigits: d, maximumFractionDigits: d });
-
-                    // News-Flash: prüfen ob ein News-Item diesen Ticker betrifft
-                    const sym = h.ticker?.symbol ?? h.symbol;
-                    const hasNewsFlash = analysisReport?.news?.some(
-                      n => n.ticker && n.ticker.toUpperCase() === sym?.toUpperCase()
-                    ) ?? false;
-
-                    return (
-                      <div key={h.id} className="px-4 sm:px-6 py-3.5 hover:bg-slate-50/50 transition-colors">
-                        <div className="flex items-start gap-2">
-                          {/* Linke Seite: Name + Metazeile */}
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-sm font-bold text-slate-900 truncate">
-                                {h.ticker?.company_name ?? h.name ?? h.symbol}
-                              </span>
-                              {hasNewsFlash && (
-                                <span
-                                  title="Aktuelle News zu dieser Position vorhanden"
-                                  className="flex items-center gap-0.5 text-[8px] font-black text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-full uppercase tracking-widest shrink-0"
-                                >
-                                  <Zap className="w-2.5 h-2.5" />
-                                  News
-                                </span>
-                              )}
-                              {h.watchlist && (
-                                <span className="text-[9px] font-black text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded-full uppercase tracking-widest shrink-0">
-                                  Watchlist
-                                </span>
-                              )}
-                            </div>
-                            {/* Metazeile: Symbol · Sektor · Stückzahl · Kaufpreis */}
-                            <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
-                              <span className="text-[10px] text-slate-400 font-mono">{h.symbol}</span>
-                              {h.ticker?.sector && (
-                                <>
-                                  <span className="text-[10px] text-slate-300">·</span>
-                                  <span className="text-[9px] text-slate-400 font-medium">{h.ticker.sector}</span>
-                                </>
-                              )}
-                              {!h.watchlist && h.shares != null && (
-                                <>
-                                  <span className="text-[10px] text-slate-300">·</span>
-                                  <span className="text-[10px] text-slate-600 font-semibold">{h.shares} Stk.</span>
-                                </>
-                              )}
-                              {!h.watchlist && h.buy_price != null && (
-                                <>
-                                  <span className="text-[10px] text-slate-300">·</span>
-                                  <span className="text-[10px] text-slate-500 font-medium">∅ {fmt(h.buy_price)} €</span>
-                                </>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Rechte Seite: aktueller Kurs + Entwicklung + Buttons */}
-                          <div className="flex items-center gap-2 shrink-0">
-                            {currentPrice != null ? (
-                              <div className="text-right">
-                                <div className="text-sm font-bold text-slate-800 tabular-nums">
-                                  {fmt(currentPrice)} €
-                                </div>
-                                {perfPct != null && (
-                                  <div className={`text-[10px] font-black tabular-nums ${perfPct >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                                    {perfPct >= 0 ? '+' : ''}{fmt(perfPct, 1)} %
-                                  </div>
-                                )}
-                              </div>
-                            ) : (
-                              /* Kein aktueller Kurs → nur Gesamteinstand zeigen */
-                              !h.watchlist && h.shares != null && h.buy_price != null && (
-                                <span className="text-[11px] font-bold text-slate-500 tabular-nums">
-                                  {fmt(h.shares * h.buy_price)} €
-                                </span>
-                              )
-                            )}
-                            <div className="flex items-center gap-0.5">
-                              <button
-                                onClick={() => setShowDepotDrawer(true)}
-                                className="p-1.5 rounded-lg text-slate-300 hover:text-emerald-500 hover:bg-emerald-50 transition-colors"
-                                title="Im Drawer bearbeiten"
-                              >
-                                <ChevronRight className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                onClick={async (e) => {
-                                  e.stopPropagation();
-                                  if (!window.confirm(`„${h.symbol}" wirklich aus dem Depot entfernen?`)) return;
-                                  await deleteHolding(h.id, userAccount?.id ?? '');
-                                  await fetchHoldings();
-                                }}
-                                className="p-1.5 rounded-lg text-slate-300 hover:text-rose-500 hover:bg-rose-50 transition-colors"
-                                title="Löschen"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                  {holdings.length > 6 && (
-                    <div className="px-6 py-3 text-center">
-                      <button
-                        onClick={() => setShowDepotDrawer(true)}
-                        className="text-[10px] text-emerald-500 font-bold hover:text-emerald-600 transition-colors"
-                      >
-                        + {holdings.length - 6} weitere Position{holdings.length - 6 !== 1 ? 'en' : ''} anzeigen
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                {/* KI-Analyse starten wenn noch keine Analyse vorhanden */}
-                {!analysisReport && holdings.filter(h => !h.watchlist).length > 0 && (
-                  <div className="px-6 py-4 bg-slate-50 border-t border-slate-100">
-                    <button
-                      onClick={() => {
-                        const text = buildDepotTextFromHoldings(holdings);
-                        if (text) handleAnalysis({ text });
-                      }}
-                      disabled={isGlobalLoading}
-                      className="w-full bg-emerald-600 text-white py-3 rounded-[14px] text-[10px] font-black uppercase tracking-widest hover:bg-slate-900 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
-                    >
-                      {isGlobalLoading
-                        ? <Loader2 className="w-4 h-4 animate-spin" />
-                        : <BarChart3 className="w-4 h-4" />}
-                      KI-Analyse starten · {holdings.filter(h => !h.watchlist).length} Position{holdings.filter(h => !h.watchlist).length !== 1 ? 'en' : ''}
-                    </button>
-                  </div>
-                )}
-
-                {/* Hinweis wenn nur Watchlist-Einträge vorhanden */}
-                {!analysisReport && holdings.filter(h => !h.watchlist).length === 0 && (
-                  <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center gap-3">
-                    <BookMarked className="w-4 h-4 text-amber-500 shrink-0" />
-                    <p className="text-[10px] text-slate-500 font-medium">
-                      Füge Positionen mit Stückzahl & Kaufpreis hinzu, um eine KI-Analyse zu starten.
-                    </p>
-                  </div>
-                )}
-              </div>
+            {/* ── KPI-Karten (Score / Diversifikation / Risiko) ─────────────── */}
+            {analysisReport && (
+              <DashboardSummary
+                report={analysisReport}
+                healthReport={healthReport}
+                savingsReport={savingsReport}
+                insight={null}
+                holdings={holdings}
+              />
             )}
 
-            {/* ── Freemium-Gate ───────────────────────────────────────────── */}
+            {/* ── Freemium-Gate ─────────────────────────────────────────────── */}
             {!subscription.isPremium && holdings.length >= PLAN_LIMITS.free.maxHoldings && (
               <div className="bg-gradient-to-r from-emerald-50 to-green-50 border border-emerald-200 rounded-[24px] p-5 flex items-center gap-4">
                 <div className="bg-emerald-100 p-3 rounded-2xl shrink-0">
@@ -614,7 +462,7 @@ const App: React.FC = () => {
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-black text-slate-900">Limit erreicht: {PLAN_LIMITS.free.maxHoldings} Positionen</p>
                   <p className="text-[10px] text-slate-500 font-medium mt-0.5">
-                    Mit Premium unbegrenzte Positionen, 365 Tage Performance-Historie und Kurs-Alerts.
+                    Mit Premium unbegrenzte Positionen und erweiterte Analysen.
                   </p>
                 </div>
                 <button
@@ -626,171 +474,381 @@ const App: React.FC = () => {
               </div>
             )}
 
-            {/* ── Performance-Chart (mit Stats-Badges im Header) ─────────── */}
-            {holdings.filter(h => !h.watchlist).length > 0 && (() => {
+            {/* ── UNIFIED PORTFOLIO TABLE ───────────────────────────────────── */}
+            {holdings.length > 0 && (() => {
+              const fmt = (n: number, d = 2) =>
+                n.toLocaleString('de-DE', { minimumFractionDigits: d, maximumFractionDigits: d });
+
+              const sortedHoldings = [...holdings].sort((a, b) => {
+                if (a.watchlist !== b.watchlist) return a.watchlist ? 1 : -1;
+                if (!a.watchlist) {
+                  const valA = (a.shares ?? 0) * (a.buy_price ?? 0);
+                  const valB = (b.shares ?? 0) * (b.buy_price ?? 0);
+                  return valB - valA;
+                }
+                return (a.symbol ?? '').localeCompare(b.symbol ?? '');
+              });
+
+              const portfolioCount = holdings.filter(h => !h.watchlist).length;
+              const watchlistCount = holdings.filter(h => h.watchlist).length;
               const posHoldings = holdings.filter(h => !h.watchlist && h.shares != null && h.buy_price != null);
               const totalInvested = posHoldings.reduce((s, h) => s + h.shares! * h.buy_price!, 0);
-              const posCount = holdings.filter(h => !h.watchlist).length;
-              const watchCount = holdings.filter(h => h.watchlist).length;
+
+              const sentimentCfg = (s?: string) =>
+                s === 'Positiv'
+                  ? { cls: 'bg-emerald-50 text-emerald-700 border-emerald-200', Icon: TrendingUp }
+                  : s === 'Negativ'
+                  ? { cls: 'bg-rose-50 text-rose-600 border-rose-200', Icon: TrendingDown }
+                  : { cls: 'bg-slate-100 text-slate-500 border-slate-200', Icon: Minus };
+
               return (
-                <PerformanceChart
-                  userId={userAccount?.id}
-                  onUpgradeClick={() => setShowUpgradeModal(true)}
-                  totalInvested={totalInvested > 0 ? totalInvested : undefined}
-                  positionCount={posCount}
-                  watchlistCount={watchCount}
-                />
+                <div className="bg-white border border-slate-200 rounded-[28px] shadow-sm overflow-hidden">
+
+                  {/* Table header */}
+                  <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between gap-4">
+                    <div>
+                      <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-[0.2em]">Mein Portfolio</h3>
+                      <p className="text-[9px] text-slate-400 font-medium mt-0.5">
+                        {portfolioCount} Position{portfolioCount !== 1 ? 'en' : ''}
+                        {watchlistCount > 0 && ` · ${watchlistCount} Watchlist`}
+                        {totalInvested > 0 && ` · ${fmt(totalInvested)} € investiert`}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {thesesLoading && (
+                        <span className="flex items-center gap-1.5 text-[9px] font-bold text-slate-400">
+                          <Loader2 className="w-3 h-3 animate-spin text-emerald-500" />
+                          KI analysiert…
+                        </span>
+                      )}
+                      {!analysisReport && portfolioCount > 0 && (
+                        <button
+                          onClick={() => { const t = buildDepotTextFromHoldings(holdings); if (t) handleAnalysis({ text: t }); }}
+                          disabled={isGlobalLoading}
+                          className="flex items-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-[9px] font-black uppercase tracking-widest rounded-xl transition-all disabled:opacity-50"
+                        >
+                          {isGlobalLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                          KI-Analyse starten
+                        </button>
+                      )}
+                      {analysisReport && (
+                        <button
+                          onClick={() => { const t = buildDepotTextFromHoldings(holdings); if (t) handleAnalysis({ text: t }); }}
+                          disabled={isGlobalLoading}
+                          className="flex items-center gap-1.5 text-[9px] font-black text-slate-400 hover:text-emerald-600 uppercase tracking-widest transition-colors disabled:opacity-40"
+                          title="Analyse aktualisieren"
+                        >
+                          <RefreshCcw className={`w-3 h-3 ${isGlobalLoading ? 'animate-spin' : ''}`} />
+                          Aktualisieren
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Column labels (desktop) */}
+                  <div className="hidden md:grid grid-cols-[1fr_110px_90px_90px_32px] gap-3 px-6 py-2.5 bg-slate-50/80 border-b border-slate-100">
+                    {['Aktie', 'Sektor', 'Position', 'Perf.', ''].map((h, i) => (
+                      <span key={i} className="text-[8px] font-black text-slate-400 uppercase tracking-[0.18em]">{h}</span>
+                    ))}
+                  </div>
+
+                  {/* Rows */}
+                  <div className="divide-y divide-slate-100">
+                    {sortedHoldings.map((h) => {
+                      const sym = h.ticker?.symbol ?? h.symbol;
+                      const reportEntry = analysisReport?.holdings?.find(
+                        rh => rh.ticker === sym || rh.ticker === h.symbol
+                      );
+                      const rawPrice = reportEntry?.currentPrice ?? '';
+                      const currentPrice = (() => {
+                        const cleaned = String(rawPrice).replace(/[€$£\s]/g, '').replace(/[A-Za-z]/g, '').trim();
+                        const n = parseFloat(cleaned.replace(',', '.'));
+                        return isFinite(n) && n > 0 ? n : null;
+                      })();
+                      const perfPct = currentPrice && h.buy_price && h.buy_price > 0
+                        ? ((currentPrice - h.buy_price) / h.buy_price) * 100 : null;
+                      const posValue = h.shares != null && h.buy_price != null ? h.shares * h.buy_price : null;
+                      const thesis = theses.find(t => t.ticker === sym || t.ticker === h.symbol);
+                      const sentiment = reportEntry?.sentiment;
+                      const { cls: sentCls, Icon: SentIcon } = sentimentCfg(sentiment);
+                      const newsItems = analysisReport?.news?.filter(
+                        n => n.ticker && n.ticker.toUpperCase() === sym?.toUpperCase()
+                      ) ?? [];
+                      const hasNews = newsItems.length > 0;
+                      const isExpanded = expandedHolding === h.id;
+
+                      return (
+                        <div key={h.id}>
+                          {/* Main row */}
+                          <div
+                            className={`px-6 py-3.5 cursor-pointer transition-colors ${
+                              isExpanded ? 'bg-slate-50' : 'hover:bg-slate-50/60'
+                            }`}
+                            onClick={() => setExpandedHolding(isExpanded ? null : h.id)}
+                          >
+                            <div className="flex items-center gap-3">
+
+                              {/* Avatar */}
+                              <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 text-[9px] font-black ${
+                                perfPct != null && perfPct > 0 ? 'bg-emerald-100 text-emerald-700' :
+                                perfPct != null && perfPct < 0 ? 'bg-rose-100 text-rose-700' :
+                                'bg-slate-100 text-slate-600'
+                              }`}>
+                                {sym.slice(0, 3)}
+                              </div>
+
+                              {/* Name + meta (flex-1) */}
+                              <div className="flex-1 min-w-0">
+                                {/* Desktop: grid layout */}
+                                <div className="hidden md:grid grid-cols-[1fr_110px_90px_90px_32px] gap-3 items-center">
+                                  {/* Col 1: Name */}
+                                  <div className="min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="text-sm font-bold text-slate-900 truncate">
+                                        {h.ticker?.company_name ?? h.name ?? sym}
+                                      </span>
+                                      <span className="text-[9px] font-mono text-slate-400 shrink-0">{sym}</span>
+                                      {hasNews && (
+                                        <span className="flex items-center gap-0.5 text-[8px] font-black text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-full uppercase tracking-widest shrink-0">
+                                          <Zap className="w-2.5 h-2.5" /> News
+                                        </span>
+                                      )}
+                                      {h.watchlist && (
+                                        <span className="text-[8px] font-black text-amber-600 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-full uppercase tracking-widest shrink-0">
+                                          Watchlist
+                                        </span>
+                                      )}
+                                    </div>
+                                    {sentiment && (
+                                      <span className={`inline-flex items-center gap-1 text-[8px] font-black px-1.5 py-0.5 rounded-full border mt-0.5 ${sentCls}`}>
+                                        <SentIcon className="w-2.5 h-2.5" />
+                                        {sentiment}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {/* Col 2: Sektor */}
+                                  <div>
+                                    {h.ticker?.sector && (
+                                      <span className="text-[9px] text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md font-medium truncate block">
+                                        {h.ticker.sector}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {/* Col 3: Position */}
+                                  <div className="text-right">
+                                    {!h.watchlist && h.shares != null && (
+                                      <p className="text-[11px] font-bold text-slate-700 tabular-nums">
+                                        {posValue != null ? `${fmt(posValue)} €` : `${h.shares} Stk.`}
+                                      </p>
+                                    )}
+                                    {!h.watchlist && h.buy_price != null && (
+                                      <p className="text-[9px] text-slate-400">∅ {fmt(h.buy_price)} €</p>
+                                    )}
+                                  </div>
+                                  {/* Col 4: Performance */}
+                                  <div className="text-right">
+                                    {perfPct != null ? (
+                                      <>
+                                        <p className={`text-[11px] font-black tabular-nums ${perfPct >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                          {perfPct >= 0 ? '+' : ''}{fmt(perfPct, 1)} %
+                                        </p>
+                                        {currentPrice != null && (
+                                          <p className="text-[9px] text-slate-400 tabular-nums">{fmt(currentPrice)} €</p>
+                                        )}
+                                      </>
+                                    ) : !h.watchlist ? (
+                                      <span className="text-[9px] text-slate-300">—</span>
+                                    ) : null}
+                                  </div>
+                                  {/* Col 5: Expand */}
+                                  <ChevronDown className={`w-4 h-4 text-slate-300 transition-transform shrink-0 ${isExpanded ? 'rotate-180' : ''}`} />
+                                </div>
+
+                                {/* Mobile: stacked */}
+                                <div className="md:hidden">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="text-sm font-bold text-slate-900 truncate">
+                                      {h.ticker?.company_name ?? h.name ?? sym}
+                                    </span>
+                                    {hasNews && (
+                                      <span className="flex items-center gap-0.5 text-[8px] font-black text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-full uppercase tracking-widest shrink-0">
+                                        <Zap className="w-2.5 h-2.5" /> News
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                                    <span className="text-[9px] font-mono text-slate-400">{sym}</span>
+                                    {h.ticker?.sector && <span className="text-[9px] text-slate-400">· {h.ticker.sector}</span>}
+                                    {!h.watchlist && h.shares != null && <span className="text-[9px] text-slate-500 font-semibold">· {h.shares} Stk.</span>}
+                                    {perfPct != null && (
+                                      <span className={`text-[9px] font-black tabular-nums ${perfPct >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                        {perfPct >= 0 ? '+' : ''}{fmt(perfPct, 1)} %
+                                      </span>
+                                    )}
+                                    {sentiment && (
+                                      <span className={`inline-flex items-center gap-1 text-[8px] font-black px-1.5 py-0.5 rounded-full border ${sentCls}`}>
+                                        <SentIcon className="w-2.5 h-2.5" />{sentiment}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Mobile expand chevron */}
+                              <ChevronDown className={`w-4 h-4 text-slate-300 transition-transform shrink-0 md:hidden ${isExpanded ? 'rotate-180' : ''}`} />
+                            </div>
+                          </div>
+
+                          {/* Expanded detail panel */}
+                          {isExpanded && (
+                            <div className="bg-gradient-to-br from-slate-50 to-white border-t border-slate-100 px-6 py-4 space-y-3 animate-in fade-in slide-in-from-top-1 duration-200">
+
+                              {/* KI-Einschätzung */}
+                              {thesis ? (
+                                <div className="flex items-start gap-3">
+                                  <div className="w-7 h-7 bg-emerald-100 rounded-xl flex items-center justify-center shrink-0 mt-0.5">
+                                    <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                                  </div>
+                                  <div>
+                                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">KI-Einschätzung</p>
+                                    <p className="text-[12px] text-slate-700 leading-relaxed">{thesis.thesis}</p>
+                                  </div>
+                                </div>
+                              ) : thesesLoading ? (
+                                <div className="flex items-center gap-2 text-[10px] text-slate-400">
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-500" />
+                                  KI-Einschätzung wird generiert…
+                                </div>
+                              ) : null}
+
+                              {/* News */}
+                              {newsItems.length > 0 && (
+                                <div className="space-y-2">
+                                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Aktuelle News</p>
+                                  {newsItems.slice(0, 2).map((n, ni) => (
+                                    <div key={ni} className="flex items-start gap-2 bg-white border border-slate-100 rounded-xl p-3">
+                                      <Zap className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
+                                      <div className="min-w-0">
+                                        <p className="text-[11px] font-bold text-slate-800 leading-snug line-clamp-2">{n.title}</p>
+                                        {n.summary && <p className="text-[10px] text-slate-500 mt-0.5 line-clamp-2">{n.summary}</p>}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+
+                              {/* Aktionen */}
+                              <div className="flex items-center gap-2 pt-1">
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); setShowDepotDrawer(true); }}
+                                  className="flex items-center gap-1.5 text-[9px] font-black text-slate-500 hover:text-emerald-600 uppercase tracking-widest transition-colors px-2.5 py-1.5 rounded-lg hover:bg-emerald-50"
+                                >
+                                  <ChevronRight className="w-3 h-3" /> Bearbeiten
+                                </button>
+                                <button
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    if (!window.confirm(`„${sym}" wirklich entfernen?`)) return;
+                                    await deleteHolding(h.id, userAccount?.id ?? '');
+                                    await fetchHoldings();
+                                    setExpandedHolding(null);
+                                  }}
+                                  className="flex items-center gap-1.5 text-[9px] font-black text-slate-400 hover:text-rose-600 uppercase tracking-widest transition-colors px-2.5 py-1.5 rounded-lg hover:bg-rose-50"
+                                >
+                                  <Trash2 className="w-3 h-3" /> Entfernen
+                                </button>
+                                <p className="text-[8px] text-slate-300 ml-auto italic">KI-generiert · keine Anlageberatung</p>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Footer */}
+                  <div className="px-6 py-3 bg-slate-50/60 border-t border-slate-100 flex items-center justify-between">
+                    <p className="text-[9px] text-slate-400 italic">
+                      Klicke auf eine Position für KI-Einschätzung & News · Keine Anlageberatung
+                    </p>
+                    <button
+                      onClick={() => setShowDepotDrawer(true)}
+                      className="text-[9px] font-black text-emerald-600 hover:text-emerald-700 uppercase tracking-widest transition-colors"
+                    >
+                      + Position hinzufügen
+                    </button>
+                  </div>
+                </div>
               );
             })()}
 
-            {/* ── Depot-Briefing (strukturelle Hinweise, rein informativ) ── */}
-            {holdings.filter(h => !h.watchlist).length > 0 && (
-              <div className="bg-white border border-slate-200 rounded-[24px] overflow-hidden shadow-sm">
-                {/* Compliance-Vignette – zwingend sichtbar */}
-                <div className="flex items-center gap-2 bg-amber-50 border-b border-amber-100 px-5 py-2.5">
-                  <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                  <p className="text-[10px] text-amber-700 font-bold leading-tight">
-                    Keine Anlageberatung · Alle Hinweise sind informativ und ersetzen keine professionelle Finanzberatung gemäß KWG/WpIG
-                  </p>
-                </div>
-
-                <div className="px-5 py-4">
-                  <div className="flex items-center gap-2 mb-3">
-                    <Sparkles className="w-4 h-4 text-emerald-600" />
-                    <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-widest">Depot-Überblick</h3>
-                  </div>
-
-                  <div className="space-y-0">
-                    {(() => {
-                      const nonWatch = holdings.filter(h => !h.watchlist);
-                      const insights: string[] = [];
-                      // Sektorkonzentration (sachlich)
-                      const sectorCounts: Record<string, number> = {};
-                      nonWatch.forEach(h => { if (h.ticker?.sector) sectorCounts[h.ticker.sector] = (sectorCounts[h.ticker.sector] ?? 0) + 1; });
-                      const topSector = Object.entries(sectorCounts).sort((a, b) => b[1] - a[1])[0];
-                      if (topSector && nonWatch.length > 2 && topSector[1] / nonWatch.length > 0.5) {
-                        insights.push(`Sektorkonzentration: Mehr als 50 % deiner Positionen entfallen auf den Sektor „${topSector[0]}" – Diversifikation prüfen.`);
-                      }
-                      // Portfoliogröße (sachlich)
-                      if (nonWatch.length < 4) {
-                        insights.push(`Portfolio-Größe: ${nonWatch.length} Position${nonWatch.length !== 1 ? 'en' : ''} – konzentriertes Depot. Eine breitere Streuung kann das Klumpenrisiko reduzieren.`);
-                      }
-                      // Watchlist-Hinweis
-                      const watchCount = holdings.filter(h => h.watchlist).length;
-                      if (watchCount > 0) {
-                        insights.push(`Watchlist: ${watchCount} Wert${watchCount !== 1 ? 'e' : ''} ohne Kaufdaten – Stückzahl & Kaufpreis ergänzen, um diese in die Analyse einzubeziehen.`);
-                      }
-                      if (insights.length === 0) {
-                        insights.push('Depot-Daten vollständig hinterlegt. Starte eine KI-Analyse für eine detaillierte Struktur-Auswertung.');
-                      }
-                      // Maximal 3 Punkte
-                      return insights.slice(0, 3).map((text, i) => (
-                        <div key={i} className="flex items-start gap-3 py-2.5 border-b border-slate-50 last:border-0">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 mt-1.5 shrink-0" />
-                          <p className="text-[12px] text-slate-600 leading-relaxed">{text}</p>
-                        </div>
-                      ));
-                    })()}
-                  </div>
-
-                  {!analysisReport && (
-                    <button
-                      onClick={() => {
-                        const text = buildDepotTextFromHoldings(holdings);
-                        if (text) handleAnalysis({ text });
-                      }}
-                      disabled={isGlobalLoading}
-                      className="mt-4 w-full bg-emerald-600 text-white py-2.5 rounded-[12px] text-[10px] font-black uppercase tracking-widest hover:bg-slate-900 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
-                    >
-                      {isGlobalLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <BarChart3 className="w-3.5 h-3.5" />}
-                      KI-Analyse starten
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* ── Schnellzugriff auf Depot-Tools ────────────────────────── */}
-            {holdings.length > 0 && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <button
-                  onClick={() => setActiveView('earnings')}
-                  className={`flex items-center gap-4 p-5 rounded-[24px] border transition-all text-left group hover:shadow-md ${
-                    activeView === 'earnings' ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-white border-slate-200 hover:border-emerald-300'
-                  }`}
-                >
-                  <div className={`p-3 rounded-[14px] ${activeView === 'earnings' ? 'bg-white/20' : 'bg-emerald-50 group-hover:bg-emerald-100'}`}>
-                    <Calendar className={`w-5 h-5 ${activeView === 'earnings' ? 'text-white' : 'text-emerald-600'}`} />
-                  </div>
-                  <div>
-                    <p className={`text-[10px] font-black uppercase tracking-widest ${activeView === 'earnings' ? 'text-emerald-100' : 'text-slate-400'}`}>Dividenden & Earnings</p>
-                    <p className={`text-sm font-black mt-0.5 ${activeView === 'earnings' ? 'text-white' : 'text-slate-900'}`}>Dividenden & Earnings</p>
-                    <p className={`text-[10px] font-medium mt-0.5 ${activeView === 'earnings' ? 'text-emerald-100' : 'text-slate-400'}`}>Dividenden · Quartalszahlen · Kalender</p>
-                  </div>
-                </button>
-
-                <button
-                  onClick={() => setActiveView('scenarios')}
-                  className={`flex items-center gap-4 p-5 rounded-[24px] border transition-all text-left group hover:shadow-md ${
-                    activeView === 'scenarios' ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-white border-slate-200 hover:border-emerald-300'
-                  }`}
-                >
-                  <div className={`p-3 rounded-[14px] ${activeView === 'scenarios' ? 'bg-white/20' : 'bg-emerald-50 group-hover:bg-emerald-100'}`}>
-                    <FlaskConical className={`w-5 h-5 ${activeView === 'scenarios' ? 'text-white' : 'text-emerald-700'}`} />
-                  </div>
-                  <div>
-                    <p className={`text-[10px] font-black uppercase tracking-widest ${activeView === 'scenarios' ? 'text-emerald-100' : 'text-slate-400'}`}>Simulation</p>
-                    <p className={`text-sm font-black mt-0.5 ${activeView === 'scenarios' ? 'text-white' : 'text-slate-900'}`}>Szenario-Analyse</p>
-                    <p className={`text-[10px] font-medium mt-0.5 ${activeView === 'scenarios' ? 'text-emerald-100' : 'text-slate-400'}`}>Was wäre wenn? · KI-Simulation</p>
-                  </div>
-                </button>
-
-                <button
-                  onClick={() => setActiveView('options')}
-                  className={`flex items-center gap-4 p-5 rounded-[24px] border transition-all text-left group hover:shadow-md ${
-                    activeView === 'options' ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-white border-slate-200 hover:border-emerald-300'
-                  }`}
-                >
-                  <div className={`p-3 rounded-[14px] ${activeView === 'options' ? 'bg-white/20' : 'bg-emerald-50 group-hover:bg-emerald-100'}`}>
-                    <TrendingUp className={`w-5 h-5 ${activeView === 'options' ? 'text-white' : 'text-emerald-700'}`} />
-                  </div>
-                  <div>
-                    <p className={`text-[10px] font-black uppercase tracking-widest ${activeView === 'options' ? 'text-emerald-100' : 'text-slate-400'}`}>Black-Scholes</p>
-                    <p className={`text-sm font-black mt-0.5 ${activeView === 'options' ? 'text-white' : 'text-slate-900'}`}>Optionspreis-Tracker</p>
-                    <p className={`text-[10px] font-medium mt-0.5 ${activeView === 'options' ? 'text-emerald-100' : 'text-slate-400'}`}>Greeks · Szenario-Simulation</p>
-                  </div>
-                </button>
-              </div>
-            )}
-
-            {/* ── KI-Analyse Ergebnisse (nur wenn vorhanden) ──────────────── */}
+            {/* ── Markt-News Ticker ─────────────────────────────────────────── */}
             {analysisReport && (
-              <>
-                <MarketNewsTicker
-                  news={analysisReport.news}
-                  onNewsClick={(item) => setSelectedNewsFromTicker(item)}
-                  isPremium={true}
-                />
-
-                <DashboardSummary
-                  report={analysisReport}
-                  healthReport={healthReport}
-                  savingsReport={savingsReport}
-                  insight={null}
-                  holdings={holdings}
-                />
-
-                <NewsletterQuickToggle account={userAccount} />
-
-                <PortfolioDeepDive
-                  report={analysisReport}
-                  healthReport={healthReport}
-                  savingsReport={savingsReport}
-                  selectedNewsFromTicker={selectedNewsFromTicker}
-                  onClearSelectedNews={() => setSelectedNewsFromTicker(null)}
-                />
-              </>
+              <MarketNewsTicker
+                news={analysisReport.news}
+                onNewsClick={(item) => setSelectedNewsFromTicker(item)}
+                isPremium={true}
+              />
             )}
+
+            {/* ── Schnellzugriff: andere Tools ─────────────────────────────── */}
+            {holdings.length > 0 && (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {[
+                  {
+                    view: 'earnings',
+                    icon: Calendar,
+                    label: 'Dividenden & Earnings',
+                    desc: 'Kalender · Quartalszahlen',
+                    color: 'emerald',
+                  },
+                  {
+                    view: 'scenarios',
+                    icon: FlaskConical,
+                    label: 'Szenario-Analyse',
+                    desc: 'Was wäre wenn? · KI-Simulation',
+                    color: 'indigo',
+                  },
+                  {
+                    view: 'options',
+                    icon: TrendingUp,
+                    label: 'Optionspreis-Tracker',
+                    desc: 'Black-Scholes · Greeks',
+                    color: 'violet',
+                  },
+                ].map(({ view, icon: Icon, label, desc, color }) => (
+                  <button
+                    key={view}
+                    onClick={() => setActiveView(view)}
+                    className="flex items-center gap-3 p-4 rounded-[20px] border border-slate-200 bg-white hover:border-emerald-300 hover:shadow-md transition-all text-left group"
+                  >
+                    <div className="w-10 h-10 bg-slate-100 group-hover:bg-emerald-50 rounded-xl flex items-center justify-center shrink-0 transition-colors">
+                      <Icon className="w-4.5 h-4.5 text-slate-600 group-hover:text-emerald-600 transition-colors w-5 h-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-bold text-slate-900 leading-tight">{label}</p>
+                      <p className="text-[9px] text-slate-400 font-medium mt-0.5">{desc}</p>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-emerald-500 shrink-0 ml-auto transition-colors" />
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* ── Portfolio Deep Dive (KI-Analyse Details) ─────────────────── */}
+            {analysisReport && (
+              <PortfolioDeepDive
+                report={analysisReport}
+                healthReport={healthReport}
+                savingsReport={savingsReport}
+                selectedNewsFromTicker={selectedNewsFromTicker}
+                onClearSelectedNews={() => setSelectedNewsFromTicker(null)}
+              />
+            )}
+
+            {/* ── Newsletter (ganz unten) ───────────────────────────────────── */}
+            {analysisReport && <NewsletterQuickToggle account={userAccount} />}
+
           </div>
         ) : (
           <div className="animate-in fade-in duration-500">

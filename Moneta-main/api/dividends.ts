@@ -214,30 +214,59 @@ export default async function handler(req: any, res: any): Promise<void> {
       };
     }
 
-    cachedMap.set(symToScan, result);
     scannedSymbols.push(symToScan);
+
+    // Kein Downgrade: wenn das neue Ergebnis noData=true ist, aber der Cache bereits
+    // valide Dividendendaten hat (no_data=false, dividend_per_share>0), behalten wir
+    // die alten Daten und aktualisieren nur den Scan-Timestamp.
+    const existingCache = cacheMap.get(symToScan);
+    const isDowngrade = result.noData && !force &&
+      existingCache && existingCache.no_data === false &&
+      Number(existingCache.dividend_per_share) > 0;
+
+    if (isDowngrade) {
+      console.log(`[dividends] ${symToScan}: Behalte bekannte Dividende (kein Downgrade von noData)`);
+      result = {
+        symbol:          symToScan,
+        dividendPerShare: Number(existingCache!.dividend_per_share),
+        exDividendDate:  existingCache!.ex_dividend_date ?? '',
+        dividendDate:    existingCache!.payment_date ?? '',
+        dividendYield:   Number(existingCache!.dividend_yield) || 0,
+        price:           0,
+        noData:          false,
+        isEstimated:     false,
+        isFromDb:        true,
+      };
+    }
+
+    cachedMap.set(symToScan, result);
 
     // In dividend_cache + scan_log persistieren
     const now = new Date().toISOString();
-    await Promise.all([
-      (admin as any).from('dividend_cache').upsert(
-        [{
-          symbol:             symToScan,
-          dividend_per_share: result.dividendPerShare,
-          ex_dividend_date:   result.exDividendDate   || null,
-          payment_date:       result.dividendDate      || null,
-          dividend_yield:     result.dividendYield,
-          no_data:            result.noData,
-          source,
-          last_updated:       now,
-        }],
-        { onConflict: 'symbol' },
-      ),
+    const persistOps: Promise<any>[] = [
       (admin as any).from('scan_log').upsert(
         [{ symbol: symToScan, type: 'dividend', scanned_at: now }],
         { onConflict: 'symbol,type' },
       ),
-    ]);
+    ];
+    if (!isDowngrade) {
+      persistOps.push(
+        (admin as any).from('dividend_cache').upsert(
+          [{
+            symbol:             symToScan,
+            dividend_per_share: result.dividendPerShare,
+            ex_dividend_date:   result.exDividendDate   || null,
+            payment_date:       result.dividendDate      || null,
+            dividend_yield:     result.dividendYield,
+            no_data:            result.noData,
+            source,
+            last_updated:       now,
+          }],
+          { onConflict: 'symbol' },
+        ),
+      );
+    }
+    await Promise.all(persistOps);
   }
 
   // ── 6. Response: alle Symbole (cached + frisch gescannt + noData-Fallback) ──

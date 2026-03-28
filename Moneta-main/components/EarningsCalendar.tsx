@@ -358,537 +358,362 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
   const SPARERPAUSCHBETRAG = 1000;
   const pauschbetragPct = Math.min(100, (totalAnnualDividend / SPARERPAUSCHBETRAG) * 100);
 
-  // ── Earnings-Aufteilung ────────────────────────────────────────────────────
+  // ── Unified Calendar Entries (Earnings + Ex-Dividenden) ─────────────────────
 
-  // upcoming / past werden im per-Symbol-Layout direkt aus events.filter() abgeleitet
+  const holdingNameMap = useMemo(() => {
+    const m = new Map<string, string>();
+    [...portfolioSorted, ...watchlistSorted].forEach(h => {
+      const sym = h.ticker?.symbol ?? h.symbol;
+      if (sym) m.set(sym, h.ticker?.company_name ?? h.name ?? sym);
+    });
+    return m;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tickerKey]);
+
+  interface CalendarEntry {
+    type: 'earnings' | 'ex-dividend';
+    date: string;
+    symbol: string;
+    name: string;
+    timeOfDay?: string;
+    epsEstimate?: string;
+    revenueEstimate?: string;
+    quarter?: string;
+    annualIncome?: number;
+    dividendPerShare?: number;
+    shares?: number;
+    isEstimated?: boolean;
+    isPast: boolean;
+    daysFromNow: number;
+  }
+
+  const unifiedEntries = useMemo((): CalendarEntry[] => {
+    const entries: CalendarEntry[] = [];
+
+    for (const e of events) {
+      const days = daysUntil(e.date);
+      entries.push({
+        type: 'earnings',
+        date: e.date,
+        symbol: e.ticker,
+        name: holdingNameMap.get(e.ticker) ?? e.ticker,
+        timeOfDay: e.timeOfDay,
+        epsEstimate: e.epsEstimate,
+        revenueEstimate: e.revenueEstimate,
+        quarter: e.quarter,
+        isPast: days < 0,
+        daysFromNow: days,
+      });
+    }
+
+    for (const h of holdingDividends) {
+      if (h.noData || !h.exDividendDate) continue;
+      const days = daysUntil(h.exDividendDate);
+      entries.push({
+        type: 'ex-dividend',
+        date: h.exDividendDate,
+        symbol: h.symbol,
+        name: h.name,
+        annualIncome: h.annualIncome,
+        dividendPerShare: h.dividendPerShare,
+        shares: h.shares,
+        isEstimated: h.isEstimated,
+        isPast: days < 0,
+        daysFromNow: days,
+      });
+    }
+
+    return entries.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  }, [events, holdingDividends, holdingNameMap]);
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
 
-      {/* Header */}
-      <div className="bg-gradient-to-br from-slate-900 to-emerald-900 p-4 md:p-8 rounded-[40px] text-white relative overflow-hidden shadow-2xl">
+      {/* ── Header mit integrierten KPI-Karten ──────────────────────────────── */}
+      <div className="bg-gradient-to-br from-slate-900 to-emerald-900 p-5 md:p-7 rounded-[40px] text-white relative overflow-hidden shadow-2xl">
         <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-500/10 rounded-full -mr-16 -mt-16 blur-3xl" />
         <div className="relative z-10">
-          <div className="flex items-center gap-2 mb-4">
+          <div className="flex items-center gap-2 mb-3">
             <Calendar className="w-5 h-5 text-emerald-400" />
             <span className="text-emerald-400 font-black text-[10px] uppercase tracking-[0.3em]">Depot-Kalender</span>
           </div>
-          <h2 className="text-3xl md:text-4xl font-black mb-3 tracking-tighter">Earnings & Dividenden</h2>
-          <p className="text-slate-400 font-medium leading-relaxed text-sm max-w-xl">
-            Bevorstehende Quartalszahlen und Dividenden-Schätzungen für deine Depot-Positionen –{' '}
-            <span className="text-white font-bold">Investieren mit Durchblick.</span>{' '}
-            KI-Schätzungen auf Basis historischer Daten, rein informativ, keine Anlageberatung.
-          </p>
+          <h2 className="text-2xl md:text-3xl font-black mb-4 tracking-tighter">Earnings & Dividenden</h2>
+
+          {portfolioHoldings.length > 0 && (
+            <div className="grid grid-cols-3 gap-2 md:gap-3">
+              <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-3">
+                <p className="text-[8px] font-black text-emerald-300 uppercase tracking-widest mb-1">Ex-Datum vergangen</p>
+                <p className="text-base font-black text-white tabular-nums">
+                  {isDivLoading && holdingDividends.length === 0
+                    ? <span className="opacity-40">–</span>
+                    : `${formatCurrency(receivedDividends)} €`}
+                </p>
+                <p className="text-[8px] text-white/40 mt-0.5">{currentYear}</p>
+              </div>
+              <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-3">
+                <p className="text-[8px] font-black text-blue-300 uppercase tracking-widest mb-1">Bevorstehend</p>
+                <p className="text-base font-black text-white tabular-nums">
+                  {isDivLoading && holdingDividends.length === 0
+                    ? <span className="opacity-40">–</span>
+                    : `${formatCurrency(expectedDividends)} €`}
+                </p>
+                <p className="text-[8px] text-white/40 mt-0.5">Rest {currentYear}</p>
+              </div>
+              <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-3">
+                <p className="text-[8px] font-black text-slate-300 uppercase tracking-widest mb-1">Gesamt p.a.</p>
+                <p className="text-base font-black text-white tabular-nums">
+                  {isDivLoading && holdingDividends.length === 0
+                    ? <span className="opacity-40">–</span>
+                    : `${formatCurrency(totalAnnualDividend)} €`}
+                </p>
+                <p className="text-[8px] text-white/40 mt-0.5">
+                  {holdingDividends.filter(h => !h.noData).length} Pos. zahlen Div.
+                </p>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Allgemeiner Disclaimer */}
-      <div className="bg-amber-50 border border-amber-100 p-4 rounded-[20px] flex items-start gap-3">
-        <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-        <p className="text-[11px] text-amber-700 font-medium leading-relaxed">
-          <strong>Hinweis:</strong> Alle Earnings- und Dividenden-Daten sind Schätzungen auf Basis historischer Daten
-          und stellen keine verlässlichen Prognosen dar. Dividendenangaben sind keine Garantie für zukünftige Zahlungen.
-          Offizielle Termine immer auf der Unternehmens-IR-Seite prüfen. Keine Anlageberatung.
-        </p>
-      </div>
-
-      {/* ── Dividenden-Tracker ──────────────────────────────────────────────── */}
-
-      {portfolioHoldings.length > 0 && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-[0.2em] flex items-center gap-2">
-              <DollarSign className="w-4 h-4 text-emerald-600" /> Dividenden-Tracker {currentYear}
-              {isDivFallback && !isDivLoading && (
-                <span
-                  title="Voraussichtliche Termine basierend auf KI-Analyse historischer Muster – keine offiziellen Daten verfügbar"
-                  className="flex items-center gap-1 text-[9px] font-black bg-amber-100 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-lg uppercase tracking-widest cursor-help"
-                >
-                  <Info className="w-3 h-3" /> KI-Schätzung
-                </span>
-              )}
-            </h3>
+      {/* ── Sparerpauschbetrag ──────────────────────────────────────────────── */}
+      {totalAnnualDividend > 0 && (
+        <div className="bg-white border border-slate-200 rounded-[20px] p-4 shadow-sm">
+          <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
-              {divCacheStats && !isDivLoading && (
-                <div className="flex items-center gap-1 text-[9px] font-black text-slate-400 bg-slate-50 border border-slate-100 px-2 py-1 rounded-lg">
-                  <Database className="w-2.5 h-2.5" />
-                  {divCacheStats.cached}/{divCacheStats.total} gecacht
-                  {scannedDivSymbol && <span className="text-emerald-500 ml-1">· {scannedDivSymbol}</span>}
-                </div>
+              <ShieldCheck className="w-4 h-4 text-emerald-600" />
+              <span className="text-[10px] font-black text-slate-900 uppercase tracking-widest">
+                Sparerpauschbetrag {currentYear}
+              </span>
+            </div>
+            <span className={`text-[10px] font-black px-2 py-0.5 rounded-lg ${
+              pauschbetragPct >= 100
+                ? 'bg-rose-50 text-rose-600 border border-rose-100'
+                : pauschbetragPct >= 70
+                ? 'bg-amber-50 text-amber-600 border border-amber-100'
+                : 'bg-emerald-50 text-emerald-600 border border-emerald-100'
+            }`}>
+              {formatCurrency(Math.min(totalAnnualDividend, SPARERPAUSCHBETRAG))} / 1.000 €
+            </span>
+          </div>
+          <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-all duration-700 ${
+                pauschbetragPct >= 100 ? 'bg-rose-400' : pauschbetragPct >= 70 ? 'bg-amber-400' : 'bg-emerald-500'
+              }`}
+              style={{ width: `${Math.min(100, pauschbetragPct)}%` }}
+            />
+          </div>
+          <p className="text-[9px] text-slate-400 mt-1.5">
+            {pauschbetragPct >= 100
+              ? `Pauschbetrag überschritten · +${formatCurrency(totalAnnualDividend - SPARERPAUSCHBETRAG)} € steuerpflichtig (Schätzung)`
+              : `${pauschbetragPct.toFixed(0)} % ausgeschöpft · ${formatCurrency(SPARERPAUSCHBETRAG - Math.min(totalAnnualDividend, SPARERPAUSCHBETRAG))} € verbleibend`}
+            {' '}· Keine Steuerberatung
+          </p>
+        </div>
+      )}
+
+      {/* ── Unified Timeline ─────────────────────────────────────────────────── */}
+
+      {tickers.length === 0 ? (
+        <div className="bg-white border border-slate-200 rounded-[28px] p-12 text-center shadow-sm">
+          <Calendar className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+          <p className="text-slate-500 font-medium">Füge Aktien hinzu, um Earnings-Termine und Dividenden anzuzeigen.</p>
+        </div>
+      ) : (
+        <div className="bg-white border border-slate-200 rounded-[24px] overflow-hidden shadow-sm">
+
+          {/* Tabellen-Header */}
+          <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-[0.2em]">Anstehende Events</h3>
+              {(isLoading || isDivLoading) && (
+                <span className="flex items-center gap-1 text-[9px] text-emerald-600">
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  Wird aktualisiert…
+                </span>
               )}
             </div>
+            <button
+              onClick={() => { loadEarnings(); loadDividends(); loadScanStatus(); }}
+              disabled={isLoading || isDivLoading}
+              className="flex items-center gap-1.5 text-[9px] font-black text-slate-400 hover:text-emerald-600 uppercase tracking-wide transition-colors disabled:opacity-50"
+            >
+              <RefreshCcw className={`w-3 h-3 ${isLoading || isDivLoading ? 'animate-spin' : ''}`} />
+              {lastFetch
+                ? lastFetch.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
+                : 'Laden'}
+            </button>
           </div>
 
-          {/* Lade-Fortschritt */}
-          {isDivLoading && (
-            <div className="bg-white px-5 py-3 rounded-2xl shadow border border-slate-100 flex items-center gap-3">
-              <Loader2 className="w-4 h-4 animate-spin text-emerald-600 shrink-0" />
-              <div className="flex-1 min-w-0">
-                <span className="text-[11px] font-black text-slate-700 block">
-                  {divCacheStats && divCacheStats.stale > 0
-                    ? `Aktualisiere ${divCacheStats.stale} Symbol${divCacheStats.stale > 1 ? 'e' : ''} via Yahoo Finance…`
-                    : 'Lade Dividenden-Daten…'}
-                </span>
-                {divCacheStats && divCacheStats.total > 0 && (
-                  <div className="mt-1.5 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-emerald-500 rounded-full transition-all duration-500"
-                      style={{ width: `${Math.round((divCacheStats.cached / divCacheStats.total) * 100)}%` }}
-                    />
-                  </div>
-                )}
-              </div>
+          {/* Fehler */}
+          {(error || divError) && (
+            <div className="mx-5 my-3 bg-rose-50 border border-rose-100 p-3 rounded-xl text-rose-700 text-xs">
+              {error || divError}
             </div>
           )}
 
-          {/* Drei Karten: Erhalten + Erwartet + Gesamt */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            {/* Erhalten */}
-            <div className="bg-white border border-emerald-100 rounded-[24px] p-5 shadow-sm">
-              <div className="flex items-center gap-2 mb-2">
-                <div className="w-7 h-7 bg-emerald-100 rounded-xl flex items-center justify-center">
-                  <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
-                </div>
-                <div>
-                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Ex-Datum vergangen</p>
-                  <p className="text-[9px] text-slate-300">{currentYear}</p>
-                </div>
-              </div>
-              {isDivLoading && holdingDividends.length === 0 ? (
-                <div className="h-7 bg-slate-100 rounded-lg animate-pulse" />
-              ) : (
-                <p className="text-xl font-black text-slate-900 tabular-nums">
-                  {formatCurrency(receivedDividends)} <span className="text-xs font-medium text-slate-400">€</span>
-                </p>
-              )}
-              {holdingDividends.filter(h => h.isPaid).length > 0 && (
-                <p className="text-[9px] text-emerald-600 font-bold mt-1">
-                  {holdingDividends.filter(h => h.isPaid).length} Position{holdingDividends.filter(h => h.isPaid).length !== 1 ? 'en' : ''}
-                </p>
-              )}
-            </div>
-
-            {/* Erwartet */}
-            <div className="bg-white border border-blue-100 rounded-[24px] p-5 shadow-sm">
-              <div className="flex items-center gap-2 mb-2">
-                <div className="w-7 h-7 bg-blue-50 rounded-xl flex items-center justify-center">
-                  <Calendar className="w-3.5 h-3.5 text-blue-500" />
-                </div>
-                <div>
-                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Bevorstehend</p>
-                  <p className="text-[9px] text-slate-300">Rest {currentYear}</p>
-                </div>
-              </div>
-              {isDivLoading && holdingDividends.length === 0 ? (
-                <div className="h-7 bg-slate-100 rounded-lg animate-pulse" />
-              ) : (
-                <p className="text-xl font-black text-slate-900 tabular-nums">
-                  {formatCurrency(expectedDividends)} <span className="text-xs font-medium text-slate-400">€</span>
-                </p>
-              )}
-              {holdingDividends.filter(h => !h.isPaid && h.exDividendDate).length > 0 && (
-                <p className="text-[9px] text-blue-500 font-bold mt-1">
-                  {holdingDividends.filter(h => !h.isPaid && h.exDividendDate && new Date(h.exDividendDate) > today).length} ausstehend
-                </p>
-              )}
-            </div>
-
-            {/* Gesamt p.a. */}
-            <div className="bg-white border border-slate-100 rounded-[24px] p-5 shadow-sm">
-              <div className="flex items-center gap-2 mb-2">
-                <div className="w-7 h-7 bg-slate-100 rounded-xl flex items-center justify-center">
-                  <DollarSign className="w-3.5 h-3.5 text-slate-600" />
-                </div>
-                <div>
-                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Gesamt p.a.</p>
-                  <p className="text-[9px] text-slate-300">alle Positionen</p>
-                </div>
-              </div>
-              {isDivLoading && holdingDividends.length === 0 ? (
-                <div className="h-7 bg-slate-100 rounded-lg animate-pulse" />
-              ) : (
-                <p className="text-xl font-black text-slate-900 tabular-nums">
-                  {formatCurrency(totalAnnualDividend)} <span className="text-xs font-medium text-slate-400">€</span>
-                </p>
-              )}
-              {holdingDividends.length > 0 && (
-                <p className="text-[9px] text-slate-400 font-bold mt-1">
-                  {holdingDividends.length} zahlen Dividende
-                </p>
-              )}
-            </div>
+          {/* Spalten-Labels (Desktop) */}
+          <div className="hidden md:grid md:grid-cols-[80px_100px_1fr_100px] px-5 py-2 bg-slate-50/60 border-b border-slate-100 gap-3">
+            <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Typ</p>
+            <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Datum</p>
+            <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Unternehmen</p>
+            <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest text-right">Betrag p.a.</p>
           </div>
 
-          {/* Sparerpauschbetrag-Vorschau */}
-          {totalAnnualDividend > 0 && (
-            <div className="bg-white border border-slate-200 rounded-[20px] p-5 shadow-sm">
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2">
-                  <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                  <p className="text-[10px] font-black text-slate-900 uppercase tracking-widest">
-                    Sparerpauschbetrag {currentYear}
-                  </p>
-                </div>
-                <span className={`text-[10px] font-black px-2 py-0.5 rounded-lg ${
-                  pauschbetragPct >= 100
-                    ? 'bg-rose-50 text-rose-600 border border-rose-100'
-                    : pauschbetragPct >= 70
-                    ? 'bg-amber-50 text-amber-600 border border-amber-100'
-                    : 'bg-emerald-50 text-emerald-600 border border-emerald-100'
-                }`}>
-                  {formatCurrency(Math.min(totalAnnualDividend, SPARERPAUSCHBETRAG))} / {SPARERPAUSCHBETRAG.toLocaleString('de-DE')} €
-                </span>
-              </div>
-              <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                <div
-                  className={`h-full rounded-full transition-all duration-700 ${
-                    pauschbetragPct >= 100 ? 'bg-rose-400' : pauschbetragPct >= 70 ? 'bg-amber-400' : 'bg-emerald-500'
-                  }`}
-                  style={{ width: `${pauschbetragPct}%` }}
-                />
-              </div>
-              <p className="text-[9px] text-slate-400 mt-1.5">
-                {pauschbetragPct >= 100
-                  ? `Pauschbetrag durch geplante Dividenden überschritten (+${formatCurrency(totalAnnualDividend - SPARERPAUSCHBETRAG)} €)`
-                  : `${pauschbetragPct.toFixed(0)} % ausgeschöpft · ${formatCurrency(SPARERPAUSCHBETRAG - Math.min(totalAnnualDividend, SPARERPAUSCHBETRAG))} € verbleibend`}
-                {' '}· Keine Steuerberatung · Schätzung auf Basis der Jahresdividenden
-              </p>
+          {/* Event-Zeilen */}
+          {unifiedEntries.length === 0 && !isLoading && !isDivLoading ? (
+            <div className="px-6 py-8 text-center">
+              <p className="text-slate-400 text-sm">Noch keine Daten verfügbar.</p>
+              <p className="text-slate-300 text-xs mt-1">Klicke auf „Laden" oder warte auf den Auto-Scan.</p>
             </div>
-          )}
-
-          {/* Dividenden-Fehler */}
-          {divError && !isDivLoading && (
-            <div className="bg-rose-50 border border-rose-100 p-4 rounded-[16px] text-rose-700 text-xs font-medium">
-              Dividenden-Daten konnten nicht geladen werden – {divError}
-            </div>
-          )}
-
-          {/* Per-Position-Liste – alle Positionen, auch ohne Dividende */}
-          {(portfolioHoldings.length > 0) && (
-            <div className="bg-white border border-slate-200 rounded-[24px] overflow-hidden shadow-sm">
-              <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
-                <p className="text-[10px] font-black text-slate-900 uppercase tracking-widest">Dividenden je Position</p>
-                <p className="text-[9px] text-slate-400 font-mono">
-                  {holdingDividends.filter(h => !h.noData).length} von {portfolioHoldings.length} zahlen Dividende
-                </p>
-              </div>
-
-              <div className="divide-y divide-slate-100">
-                {/* Alle Positionen – chronologisch, noData ans Ende */}
-                {isDivLoading && holdingDividends.length === 0
-                  ? portfolioHoldings.slice(0, 5).map((_, i) => (
-                    <div key={`sk-${i}`} className="px-6 py-4 flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="w-2 h-2 rounded-full bg-slate-200 animate-pulse" />
-                        <div>
-                          <div className="h-3.5 w-28 bg-slate-100 rounded animate-pulse mb-1" />
-                          <div className="h-2.5 w-20 bg-slate-100 rounded animate-pulse" />
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="h-3.5 w-16 bg-slate-100 rounded animate-pulse mb-1" />
-                        <div className="h-2.5 w-12 bg-slate-100 rounded animate-pulse" />
-                      </div>
-                    </div>
-                  ))
-                  : holdingDividends.map((h, i) => {
-                  if (h.noData) {
-                    const neverScanned = !divScanMap.has(h.symbol);
-                    const isFetchingThis = fetchingDivSym === h.symbol;
-                    return (
-                      <div key={i} className="px-6 py-3 flex items-center justify-between gap-2 hover:bg-slate-50/50 transition-opacity">
-                        <div className="flex items-center gap-3 min-w-0">
-                          <span className={`text-base font-light w-3.5 text-center shrink-0 ${neverScanned ? 'text-amber-300' : 'text-slate-300'}`}>
-                            {neverScanned ? '?' : '–'}
-                          </span>
-                          <div className="min-w-0">
-                            <p className="text-sm font-bold text-slate-500 truncate">{h.name}</p>
-                            <p className="text-[10px] font-mono text-slate-400 truncate">
-                              {h.symbol} · {h.shares} Stk ·{' '}
-                              {isDivLoading ? 'Wird geladen…' : neverScanned ? 'Noch nicht abgerufen' : 'Keine Dividende bekannt'}
-                            </p>
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => fetchDividendForSymbol(h.symbol)}
-                          disabled={!!fetchingDivSym}
-                          title={neverScanned ? 'Dividendendaten jetzt abrufen' : 'Neu laden (Yahoo Finance)'}
-                          className={`flex items-center gap-1 text-[8px] font-black uppercase tracking-wide shrink-0 px-2 py-1 rounded-lg transition-colors disabled:opacity-40 ${
-                            neverScanned
-                              ? 'bg-emerald-600 text-white hover:bg-emerald-700'
-                              : 'bg-slate-100 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50'
-                          }`}
-                        >
-                          {isFetchingThis
-                            ? <Loader2 className="w-3 h-3 animate-spin" />
-                            : <Download className="w-3 h-3" />}
-                          {neverScanned ? 'Abrufen' : 'Neu'}
-                        </button>
-                      </div>
-                    );
-                  }
-                  const daysToEx = h.exDividendDate ? daysUntil(h.exDividendDate) : null;
-                  const isSoon   = daysToEx !== null && daysToEx >= 0 && daysToEx <= 30;
+          ) : (
+            <div className="divide-y divide-slate-50">
+              {unifiedEntries
+                .filter(e => e.daysFromNow >= -90)
+                .map((entry, i) => {
+                  const isSoon  = !entry.isPast && entry.daysFromNow <= 7;
+                  const isToday = entry.daysFromNow === 0;
                   return (
-                    <div key={i} className={`px-6 py-4 flex items-center justify-between gap-2 hover:bg-slate-50 transition-colors ${isSoon ? 'bg-emerald-50/30' : ''}`}>
-                      <div className="flex items-center gap-3 min-w-0">
-                        {/* Quelle-Icon: DB (grün) vs KI-Schätzung (amber) */}
-                        <div title={h.isEstimated ? 'KI-Schätzung (Gemini)' : 'Echte Daten (Yahoo Finance / Alpha Vantage)'}>
-                          {h.isEstimated
-                            ? <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                            : <Database className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                          }
+                    <div
+                      key={`${entry.type}-${entry.symbol}-${entry.date}-${i}`}
+                      className={`px-5 py-3 grid grid-cols-[80px_1fr] md:grid-cols-[80px_100px_1fr_100px] gap-3 items-center transition-colors ${
+                        isToday      ? 'bg-emerald-50/60' :
+                        isSoon       ? 'bg-emerald-50/20' :
+                        entry.isPast ? 'opacity-40' :
+                        'hover:bg-slate-50/60'
+                      }`}
+                    >
+                      {/* Typ-Badge */}
+                      <div>
+                        {entry.type === 'earnings' ? (
+                          <span className="inline-block text-[7px] font-black bg-blue-50 text-blue-600 border border-blue-100 px-1.5 py-0.5 rounded-lg uppercase tracking-wide">
+                            Earnings
+                          </span>
+                        ) : (
+                          <span className="inline-block text-[7px] font-black bg-amber-50 text-amber-600 border border-amber-100 px-1.5 py-0.5 rounded-lg uppercase tracking-wide">
+                            Ex-Div.
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Datum (Desktop) */}
+                      <div className="hidden md:block">
+                        <p className="text-[10px] font-black text-slate-700 tabular-nums">
+                          {new Date(entry.date).toLocaleDateString('de-DE', { day: '2-digit', month: 'short', year: '2-digit' })}
+                        </p>
+                        <p className={`text-[9px] tabular-nums ${
+                          entry.isPast ? 'text-slate-300' : isSoon ? 'text-emerald-600 font-bold' : 'text-slate-400'
+                        }`}>
+                          {entry.isPast
+                            ? `vor ${Math.abs(entry.daysFromNow)}d`
+                            : isToday ? 'Heute'
+                            : `in ${entry.daysFromNow}d`}
+                        </p>
+                      </div>
+
+                      {/* Unternehmen + Details */}
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {/* Mobile: Datum inline */}
+                          <span className="md:hidden text-[9px] text-slate-400 font-mono tabular-nums">
+                            {new Date(entry.date).toLocaleDateString('de-DE', { day: '2-digit', month: 'short' })}
+                            {' · '}
+                            {entry.isPast
+                              ? `vor ${Math.abs(entry.daysFromNow)}d`
+                              : isToday ? 'Heute'
+                              : `in ${entry.daysFromNow}d`}
+                          </span>
+                          <span className="text-[10px] font-black text-slate-700 font-mono">{entry.symbol}</span>
+                          {entry.name !== entry.symbol && (
+                            <span className="text-[10px] text-slate-500 truncate max-w-[140px]">{entry.name}</span>
+                          )}
+                          {isSoon && !entry.isPast && (
+                            <span className="text-[7px] font-black bg-emerald-600 text-white px-1 py-0.5 rounded uppercase tracking-widest shrink-0">
+                              {isToday ? 'Heute' : 'Bald'}
+                            </span>
+                          )}
+                          {entry.isEstimated && (
+                            <span className="text-[7px] font-black bg-amber-50 text-amber-500 border border-amber-200 px-1 py-0.5 rounded uppercase tracking-widest shrink-0">KI</span>
+                          )}
                         </div>
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <p className="text-sm font-bold text-slate-800 truncate">{h.name}</p>
-                            {isSoon && !h.isPaid && (
-                              <span className="text-[8px] font-black bg-emerald-600 text-white px-1.5 py-0.5 rounded uppercase tracking-widest shrink-0">
-                                Bald
-                              </span>
-                            )}
-                            {h.isEstimated && (
-                              <span className="text-[8px] font-black bg-amber-50 text-amber-600 border border-amber-200 px-1.5 py-0.5 rounded uppercase tracking-widest shrink-0">
-                                KI-Schätzung
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-[10px] font-mono text-slate-400 truncate">
-                            {h.symbol} · {h.shares} Stk · {formatCurrency(h.dividendPerShare)} €/Aktie p.a.
-                          </p>
+                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                          {entry.type === 'earnings' && (
+                            <>
+                              {entry.quarter && <span className="text-[9px] text-slate-400">{entry.quarter}</span>}
+                              {entry.timeOfDay && entry.timeOfDay !== 'unbekannt' && (
+                                <span className={`text-[7px] font-black px-1 py-0.5 rounded ${timeOfDayColor(entry.timeOfDay)}`}>
+                                  {entry.timeOfDay}
+                                </span>
+                              )}
+                              {entry.epsEstimate && (
+                                <span className="text-[9px] text-slate-400">EPS: <strong>{entry.epsEstimate}</strong></span>
+                              )}
+                            </>
+                          )}
+                          {entry.type === 'ex-dividend' && entry.shares != null && (
+                            <span className="text-[9px] text-slate-400">
+                              {entry.shares} Stk · {formatCurrency(entry.dividendPerShare ?? 0)} €/Aktie
+                            </span>
+                          )}
                         </div>
                       </div>
-                      <div className="text-right shrink-0">
-                        <p className="text-sm font-black text-slate-900 tabular-nums">{formatCurrency(h.annualIncome)} €</p>
-                        <p className={`text-[9px] font-bold uppercase tracking-widest ${
-                          h.isPaid ? 'text-slate-400' : isSoon ? 'text-emerald-600' : 'text-slate-500'
-                        }`}>
-                          {h.isPaid
-                            ? '✓ Ex-Datum vergangen'
-                            : daysToEx === 0 ? 'Ex-Datum heute'
-                            : daysToEx !== null && daysToEx > 0
-                              ? `Ex: ${formatDate(h.exDividendDate)} (in ${daysToEx}d)`
-                              : h.exDividendDate ? `Ex: ${formatDate(h.exDividendDate)}` : 'Termin offen'}
-                        </p>
+
+                      {/* Betrag (Dividenden, Desktop) */}
+                      <div className="hidden md:block text-right">
+                        {entry.type === 'ex-dividend' && entry.annualIncome != null && (
+                          <p className="text-sm font-black text-slate-800 tabular-nums">{formatCurrency(entry.annualIncome)} €</p>
+                        )}
                       </div>
                     </div>
                   );
                 })}
-              </div>
-
-              <div className="px-6 py-3 bg-slate-50 border-t border-slate-100 flex items-center gap-3 flex-wrap">
-                <span className="flex items-center gap-1 text-[9px] text-slate-400">
-                  <Database className="w-3 h-3 text-emerald-500" /> Yahoo Finance / Alpha Vantage
-                </span>
-                <span className="flex items-center gap-1 text-[9px] text-slate-400">
-                  <Sparkles className="w-3 h-3 text-amber-400" /> KI-Schätzung (Gemini)
-                </span>
-                <span className="text-[9px] text-slate-300">·</span>
-                <span className="text-[9px] text-slate-400 italic">Alle Angaben ohne Gewähr · Keine Anlageberatung</span>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ── Earnings Calendar ───────────────────────────────────────────────── */}
-
-      {tickers.length === 0 && (
-        <div className="bg-white border border-slate-200 rounded-[28px] p-12 text-center shadow-sm">
-          <Calendar className="w-12 h-12 text-slate-300 mx-auto mb-4" />
-          <p className="text-slate-500 font-medium">Füge Aktien oder Watchlist-Positionen hinzu, um deren Earnings-Termine anzuzeigen.</p>
-        </div>
-      )}
-
-      {tickers.length > 0 && (
-        <>
-          {/* ── Header: Titel + Aktualisieren ──────────────────────────────── */}
-          <div className="flex items-center justify-between gap-4 flex-wrap">
-            <div className="flex items-center gap-3">
-              <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-[0.2em] flex items-center gap-2">
-                <TrendingUp className="w-4 h-4 text-emerald-600" /> Earnings-Kalender
-              </h3>
-              <span className="text-[9px] font-bold text-slate-400 bg-slate-50 border border-slate-100 px-2 py-1 rounded-lg">
-                {portfolioSorted.length} Depot{watchlistSorted.length > 0 ? ` · ${watchlistSorted.length} Watchlist` : ''}
-              </span>
-            </div>
-            <button
-              onClick={() => { loadEarnings(); loadScanStatus(); }}
-              disabled={isLoading}
-              className="flex items-center gap-2 text-[10px] font-black text-emerald-600 uppercase tracking-widest hover:text-slate-900 transition-colors disabled:opacity-50"
-            >
-              <RefreshCcw className={`w-3 h-3 ${isLoading ? 'animate-spin' : ''}`} />
-              {lastFetch ? `Aktualisiert ${lastFetch.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}` : 'Laden'}
-            </button>
-          </div>
-
-          {/* ── Ladefehler ─────────────────────────────────────────────────── */}
-          {error && (
-            <div className="bg-rose-50 border border-rose-100 p-4 rounded-[16px] text-rose-700 text-xs font-medium">
-              {error}
             </div>
           )}
 
-          {/* ── Per-Aktie Status-Liste ──────────────────────────────────────── */}
-          <div className="bg-white border border-slate-200 rounded-[24px] overflow-hidden shadow-sm">
-
-            {/* Legende + "Alle fehlenden abrufen" */}
-            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
-              <div className="flex items-center gap-4">
-                <span className="text-[9px] text-slate-400 flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block shrink-0" /> Termin bekannt
-                </span>
-                <span className="text-[9px] text-slate-400 flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-slate-300 inline-block shrink-0" /> Kein Termin
-                </span>
-                <span className="text-[9px] text-slate-400 flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-amber-400 inline-block shrink-0" /> Noch nicht abgerufen
-                </span>
+          {/* Ausstehende Scans */}
+          {(() => {
+            const pendingEarnings = tickers.filter(sym => !earnScanMap.has(sym) && !events.find(e => e.ticker === sym));
+            const pendingDivs = portfolioHoldings
+              .map(h => h.ticker?.symbol ?? h.symbol)
+              .filter((sym): sym is string => !!sym && !divScanMap.has(sym));
+            const totalPending = pendingEarnings.length + pendingDivs.length;
+            if (totalPending === 0) return null;
+            return (
+              <div className="px-5 py-3 bg-amber-50/50 border-t border-amber-100/60 flex items-center justify-between gap-3">
+                <p className="text-[9px] text-amber-700 font-medium">
+                  {pendingEarnings.length > 0 && `${pendingEarnings.length} Earnings`}
+                  {pendingEarnings.length > 0 && pendingDivs.length > 0 && ' · '}
+                  {pendingDivs.length > 0 && `${pendingDivs.length} Dividenden`}
+                  {' '}noch nicht abgerufen
+                </p>
+                <button
+                  onClick={() => {
+                    if (pendingEarnings.length > 0) fetchEarningsForSymbol(pendingEarnings[0]);
+                    else if (pendingDivs.length > 0) fetchDividendForSymbol(pendingDivs[0]);
+                  }}
+                  disabled={!!fetchingEarnSym || !!fetchingDivSym}
+                  className="flex items-center gap-1 text-[9px] font-black bg-amber-500 text-white px-2.5 py-1 rounded-lg hover:bg-amber-600 transition-colors disabled:opacity-40 shrink-0"
+                >
+                  {(fetchingEarnSym || fetchingDivSym)
+                    ? <Loader2 className="w-3 h-3 animate-spin" />
+                    : <Download className="w-3 h-3" />}
+                  Jetzt abrufen
+                </button>
               </div>
-              {(() => {
-                const missing = tickers.filter(sym => !earnScanMap.has(sym) && !events.find(e => e.ticker === sym));
-                if (missing.length === 0) return null;
-                return (
-                  <button
-                    onClick={() => fetchEarningsForSymbol(missing[0])}
-                    disabled={!!fetchingEarnSym || isLoading}
-                    className="flex items-center gap-1.5 text-[9px] font-black bg-emerald-600 text-white px-3 py-1.5 rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-40"
-                  >
-                    {fetchingEarnSym ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
-                    {missing.length} fehlende abrufen
-                  </button>
-                );
-              })()}
-            </div>
+            );
+          })()}
 
-            {/* Lade-Skeleton */}
-            {isLoading && (
-              <div className="px-5 py-4 flex items-center gap-3">
-                <Loader2 className="w-4 h-4 animate-spin text-emerald-600 shrink-0" />
-                <span className="text-xs font-medium text-slate-500">Lade Earnings-Daten aus Datenbank…</span>
-              </div>
-            )}
-
-            {/* Per-Aktie Zeilen */}
-            <div className="divide-y divide-slate-100">
-              {tickers.map(sym => {
-                const stockEvents = events.filter(e => e.ticker === sym);
-                const hasEvent    = stockEvents.length > 0;
-                const lastScan    = earnScanMap.get(sym);
-                const isScanned   = !!lastScan;
-                const isFetching  = fetchingEarnSym === sym;
-
-                const holding = [...portfolioSorted, ...watchlistSorted].find(
-                  h => (h.ticker?.symbol ?? h.symbol) === sym,
-                );
-                const name = holding?.ticker?.company_name ?? holding?.name ?? sym;
-
-                if (hasEvent) {
-                  // ── Termin(e) in DB vorhanden ──────────────────────────────
-                  return stockEvents.map((event, idx) => {
-                    const days = daysUntil(event.date);
-                    const soon = days >= 0 && days <= 7;
-                    return (
-                      <div
-                        key={`${sym}-${idx}`}
-                        className={`px-5 py-3.5 flex items-start gap-3 hover:bg-slate-50 transition-colors ${soon ? 'bg-emerald-50/40' : ''}`}
-                      >
-                        <span className="mt-1 w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap mb-0.5">
-                            <span className="text-xs font-black text-slate-900 font-mono">{sym}</span>
-                            {name !== sym && <span className="text-[10px] text-slate-500 truncate">{name}</span>}
-                            {soon && days >= 0 && (
-                              <span className="text-[8px] font-black bg-emerald-600 text-white px-1.5 py-0.5 rounded uppercase tracking-widest shrink-0">
-                                {days === 0 ? 'Heute' : `in ${days}d`}
-                              </span>
-                            )}
-                            <span className={`text-[8px] font-black px-1.5 py-0.5 rounded border uppercase tracking-widest ${timeOfDayColor(event.timeOfDay)}`}>
-                              {event.timeOfDay}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-3 text-[10px] text-slate-500 flex-wrap">
-                            <span className="flex items-center gap-1">
-                              <Clock className="w-3 h-3" />{formatDate(event.date)}
-                            </span>
-                            {event.epsEstimate && <span>EPS: <strong>{event.epsEstimate}</strong></span>}
-                            {event.revenueEstimate && <span>Umsatz: <strong>{event.revenueEstimate}</strong></span>}
-                            {event.quarter && <span className="text-slate-300">{event.quarter}</span>}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <span className="text-[9px] font-mono text-slate-400">
-                            {days >= 0 ? (days === 0 ? 'Heute' : `in ${days}d`) : `vor ${Math.abs(days)}d`}
-                          </span>
-                          <button
-                            onClick={() => fetchEarningsForSymbol(sym)}
-                            disabled={!!fetchingEarnSym}
-                            title="Neu laden"
-                            className="text-slate-300 hover:text-emerald-500 transition-colors disabled:opacity-30"
-                          >
-                            {isFetching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCcw className="w-3.5 h-3.5" />}
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  });
-                } else if (isScanned) {
-                  // ── Gescannt, kein bevorstehender Termin ──────────────────
-                  const scanDate = new Date(lastScan!).toLocaleDateString('de-DE', {
-                    day: '2-digit', month: 'short', year: 'numeric',
-                  });
-                  return (
-                    <div key={sym} className="px-5 py-3 flex items-center gap-3 hover:bg-slate-50 transition-colors">
-                      <span className="w-2 h-2 rounded-full bg-slate-300 shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-black text-slate-600 font-mono">{sym}</span>
-                          {name !== sym && <span className="text-[10px] text-slate-400 truncate">{name}</span>}
-                        </div>
-                        <p className="text-[10px] text-slate-400">Kein bevorstehender Termin bekannt · Scan: {scanDate}</p>
-                      </div>
-                      <button
-                        onClick={() => fetchEarningsForSymbol(sym)}
-                        disabled={!!fetchingEarnSym}
-                        title="Neu laden (Yahoo Finance → KI)"
-                        className="flex items-center gap-1 text-[8px] font-black text-slate-400 hover:text-emerald-600 uppercase tracking-wide transition-colors disabled:opacity-40 shrink-0 px-2 py-1 rounded-lg hover:bg-emerald-50"
-                      >
-                        {isFetching ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCcw className="w-3 h-3" />}
-                        Neu laden
-                      </button>
-                    </div>
-                  );
-                } else {
-                  // ── Noch nie gescannt ─────────────────────────────────────
-                  return (
-                    <div key={sym} className="px-5 py-3 flex items-center gap-3 bg-amber-50/30 hover:bg-amber-50/60 transition-colors">
-                      <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-black text-slate-700 font-mono">{sym}</span>
-                          {name !== sym && <span className="text-[10px] text-slate-500 truncate">{name}</span>}
-                        </div>
-                        <p className="text-[10px] text-amber-600">Noch nicht abgerufen – kein Eintrag in Datenbank</p>
-                      </div>
-                      <button
-                        onClick={() => fetchEarningsForSymbol(sym)}
-                        disabled={!!fetchingEarnSym}
-                        className="flex items-center gap-1.5 text-[9px] font-black bg-emerald-600 text-white px-2.5 py-1.5 rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-40 shrink-0"
-                      >
-                        {isFetching ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
-                        Jetzt abrufen
-                      </button>
-                    </div>
-                  );
-                }
-              })}
-            </div>
-
-            <div className="px-5 py-3 bg-slate-50 border-t border-slate-100">
-              <p className="text-[9px] text-slate-400 italic">Daten aus Datenbank-Cache (Yahoo Finance / KI) · Keine Anlageberatung · Offizielle Termine beim Unternehmen prüfen</p>
-            </div>
+          {/* Tabellen-Footer */}
+          <div className="px-5 py-3 bg-slate-50 border-t border-slate-100 flex items-center gap-2 flex-wrap">
+            <span className="text-[7px] font-black bg-blue-50 text-blue-600 border border-blue-100 px-1.5 py-0.5 rounded uppercase">Earnings</span>
+            <span className="text-[8px] text-slate-400">Quartalszahlen</span>
+            <span className="mx-1 text-slate-200">·</span>
+            <span className="text-[7px] font-black bg-amber-50 text-amber-600 border border-amber-100 px-1.5 py-0.5 rounded uppercase">Ex-Div.</span>
+            <span className="text-[8px] text-slate-400">Ex-Dividenden-Datum</span>
+            <span className="mx-1 text-slate-200">·</span>
+            <span className="text-[8px] text-slate-400 italic">Yahoo Finance / KI · Keine Anlageberatung</span>
           </div>
-        </>
+        </div>
       )}
     </div>
   );
