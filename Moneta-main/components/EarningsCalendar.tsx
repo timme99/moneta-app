@@ -3,9 +3,6 @@ import { Calendar, Clock, TrendingUp, Loader2, RefreshCcw, AlertTriangle, Info, 
 import { EarningsEvent, HoldingRow } from '../types';
 import { getSupabaseBrowser } from '../lib/supabaseBrowser';
 
-const DIVIDEND_EVENT_TYPE = 'dividend_info';
-const SENTINEL_DATE       = '1970-01-01';
-const CACHE_TTL_MS        = 30 * 24 * 60 * 60 * 1000; // 30 Tage (sync mit API)
 
 interface EarningsCalendarProps {
   holdings: HoldingRow[];
@@ -22,7 +19,7 @@ interface DividendInfo {
   dividendYield: number;
   price: number;
   noData: boolean;
-  isEstimated?: boolean; // true wenn aus Gemini-Fallback
+  isEstimated?: boolean; // true = Gemini-Schätzung, false = Yahoo Finance / Alpha Vantage
 }
 
 interface HoldingDividend {
@@ -387,7 +384,7 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
               <div className="flex-1 min-w-0">
                 <span className="text-[11px] font-black text-slate-700 block">
                   {divCacheStats && divCacheStats.stale > 0
-                    ? `Scanne ${Math.min(10, divCacheStats.stale)} Symbol${divCacheStats.stale > 1 ? 'e' : ''} via KI-Batch…`
+                    ? `Aktualisiere ${divCacheStats.stale} Symbol${divCacheStats.stale > 1 ? 'e' : ''} via Yahoo Finance…`
                     : 'Lade Dividenden-Daten…'}
                 </span>
                 {divCacheStats && divCacheStats.total > 0 && (
@@ -576,7 +573,7 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
                     <div key={i} className={`px-6 py-4 flex items-center justify-between gap-2 hover:bg-slate-50 transition-colors ${isSoon ? 'bg-emerald-50/30' : ''}`}>
                       <div className="flex items-center gap-3 min-w-0">
                         {/* Quelle-Icon: DB (grün) vs KI-Schätzung (amber) */}
-                        <div title={h.isEstimated ? 'KI-Schätzung (Gemini)' : 'Aus Datenbank (Alpha Vantage)'}>
+                        <div title={h.isEstimated ? 'KI-Schätzung (Gemini)' : 'Echte Daten (Yahoo Finance / Alpha Vantage)'}>
                           {h.isEstimated
                             ? <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                             : <Database className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
@@ -621,7 +618,7 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
 
               <div className="px-6 py-3 bg-slate-50 border-t border-slate-100 flex items-center gap-3 flex-wrap">
                 <span className="flex items-center gap-1 text-[9px] text-slate-400">
-                  <Database className="w-3 h-3 text-emerald-500" /> Alpha Vantage (verifiziert)
+                  <Database className="w-3 h-3 text-emerald-500" /> Yahoo Finance / Alpha Vantage
                 </span>
                 <span className="flex items-center gap-1 text-[9px] text-slate-400">
                   <Sparkles className="w-3 h-3 text-amber-400" /> KI-Schätzung (Gemini)
