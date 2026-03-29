@@ -112,6 +112,13 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
   // Nur Positionen mit Stückzahl für Dividenden-Berechnung
   const portfolioHoldings = holdings.filter(h => !h.watchlist && h.shares && h.shares > 0);
 
+  // Separate Schlüssel: Dividenden laden auf portfolioKey, Earnings auf tickerKey
+  const portfolioKey = portfolioHoldings
+    .map(h => h.ticker?.symbol ?? h.symbol)
+    .filter(Boolean)
+    .sort()
+    .join(',');
+
   // ── Earnings laden (Cache-First via /api/earnings) ──────────────────────────
 
   const loadEarnings = async (isAutoScan = false) => {
@@ -202,6 +209,12 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
       setIsDivFallback(results.some((r: DividendInfo) => r.isEstimated));
 
       isDivScanningRef.current = false;
+
+      // Auto-Scan-Loop: solange stale Symbole vorhanden, nächstes nach 2 s scannen
+      const remainingStale = stats?.stale ?? 0;
+      if (remainingStale > 0) {
+        divScanTimerRef.current = setTimeout(() => loadDividends(true), 2000);
+      }
     } catch (e: any) {
       isDivScanningRef.current = false;
       setDivError(e?.message ?? 'Dividenden-Daten konnten nicht geladen werden.');
@@ -261,26 +274,30 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ holdings, isPremium
     }
   };
 
+  // Earnings + Scan-Status: reagiert auf alle Tickers (Portfolio + Watchlist)
   useEffect(() => {
-    // Laufende Auto-Scans stoppen wenn sich Holdings ändern
     if (autoScanTimerRef.current) clearTimeout(autoScanTimerRef.current);
-    if (divScanTimerRef.current) clearTimeout(divScanTimerRef.current);
     isScanningRef.current = false;
-    isDivScanningRef.current = false;
-
     if (tickers.length > 0) {
       loadEarnings();
-      loadDividends();
       loadScanStatus();
+    }
+    return () => { if (autoScanTimerRef.current) clearTimeout(autoScanTimerRef.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tickerKey]);
+
+  // Dividenden: reagiert auf portfolioKey – lädt auch Positionen ohne Kaufpreis
+  useEffect(() => {
+    if (divScanTimerRef.current) clearTimeout(divScanTimerRef.current);
+    isDivScanningRef.current = false;
+    if (portfolioHoldings.length > 0) {
+      loadDividends();
     } else {
       setDividendData([]);
     }
-    return () => {
-      if (autoScanTimerRef.current) clearTimeout(autoScanTimerRef.current);
-      if (divScanTimerRef.current) clearTimeout(divScanTimerRef.current);
-    };
+    return () => { if (divScanTimerRef.current) clearTimeout(divScanTimerRef.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tickerKey]);
+  }, [portfolioKey]);
 
   // ── Dividenden-Berechnungen ─────────────────────────────────────────────────
 
