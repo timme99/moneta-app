@@ -1,10 +1,6 @@
 import { Resend } from 'resend';
 import type { NewsletterSubscriber } from './subscribers.js';
 
-/**
- * Absender-Adresse.
- * Beispiel in Vercel: EMAIL_FROM="Moneta <newsletter@moneta-invest.de>"
- */
 const FROM_EMAIL =
   process.env.EMAIL_FROM ??
   process.env.FROM_EMAIL ??
@@ -12,7 +8,6 @@ const FROM_EMAIL =
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-// Lazy-Init: verhindert "new Resend(undefined)" beim Laden ohne API-Key.
 let _resend: Resend | null = null;
 
 export function getResendClient(): Resend | null {
@@ -24,10 +19,6 @@ export function getResendClient(): Resend | null {
   return _resend;
 }
 
-/**
- * Sendet eine einzelne E-Mail über Resend.
- * Bei Rate-Limit (429) wird einmalig 2 s gewartet und erneut versucht.
- */
 export async function sendEmail(params: {
   to: string | string[];
   subject: string;
@@ -39,12 +30,10 @@ export async function sendEmail(params: {
 
   const from = params.from ?? FROM_EMAIL;
   const to   = Array.isArray(params.to) ? params.to : [params.to];
-
   const trySend = () =>
     client.emails.send({ from, to, subject: params.subject, html: params.html });
 
   let { data, error } = await trySend();
-
   if (error) {
     const isRateLimit =
       (error as any).statusCode === 429 ||
@@ -56,30 +45,32 @@ export async function sendEmail(params: {
       ({ data, error } = await trySend());
     }
   }
-
   if (error) return { success: false, error: error.message };
   return { success: true, id: data?.id };
 }
 
-// ── Shared design tokens (inline CSS, email-safe) ─────────────────────────────
+// ── Design tokens ─────────────────────────────────────────────────────────────
 
-const BG        = '#070d1a';
-const CARD_BG   = 'linear-gradient(135deg,#0f1b38 0%,#1e1040 100%)';
-const CARD_BDR  = '#1e2d4a';
-const ACCENT    = '#6366f1';
-const ACCENT2   = '#8b5cf6';
-const TEXT_PRI  = '#f1f5f9';
-const TEXT_SEC  = '#94a3b8';
-const TEXT_MUT  = '#334155';
-const TEXT_FADE = '#475569';
-const LABEL_CLR = '#818cf8';
+const BG           = '#070d1a';
+const HERO_BG      = 'linear-gradient(145deg,#0f1b38 0%,#16113a 100%)';
+const CARD_BG      = '#0b1528';
+const CARD_BDR     = '#1e2d4a';
+const ROW_DIV      = '#121f36';
+const ACCENT       = '#6366f1';
+const ACCENT2      = '#8b5cf6';
+const TEXT_PRI     = '#f1f5f9';
+const TEXT_SEC     = '#94a3b8';
+const TEXT_DIM     = '#475569';
+const TEXT_MUT     = '#334155';
+const LABEL_CLR    = '#818cf8';
+const GREEN_BG     = '#052e16';
+const GREEN_BDR    = '#166534';
+const GREEN_TXT    = '#22c55e';
+const RED_BG       = '#450a0a';
+const RED_BDR      = '#991b1b';
+const RED_TXT      = '#ef4444';
 
-const GREEN_BG  = '#052e16';
-const GREEN_BDR = '#166534';
-const GREEN_TXT = '#22c55e';
-const RED_BG    = '#450a0a';
-const RED_BDR   = '#991b1b';
-const RED_TXT   = '#ef4444';
+// ── Shared HTML helpers ───────────────────────────────────────────────────────
 
 function emailHead(title: string): string {
   return `<!DOCTYPE html>
@@ -87,69 +78,82 @@ function emailHead(title: string): string {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="color-scheme" content="dark light">
+  <meta name="color-scheme" content="dark">
   <title>${title}</title>
 </head>`;
 }
 
 function emailHeader(rightLabel: string): string {
-  return `
-  <!-- ─ HEADER ─ -->
-  <tr><td style="padding-bottom:28px;">
+  return `<tr><td style="padding-bottom:24px;">
     <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
       <td>
         <table cellpadding="0" cellspacing="0" border="0"><tr>
-          <td style="width:38px;height:38px;background:linear-gradient(135deg,${ACCENT},${ACCENT2});border-radius:11px;text-align:center;vertical-align:middle;font-size:19px;line-height:1;">📈</td>
-          <td style="padding-left:10px;font-size:21px;font-weight:800;color:${TEXT_PRI};letter-spacing:-0.03em;">Moneta</td>
+          <td style="width:34px;height:34px;background:linear-gradient(135deg,${ACCENT},${ACCENT2});border-radius:10px;text-align:center;vertical-align:middle;font-size:17px;line-height:34px;">📈</td>
+          <td style="padding-left:9px;font-size:20px;font-weight:800;color:${TEXT_PRI};letter-spacing:-0.03em;">Moneta</td>
         </tr></table>
       </td>
-      <td align="right" style="font-size:11px;color:${TEXT_FADE};font-weight:500;">${rightLabel}</td>
+      <td align="right" style="font-size:11px;color:${TEXT_DIM};font-weight:500;letter-spacing:0.01em;">${rightLabel}</td>
     </tr></table>
   </td></tr>`;
 }
 
+function sectionCard(label: string, content: string, extra = ''): string {
+  return `<tr><td style="background:${CARD_BG};border:1px solid ${CARD_BDR};border-radius:16px;padding:20px 20px 16px;${extra}">
+    <p style="margin:0 0 13px;font-size:10px;color:${LABEL_CLR};font-weight:700;letter-spacing:0.16em;text-transform:uppercase;">${label}</p>
+    ${content}
+  </td></tr>`;
+}
+
+function spacer(h = 8): string {
+  return `<tr><td style="height:${h}px;line-height:${h}px;">&nbsp;</td></tr>`;
+}
+
 function emailCta(href: string, label: string): string {
-  return `
-  <!-- ─ CTA ─ -->
-  <tr><td align="center" style="padding:20px 0 36px;">
-    <a href="${href}" style="display:inline-block;background:linear-gradient(135deg,${ACCENT},${ACCENT2});color:#ffffff;text-decoration:none;font-size:15px;font-weight:700;padding:15px 40px;border-radius:14px;letter-spacing:0.02em;">${label}</a>
+  return `<tr><td align="center" style="padding:18px 0 32px;">
+    <a href="${href}" style="display:inline-block;background:linear-gradient(135deg,${ACCENT},${ACCENT2});color:#ffffff;text-decoration:none;font-size:14px;font-weight:700;padding:13px 36px;border-radius:12px;letter-spacing:0.03em;">${label}</a>
   </td></tr>`;
 }
 
-function emailFooter(unsubscribeHint: string): string {
-  return `
-  <!-- ─ FOOTER ─ -->
-  <tr><td style="border-top:1px solid ${CARD_BDR};padding-top:20px;">
-    <p style="margin:0 0 4px;font-size:13px;font-weight:700;color:${ACCENT};letter-spacing:0.02em;">Moneta – Investieren mit Durchblick.</p>
-    <p style="margin:0;font-size:11px;color:${TEXT_MUT};line-height:1.75;">${unsubscribeHint}</p>
+function emailFooter(hint: string): string {
+  return `<tr><td style="border-top:1px solid ${CARD_BDR};padding-top:18px;">
+    <p style="margin:0 0 3px;font-size:12px;font-weight:700;color:${ACCENT};letter-spacing:0.02em;">Moneta – Investieren mit Durchblick.</p>
+    <p style="margin:0;font-size:11px;color:${TEXT_MUT};line-height:1.7;">${hint}</p>
   </td></tr>`;
 }
 
-function valueCard(label: string, value: string, sub?: string,
-                   bg = 'rgba(255,255,255,0.05)', border = 'rgba(255,255,255,0.09)',
-                   labelColor = '#64748b', valueColor = TEXT_PRI): string {
+function valueCard(
+  label: string, value: string, sub?: string,
+  bg = 'rgba(255,255,255,0.04)', border = 'rgba(255,255,255,0.08)',
+  labelColor = TEXT_DIM, valueColor = TEXT_PRI,
+): string {
   return `<table width="100%" cellpadding="0" cellspacing="0" border="0"
-    style="background:${bg};border:1px solid ${border};border-radius:16px;padding:20px;">
+    style="background:${bg};border:1px solid ${border};border-radius:14px;padding:16px 18px;">
     <tr><td>
-      <p style="margin:0 0 8px;font-size:10px;color:${labelColor};font-weight:700;text-transform:uppercase;letter-spacing:0.12em;">${label}</p>
-      <p style="margin:0 0 ${sub ? '5px' : '0'};font-size:26px;font-weight:800;color:${valueColor};letter-spacing:-0.02em;">${value}</p>
-      ${sub ? `<p style="margin:0;font-size:14px;color:${valueColor};opacity:0.75;">${sub}</p>` : ''}
+      <p style="margin:0 0 6px;font-size:10px;color:${labelColor};font-weight:700;text-transform:uppercase;letter-spacing:0.12em;">${label}</p>
+      <p style="margin:0 0 ${sub ? '4px' : '0'};font-size:22px;font-weight:800;color:${valueColor};letter-spacing:-0.02em;line-height:1;">${value}</p>
+      ${sub ? `<p style="margin:0;font-size:12px;color:${valueColor};opacity:0.8;">${sub}</p>` : ''}
     </td></tr>
   </table>`;
 }
 
 function twoColumnCards(left: string, right: string): string {
-  return `<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;">
+  return `<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:0;">
     <tr>
-      <td width="48%" style="vertical-align:top;">${left}</td>
-      <td width="4%">&nbsp;</td>
-      <td width="48%" style="vertical-align:top;">${right}</td>
+      <td width="49%" style="vertical-align:top;">${left}</td>
+      <td width="2%">&nbsp;</td>
+      <td width="49%" style="vertical-align:top;">${right}</td>
     </tr>
   </table>`;
 }
 
 function fmtEur(n: number): string {
   return new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2 }).format(n);
+}
+
+function changeBadge(pct: number): string {
+  const color = pct >= 0 ? GREEN_TXT : RED_TXT;
+  const sign  = pct >= 0 ? '+' : '';
+  return `<span style="font-size:12px;font-weight:700;color:${color};">${sign}${pct.toFixed(2)}%</span>`;
 }
 
 // ── buildDailySnapshotHtml ────────────────────────────────────────────────────
@@ -170,11 +174,8 @@ export function buildDailySnapshotHtml(options: {
   dailyChangePercent: number;
   ctaUrl?: string;
   dateLabel?: string;
-  /** Makro-News-Punkte (max. 3), generiert via Gemini */
   macroNews?: string[];
-  /** Top-Positionen im Depot (Symbol + optionaler Firmenname) */
-  topHoldings?: { symbol: string; name?: string }[];
-  /** Aktuelle Aktien-News zu den Holdings (max. 4), generiert via Gemini */
+  topHoldings?: { symbol: string; name?: string; value?: number; changePercent?: number | null }[];
   stockNews?: StockNewsItem[];
 }): string {
   const {
@@ -186,17 +187,17 @@ export function buildDailySnapshotHtml(options: {
     dateLabel = new Date().toLocaleDateString('de-DE', {
       weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
     }),
-    macroNews = [],
+    macroNews  = [],
     topHoldings = [],
-    stockNews = [],
+    stockNews  = [],
   } = options;
 
-  const pos   = dailyChange >= 0;
-  const sign  = pos ? '+' : '';
-  const arrow = pos ? '▲' : '▼';
-  const chBg  = pos ? GREEN_BG  : RED_BG;
-  const chBdr = pos ? GREEN_BDR : RED_BDR;
-  const chTxt = pos ? GREEN_TXT : RED_TXT;
+  const pos    = dailyChange >= 0;
+  const sign   = pos ? '+' : '';
+  const arrow  = pos ? '▲' : '▼';
+  const chBg   = pos ? GREEN_BG  : RED_BG;
+  const chBdr  = pos ? GREEN_BDR : RED_BDR;
+  const chTxt  = pos ? GREEN_TXT : RED_TXT;
 
   const leftCard  = valueCard('Depotwert', fmtEur(totalValue));
   const rightCard = valueCard(
@@ -206,79 +207,98 @@ export function buildDailySnapshotHtml(options: {
     chBg, chBdr, chTxt, chTxt,
   );
 
+  // ── Positionen-Tabelle ──────────────────────────────────────────────────────
+  const holdingsTable = topHoldings.length === 0 ? '' : `
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:18px;border-top:1px solid rgba(255,255,255,0.07);padding-top:14px;">
+    <tr>
+      <td style="font-size:10px;color:${LABEL_CLR};font-weight:700;letter-spacing:0.15em;text-transform:uppercase;padding-bottom:8px;">Positionen</td>
+      <td align="right" style="font-size:10px;color:${TEXT_DIM};font-weight:600;text-transform:uppercase;letter-spacing:0.1em;padding-bottom:8px;">Wert</td>
+      <td align="right" style="font-size:10px;color:${TEXT_DIM};font-weight:600;text-transform:uppercase;letter-spacing:0.1em;padding-bottom:8px;padding-left:12px;">Heute</td>
+    </tr>
+    ${topHoldings.map((h, i) => {
+      const chg = h.changePercent;
+      const chgCell = chg != null
+        ? `<span style="font-size:12px;font-weight:700;color:${chg >= 0 ? GREEN_TXT : RED_TXT};">${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%</span>`
+        : `<span style="font-size:12px;color:${TEXT_DIM};">–</span>`;
+      const valCell = h.value != null && h.value > 0
+        ? `<span style="font-size:12px;color:${TEXT_SEC};">${fmtEur(h.value)}</span>`
+        : `<span style="font-size:12px;color:${TEXT_DIM};">–</span>`;
+      const border = i > 0 ? `border-top:1px solid ${ROW_DIV};` : '';
+      return `
+    <tr>
+      <td style="${border}padding:7px 0;">
+        <table cellpadding="0" cellspacing="0" border="0"><tr>
+          <td style="background:rgba(99,102,241,0.13);border:1px solid rgba(99,102,241,0.22);color:#a5b4fc;border-radius:6px;padding:2px 7px;font-size:11px;font-weight:700;letter-spacing:0.04em;white-space:nowrap;">${h.symbol}</td>
+          ${h.name ? `<td style="padding-left:8px;font-size:12px;color:${TEXT_DIM};white-space:nowrap;max-width:140px;overflow:hidden;">${h.name.length > 18 ? h.name.slice(0, 17) + '…' : h.name}</td>` : ''}
+        </tr></table>
+      </td>
+      <td align="right" style="${border}padding:7px 0;">${valCell}</td>
+      <td align="right" style="${border}padding:7px 0 7px 12px;">${chgCell}</td>
+    </tr>`;
+    }).join('')}
+  </table>`;
+
+  // ── Aktien-News ─────────────────────────────────────────────────────────────
+  const newsContent = stockNews.length === 0 ? '' : stockNews.map((item, i) => {
+    const impBg  = item.importance === 'hoch' ? '#3b0a0a' : item.importance === 'mittel' ? '#0c1a38' : 'rgba(255,255,255,0.04)';
+    const impBdr = item.importance === 'hoch' ? '#7f1d1d' : item.importance === 'mittel' ? '#1e3a8a' : 'rgba(255,255,255,0.08)';
+    const impTxt = item.importance === 'hoch' ? '#fca5a5' : item.importance === 'mittel' ? '#93c5fd' : TEXT_DIM;
+    const impLbl = item.importance === 'hoch' ? '● Wichtig' : item.importance === 'mittel' ? '● Markt' : '● Info';
+    const border = i > 0 ? `border-top:1px solid ${ROW_DIV};` : '';
+    return `
+  <tr><td style="${border}padding:9px 0;">
+    <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+      <td style="width:26px;vertical-align:top;padding-top:1px;font-size:17px;line-height:1;">${item.impact_emoji}</td>
+      <td style="padding-left:9px;vertical-align:top;">
+        <p style="margin:0 0 3px;font-size:13px;font-weight:700;color:#e2e8f0;line-height:1.4;">${item.title}</p>
+        <p style="margin:0 0 5px;font-size:12px;color:${TEXT_SEC};line-height:1.45;">${item.snippet}</p>
+        <table cellpadding="0" cellspacing="0" border="0"><tr>
+          <td style="font-size:10px;color:${TEXT_DIM};">${item.source}</td>
+          ${item.ticker ? `<td style="padding-left:7px;"><span style="background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.22);color:#a5b4fc;border-radius:4px;padding:1px 5px;font-size:10px;font-weight:700;">${item.ticker}</span></td>` : ''}
+          <td style="padding-left:7px;"><span style="background:${impBg};border:1px solid ${impBdr};color:${impTxt};border-radius:4px;padding:1px 6px;font-size:10px;font-weight:600;">${impLbl}</span></td>
+        </tr></table>
+      </td>
+    </tr></table>
+  </td></tr>`;
+  }).join('');
+
+  // ── Makrolage ────────────────────────────────────────────────────────────────
+  const macroContent = macroNews.length === 0 ? '' : macroNews.map((news, i) => {
+    const border = i > 0 ? `border-top:1px solid ${ROW_DIV};` : '';
+    return `
+  <tr><td style="${border}padding:8px 0;">
+    <table cellpadding="0" cellspacing="0" border="0"><tr>
+      <td style="width:16px;vertical-align:top;padding-top:3px;">
+        <span style="display:inline-block;width:6px;height:6px;background:${LABEL_CLR};border-radius:50%;"></span>
+      </td>
+      <td style="padding-left:8px;font-size:13px;color:#cbd5e1;line-height:1.5;">${news}</td>
+    </tr></table>
+  </td></tr>`;
+  }).join('');
+
   return `${emailHead('Moneta – Tagesabschluss')}
 <body style="margin:0;padding:0;background-color:${BG};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
 <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${BG};">
-<tr><td align="center" style="padding:28px 16px 52px;">
+<tr><td align="center" style="padding:24px 16px 48px;">
 <table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;">
 
   ${emailHeader(dateLabel)}
 
-  <!-- ─ HERO CARD ─ -->
-  <tr><td style="background:${CARD_BG};border:1px solid ${CARD_BDR};border-radius:24px;padding:32px;">
-    <p style="margin:0 0 4px;font-size:11px;color:${LABEL_CLR};font-weight:700;letter-spacing:0.18em;text-transform:uppercase;">Tagesabschluss</p>
-    <p style="margin:0 0 28px;font-size:16px;color:${TEXT_SEC};line-height:1.55;">${userName ? `Hallo ${userName},` : 'Hallo,'} hier ist dein heutiger Depotstand.</p>
+  <!-- ─ PERFORMANCE CARD ─ -->
+  <tr><td style="background:${HERO_BG};border:1px solid ${CARD_BDR};border-radius:20px;padding:24px 24px 20px;">
+    <p style="margin:0 0 3px;font-size:10px;color:${LABEL_CLR};font-weight:700;letter-spacing:0.16em;text-transform:uppercase;">Tagesabschluss</p>
+    <p style="margin:0 0 18px;font-size:14px;color:${TEXT_SEC};line-height:1.5;">${userName ? `Hallo ${userName},` : 'Hallo,'} hier ist dein heutiger Depotstand.</p>
     ${twoColumnCards(leftCard, rightCard)}
-    ${topHoldings.length > 0 ? `
-    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-top:1px solid ${CARD_BDR};padding-top:16px;">
-      <tr><td style="padding-bottom:10px;">
-        <p style="margin:0;font-size:10px;color:${LABEL_CLR};font-weight:700;letter-spacing:0.18em;text-transform:uppercase;">Deine Positionen</p>
-      </td></tr>
-      <tr><td>${topHoldings.map(h => `<span style="display:inline-block;background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.25);color:#a5b4fc;border-radius:8px;padding:5px 11px;font-size:12px;font-weight:700;margin:3px 4px 3px 0;letter-spacing:0.03em;" title="${h.name ?? h.symbol}">${h.symbol}</span>`).join('')}</td></tr>
-    </table>` : ''}
+    ${holdingsTable}
   </td></tr>
 
-  <tr><td style="height:12px;">&nbsp;</td></tr>
-
-  ${stockNews.length > 0 ? `
+  ${stockNews.length > 0 ? `${spacer()}
   <!-- ─ AKTIEN-NEWS ─ -->
-  <tr><td style="background:rgba(255,255,255,0.03);border:1px solid ${CARD_BDR};border-radius:20px;padding:24px;">
-    <p style="margin:0 0 14px;font-size:10px;color:${LABEL_CLR};font-weight:700;letter-spacing:0.18em;text-transform:uppercase;">Aktien-News</p>
-    <table width="100%" cellpadding="0" cellspacing="0" border="0">
-      ${stockNews.map((item, i) => {
-        const importanceBg  = item.importance === 'hoch' ? '#450a0a' : item.importance === 'mittel' ? '#0c1a3a' : '#0f172a';
-        const importanceBdr = item.importance === 'hoch' ? '#991b1b' : item.importance === 'mittel' ? '#1e40af' : '#334155';
-        const importanceTxt = item.importance === 'hoch' ? '#ef4444' : item.importance === 'mittel' ? '#60a5fa' : '#94a3b8';
-        const importanceLbl = item.importance === 'hoch' ? 'Wichtig' : item.importance === 'mittel' ? 'Mittel' : 'Info';
-        return `
-      <tr><td style="padding:12px 0;${i < stockNews.length - 1 ? `border-bottom:1px solid ${CARD_BDR};` : ''}">
-        <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-          <td style="width:28px;vertical-align:top;padding-top:2px;font-size:18px;">${item.impact_emoji}</td>
-          <td style="padding-left:10px;vertical-align:top;">
-            <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-              <td>
-                <p style="margin:0 0 4px;font-size:13px;font-weight:700;color:#e2e8f0;line-height:1.4;">${item.title}</p>
-                <p style="margin:0 0 6px;font-size:12px;color:#94a3b8;line-height:1.5;">${item.snippet}</p>
-                <table cellpadding="0" cellspacing="0" border="0"><tr>
-                  <td style="font-size:10px;color:#64748b;font-weight:500;">${item.source}</td>
-                  ${item.ticker ? `<td style="padding-left:8px;"><span style="display:inline-block;background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.25);color:#a5b4fc;border-radius:5px;padding:1px 6px;font-size:10px;font-weight:700;">${item.ticker}</span></td>` : ''}
-                  <td style="padding-left:8px;"><span style="display:inline-block;background:${importanceBg};border:1px solid ${importanceBdr};color:${importanceTxt};border-radius:5px;padding:1px 6px;font-size:10px;font-weight:600;">${importanceLbl}</span></td>
-                </tr></table>
-              </td>
-            </tr></table>
-          </td>
-        </tr></table>
-      </td></tr>`;
-      }).join('')}
-    </table>
-  </td></tr>
-  <tr><td style="height:12px;">&nbsp;</td></tr>` : ''}
+  ${sectionCard('Aktien-News', `<table width="100%" cellpadding="0" cellspacing="0" border="0">${newsContent}</table>`)}` : ''}
 
-  ${macroNews.length > 0 ? `
-  <!-- ─ MAKROLAGE ─ -->
-  <tr><td style="background:rgba(255,255,255,0.03);border:1px solid ${CARD_BDR};border-radius:20px;padding:24px;">
-    <p style="margin:0 0 14px;font-size:10px;color:${LABEL_CLR};font-weight:700;letter-spacing:0.18em;text-transform:uppercase;">Makrolage</p>
-    <table width="100%" cellpadding="0" cellspacing="0" border="0">
-      ${macroNews.map((news, i) => `
-      <tr><td style="padding:9px 0;${i < macroNews.length - 1 ? `border-bottom:1px solid ${CARD_BDR};` : ''}">
-        <table cellpadding="0" cellspacing="0" border="0"><tr>
-          <td style="width:22px;vertical-align:top;padding-top:1px;font-size:15px;">📰</td>
-          <td style="padding-left:10px;font-size:13px;color:#cbd5e1;line-height:1.55;">${news}</td>
-        </tr></table>
-      </td></tr>`).join('')}
-    </table>
-  </td></tr>
-  <tr><td style="height:12px;">&nbsp;</td></tr>` : ''}
+  ${macroNews.length > 0 ? `${spacer()}
+  <!-- ─ MARKTLAGE ─ -->
+  ${sectionCard('Marktlage', `<table width="100%" cellpadding="0" cellspacing="0" border="0">${macroContent}</table>`)}` : ''}
 
   ${emailCta(ctaUrl, 'Depot öffnen →')}
 
@@ -298,12 +318,12 @@ export function buildDigestHtml(options: {
   summary?: string;
   highlights?: string[];
   ctaUrl?: string;
-  /** Portfolio-Daten für personalisierte Darstellung (optional) */
   totalValue?: number;
   weeklyChange?: number;
   weeklyChangePercent?: number;
-  /** Bevorstehende Earnings-Termine aus stock_events (nächste 7 Tage) */
   upcomingEarnings?: { ticker: string; company: string; date: string; timeOfDay?: string; quarter?: string }[];
+  upcomingDividends?: { symbol: string; company: string; exDate: string; dps: number; yieldPct?: number }[];
+  portfolioChartUrl?: string;
 }): string {
   const {
     userName,
@@ -314,9 +334,11 @@ export function buildDigestHtml(options: {
     weeklyChange,
     weeklyChangePercent,
     upcomingEarnings = [],
+    upcomingDividends = [],
+    portfolioChartUrl,
   } = options;
 
-  const now      = new Date();
+  const now       = new Date();
   const weekStart = new Date(now);
   weekStart.setDate(now.getDate() - now.getDay() + 1);
   const weekEnd = new Date(weekStart);
@@ -324,82 +346,120 @@ export function buildDigestHtml(options: {
   const fmtD = (d: Date) => d.toLocaleDateString('de-DE', { day: 'numeric', month: 'short' });
   const weekLabel = `${fmtD(weekStart)} – ${fmtD(weekEnd)}, ${now.getFullYear()}`;
 
-  // Portfolio change section
-  let portfolioSection = '';
+  // ── Performance-Block ────────────────────────────────────────────────────────
+  let perfBlock = '';
   if (totalValue !== undefined && weeklyChange !== undefined && weeklyChangePercent !== undefined) {
-    const pos   = weeklyChange >= 0;
-    const sign  = pos ? '+' : '';
+    const pos  = weeklyChange >= 0;
+    const sign = pos ? '+' : '';
     const arrow = pos ? '▲' : '▼';
     const chBg  = pos ? GREEN_BG  : RED_BG;
     const chBdr = pos ? GREEN_BDR : RED_BDR;
     const chTxt = pos ? GREEN_TXT : RED_TXT;
-
-    portfolioSection = twoColumnCards(
+    perfBlock = twoColumnCards(
       valueCard('Depotwert', fmtEur(totalValue)),
       valueCard(`Diese Woche ${arrow}`, `${sign}${fmtEur(weeklyChange)}`, `${sign}${weeklyChangePercent.toFixed(2)} %`,
         chBg, chBdr, chTxt, chTxt),
     );
   }
 
-  // Highlights list
-  const highlightRows = highlights.map((h) => `
-    <tr><td style="padding:11px 0;border-bottom:1px solid ${CARD_BDR};">
-      <table cellpadding="0" cellspacing="0" border="0"><tr>
-        <td style="width:26px;vertical-align:top;padding-right:12px;padding-top:1px;">
-          <div style="width:22px;height:22px;background:linear-gradient(135deg,${ACCENT},${ACCENT2});border-radius:7px;text-align:center;line-height:22px;font-size:12px;color:white;">✓</div>
-        </td>
-        <td style="font-size:14px;color:#cbd5e1;line-height:1.55;">${h}</td>
-      </tr></table>
-    </td></tr>`).join('');
+  // ── Highlights ───────────────────────────────────────────────────────────────
+  const highlightContent = highlights.length === 0 ? '' : highlights.map((h, i) => {
+    const border = i > 0 ? `border-top:1px solid ${ROW_DIV};` : '';
+    return `
+  <tr><td style="${border}padding:9px 0;">
+    <table cellpadding="0" cellspacing="0" border="0"><tr>
+      <td style="width:24px;vertical-align:top;padding-top:1px;">
+        <span style="display:inline-block;width:20px;height:20px;background:linear-gradient(135deg,${ACCENT},${ACCENT2});border-radius:6px;text-align:center;line-height:20px;font-size:11px;color:white;font-weight:700;">${i + 1}</span>
+      </td>
+      <td style="padding-left:10px;font-size:13px;color:#cbd5e1;line-height:1.55;">${h}</td>
+    </tr></table>
+  </td></tr>`;
+  }).join('');
+
+  // ── Earnings ─────────────────────────────────────────────────────────────────
+  const earningsContent = upcomingEarnings.length === 0 ? '' : upcomingEarnings.map((e, i) => {
+    const d = new Date(e.date + 'T12:00:00');
+    const dayLabel = d.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'short' });
+    const timeIcon = e.timeOfDay === 'vor Marktöffnung' ? '🌅' : e.timeOfDay === 'nach Marktschluss' ? '🌙' : '📅';
+    const border = i > 0 ? `border-top:1px solid ${ROW_DIV};` : '';
+    return `
+  <tr><td style="${border}padding:9px 0;">
+    <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+      <td style="width:22px;font-size:15px;vertical-align:middle;">${timeIcon}</td>
+      <td style="padding-left:9px;vertical-align:middle;">
+        <p style="margin:0 0 1px;font-size:13px;font-weight:700;color:${TEXT_PRI};">${e.company}</p>
+        <p style="margin:0;font-size:11px;color:${TEXT_DIM};">${e.ticker}${e.quarter ? ` · ${e.quarter}` : ''}${e.timeOfDay ? ` · ${e.timeOfDay}` : ''}</p>
+      </td>
+      <td align="right" style="vertical-align:middle;white-space:nowrap;">
+        <span style="font-size:12px;font-weight:600;color:#a5b4fc;">${dayLabel}</span>
+      </td>
+    </tr></table>
+  </td></tr>`;
+  }).join('');
+
+  // ── Dividenden ───────────────────────────────────────────────────────────────
+  const dividendsContent = upcomingDividends.length === 0 ? '' : upcomingDividends.map((d, i) => {
+    const dt = new Date(d.exDate + 'T12:00:00');
+    const dayLabel = dt.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'short' });
+    const border = i > 0 ? `border-top:1px solid ${ROW_DIV};` : '';
+    return `
+  <tr><td style="${border}padding:9px 0;">
+    <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+      <td style="width:22px;font-size:15px;vertical-align:middle;">💰</td>
+      <td style="padding-left:9px;vertical-align:middle;">
+        <p style="margin:0 0 1px;font-size:13px;font-weight:700;color:${TEXT_PRI};">${d.company}</p>
+        <p style="margin:0;font-size:11px;color:${TEXT_DIM};">${d.symbol}${d.yieldPct ? ` · ${d.yieldPct.toFixed(1)} % Rendite` : ''}</p>
+      </td>
+      <td align="right" style="vertical-align:middle;white-space:nowrap;">
+        <p style="margin:0;font-size:12px;font-weight:600;color:#a5b4fc;">Ex: ${dayLabel}</p>
+        <p style="margin:2px 0 0;font-size:12px;font-weight:700;color:${GREEN_TXT};">+${d.dps.toFixed(2)} € / Aktie</p>
+      </td>
+    </tr></table>
+  </td></tr>`;
+  }).join('');
+
+  // ── Evenements zusammenführen ─────────────────────────────────────────────────
+  const hasEvents = upcomingEarnings.length > 0 || upcomingDividends.length > 0;
+  const eventsContent = !hasEvents ? '' : `
+    ${upcomingEarnings.length > 0 ? `
+    <p style="margin:0 0 10px;font-size:10px;color:${LABEL_CLR};font-weight:700;letter-spacing:0.14em;text-transform:uppercase;">Earnings</p>
+    <table width="100%" cellpadding="0" cellspacing="0" border="0">${earningsContent}</table>` : ''}
+    ${upcomingEarnings.length > 0 && upcomingDividends.length > 0
+      ? `<div style="height:1px;background:${CARD_BDR};margin:12px 0;"></div>` : ''}
+    ${upcomingDividends.length > 0 ? `
+    <p style="margin:0 0 10px;font-size:10px;color:${LABEL_CLR};font-weight:700;letter-spacing:0.14em;text-transform:uppercase;">Dividenden</p>
+    <table width="100%" cellpadding="0" cellspacing="0" border="0">${dividendsContent}</table>` : ''}`;
 
   return `${emailHead('Moneta – KI-Wochenbericht')}
 <body style="margin:0;padding:0;background-color:${BG};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
 <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${BG};">
-<tr><td align="center" style="padding:28px 16px 52px;">
+<tr><td align="center" style="padding:24px 16px 48px;">
 <table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;">
 
   ${emailHeader(weekLabel)}
 
-  <!-- ─ HERO CARD ─ -->
-  <tr><td style="background:${CARD_BG};border:1px solid ${CARD_BDR};border-radius:24px;padding:32px;">
-    <p style="margin:0 0 4px;font-size:11px;color:${LABEL_CLR};font-weight:700;letter-spacing:0.18em;text-transform:uppercase;">KI-Wochenbericht</p>
-    <p style="margin:0 0 ${portfolioSection || highlights.length ? '24px' : '0'};font-size:16px;color:${TEXT_SEC};line-height:1.55;">${userName ? `Hallo ${userName},` : 'Hallo,'} ${summary}</p>
-
-    ${portfolioSection}
-
-    ${highlights.length > 0 ? `
-    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-top:1px solid ${CARD_BDR};">
-      ${highlightRows}
-    </table>` : ''}
-
-    ${upcomingEarnings.length > 0 ? `
-    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:20px;border-top:1px solid ${CARD_BDR};padding-top:16px;">
-      <tr><td style="padding-bottom:12px;">
-        <p style="margin:0;font-size:10px;color:${LABEL_CLR};font-weight:700;letter-spacing:0.18em;text-transform:uppercase;">Earnings nächste Woche</p>
-      </td></tr>
-      ${upcomingEarnings.map((e, i) => {
-        const d = new Date(e.date + 'T12:00:00');
-        const dayLabel = d.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'short' });
-        const timeIcon = e.timeOfDay === 'vor Marktöffnung' ? '🌅' : e.timeOfDay === 'nach Marktschluss' ? '🌙' : '📅';
-        return `
-      <tr><td style="padding:10px 0;${i < upcomingEarnings.length - 1 ? `border-bottom:1px solid ${CARD_BDR};` : ''}">
-        <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-          <td style="font-size:15px;width:24px;">${timeIcon}</td>
-          <td style="padding-left:10px;">
-            <p style="margin:0 0 2px;font-size:14px;font-weight:700;color:${TEXT_PRI};">${e.company}</p>
-            <p style="margin:0;font-size:11px;color:${TEXT_SEC};">${e.ticker}${e.quarter ? ` · ${e.quarter}` : ''}</p>
-          </td>
-          <td align="right">
-            <p style="margin:0;font-size:12px;font-weight:600;color:#a5b4fc;">${dayLabel}</p>
-            <p style="margin:2px 0 0;font-size:10px;color:#64748b;">${e.timeOfDay ?? ''}</p>
-          </td>
-        </tr></table>
-      </td></tr>`;
-      }).join('')}
-    </table>` : ''}
+  <!-- ─ PERFORMANCE CARD ─ -->
+  <tr><td style="background:${HERO_BG};border:1px solid ${CARD_BDR};border-radius:20px;padding:24px 24px 20px;">
+    <p style="margin:0 0 3px;font-size:10px;color:${LABEL_CLR};font-weight:700;letter-spacing:0.16em;text-transform:uppercase;">KI-Wochenbericht</p>
+    <p style="margin:0 0 ${perfBlock ? '18px' : '0'};font-size:14px;color:${TEXT_SEC};line-height:1.5;">${userName ? `Hallo ${userName},` : 'Hallo,'} ${summary}</p>
+    ${perfBlock}
   </td></tr>
 
-  <tr><td style="height:12px;">&nbsp;</td></tr>
+  ${portfolioChartUrl ? `${spacer()}
+  <!-- ─ PORTFOLIO-CHART ─ -->
+  ${sectionCard('Portfolio-Übersicht',
+    `<img src="${portfolioChartUrl}" width="520" style="max-width:100%;border-radius:10px;display:block;margin:0 auto;" alt="Portfolio-Allokation" />`
+  )}` : ''}
+
+  ${highlights.length > 0 ? `${spacer()}
+  <!-- ─ HIGHLIGHTS ─ -->
+  ${sectionCard('KI-Highlights der Woche',
+    `<table width="100%" cellpadding="0" cellspacing="0" border="0">${highlightContent}</table>`
+  )}` : ''}
+
+  ${hasEvents ? `${spacer()}
+  <!-- ─ KOMMENDE EREIGNISSE ─ -->
+  ${sectionCard('Kommende Ereignisse', eventsContent)}` : ''}
 
   ${emailCta(ctaUrl, 'Wochenbericht öffnen →')}
 
@@ -413,7 +473,6 @@ export function buildDigestHtml(options: {
 }
 
 // ── sendDigestToSubscribers ───────────────────────────────────────────────────
-// Sendet eine E-Mail an jeden Abonnenten – sequenziell mit 600 ms Pause.
 
 export async function sendDigestToSubscribers(
   subscribers: NewsletterSubscriber[],
@@ -436,7 +495,6 @@ export async function sendDigestToSubscribers(
     });
 
     const result = await sendEmail({ to: sub.email, subject, html });
-
     if (result.success) {
       sent++;
       console.log(`[email] ✓ ${sub.email} (id: ${result.id})`);
@@ -446,7 +504,6 @@ export async function sendDigestToSubscribers(
       errors.push(msg);
       console.error(`[email] ✗ ${msg}`);
     }
-
     if (i < total - 1) await sleep(600);
   }
 
