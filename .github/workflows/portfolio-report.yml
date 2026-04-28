@@ -2,8 +2,8 @@ name: Portfolio & Aktien Report
 
 on:
   schedule:
-    # Täglicher Depot-Überblick – täglich 22:00 UTC (Börsenschluss)
-    - cron: "0 22 * * *"
+    # Täglicher Depot-Überblick – täglich 22:00 UTC (nach US-Börsenschluss)
+    - cron: "0 22 * * 1-5"
     # Wochenbericht – montags 08:00 UTC
     - cron: "0 8 * * 1"
   workflow_dispatch:
@@ -44,13 +44,10 @@ jobs:
       - name: Report-Typ bestimmen
         id: type
         run: |
-          # Manueller Trigger → Eingabe verwenden
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "type=${{ github.event.inputs.report_type }}" >> $GITHUB_OUTPUT
-          # Montag 08:00 → Wochenbericht
-          elif [ "$(date +%H)" = "08" ] && [ "$(date +%u)" = "1" ]; then
+          elif [ "${{ github.event.schedule }}" = "0 8 * * 1" ]; then
             echo "type=weekly" >> $GITHUB_OUTPUT
-          # Alle anderen Zeiten → Tagesbericht
           else
             echo "type=daily" >> $GITHUB_OUTPUT
           fi
@@ -65,3 +62,11 @@ jobs:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
           APP_URL: ${{ secrets.APP_URL }}
+
+      - name: Job-Zusammenfassung
+        if: always()
+        run: |
+          echo "## Portfolio-Report Ergebnis" >> $GITHUB_STEP_SUMMARY
+          echo "- **Typ:** ${{ steps.type.outputs.type }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Datum:** $(date -u '+%Y-%m-%d %H:%M UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
