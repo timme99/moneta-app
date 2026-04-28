@@ -52,7 +52,7 @@ const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE, {
 
 // ── Kurs-Cache (in-memory für diesen Lauf) ────────────────────────────────────
 
-const priceCache = new Map<string, { price: number; fetchedAt: number }>();
+const priceCache = new Map<string, { price: number; changePercent: number | null; fetchedAt: number }>();
 const PRICE_TTL  = 30 * 60 * 1000;
 
 async function fetchPrice(symbol: string): Promise<number | null> {
@@ -68,7 +68,8 @@ async function fetchPrice(symbol: string): Promise<number | null> {
     const q = data['Global Quote'];
     if (!q) return null;
     const price = parseFloat(q['05. price'] ?? '0') || null;
-    if (price) priceCache.set(symbol, { price, fetchedAt: Date.now() });
+    const changePercent = parseFloat((q['10. change percent'] ?? '').replace('%', '')) || null;
+    if (price) priceCache.set(symbol, { price, changePercent, fetchedAt: Date.now() });
     return price;
   } catch {
     return null;
@@ -213,6 +214,151 @@ Antworte NUR mit einem JSON-Array aus 3 deutschen Strings:
     console.warn('[gemini] fetchWeeklyHighlights Fehler:', (e as Error).message);
     return [];
   }
+}
+
+// ── Dividenden: Yahoo Finance ─────────────────────────────────────────────────
+
+async function fetchYahooDividend(symbol: string): Promise<{ exDate: string; dps: number; yieldPct: number } | null> {
+  const url = `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=summaryDetail`;
+  try {
+    const resp = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json',
+      },
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json() as any;
+    const sd = data?.quoteSummary?.result?.[0]?.summaryDetail;
+    if (!sd) return null;
+    const dps = sd.dividendRate?.raw ?? 0;
+    return {
+      exDate:   sd.exDividendDate?.fmt ?? '',
+      dps,
+      yieldPct: (sd.dividendYield?.raw ?? 0) * 100,
+    };
+  } catch {
+    return null;
+  }
+}
+
+interface UpcomingDividend {
+  symbol:   string;
+  company:  string;
+  exDate:   string;
+  dps:      number;
+  yieldPct: number;
+}
+
+async function fetchUpcomingDividends(
+  symbols: string[],
+  nameBySymbol: Map<string, string>,
+): Promise<UpcomingDividend[]> {
+  if (symbols.length === 0) return [];
+
+  const today   = new Date().toISOString().slice(0, 10);
+  const cutoff  = new Date();
+  cutoff.setDate(cutoff.getDate() + 14);
+  const cutoffStr = cutoff.toISOString().slice(0, 10);
+
+  // Lade dividend_cache für alle Symbole
+  const { data: cachedRows } = await sb
+    .from('dividend_cache')
+    .select('symbol, dividend_per_share, ex_dividend_date, dividend_yield, no_data')
+    .in('symbol', symbols) as unknown as {
+      data: Array<{
+        symbol: string;
+        dividend_per_share: number;
+        ex_dividend_date: string | null;
+        dividend_yield: number;
+        no_data: boolean;
+      }> | null;
+    };
+
+  const cachedSet = new Set((cachedRows ?? []).map((r) => r.symbol));
+  const uncached  = symbols.filter((s) => !cachedSet.has(s)).slice(0, 15);
+
+  // Nicht gecachte Symbole frisch von Yahoo Finance holen
+  const freshRows: Array<{
+    symbol: string; dividend_per_share: number;
+    ex_dividend_date: string | null; dividend_yield: number; no_data: boolean;
+  }> = [];
+
+  for (const sym of uncached) {
+    const result = await fetchYahooDividend(sym);
+    const now = new Date().toISOString();
+    const row = {
+      symbol:             sym,
+      dividend_per_share: result?.dps      ?? 0,
+      ex_dividend_date:   result?.exDate   || null,
+      dividend_yield:     result?.yieldPct ?? 0,
+      no_data:            !result || result.dps === 0,
+    };
+    freshRows.push(row);
+    // In Cache persistieren
+    await sb.from('dividend_cache').upsert(
+      [{ ...row, source: 'yahoo_finance', last_updated: now }],
+      { onConflict: 'symbol' },
+    );
+    await sb.from('scan_log').upsert(
+      [{ symbol: sym, type: 'dividend', scanned_at: now }],
+      { onConflict: 'symbol,type' },
+    );
+    await sleep(300);
+  }
+
+  const allRows = [...(cachedRows ?? []), ...freshRows];
+
+  return allRows
+    .filter((r) =>
+      !r.no_data &&
+      r.ex_dividend_date &&
+      r.ex_dividend_date >= today &&
+      r.ex_dividend_date <= cutoffStr
+    )
+    .map((r) => ({
+      symbol:   r.symbol,
+      company:  nameBySymbol.get(r.symbol) ?? r.symbol,
+      exDate:   r.ex_dividend_date!,
+      dps:      Number(r.dividend_per_share) || 0,
+      yieldPct: Number(r.dividend_yield)     || 0,
+    }))
+    .sort((a, b) => a.exDate.localeCompare(b.exDate));
+}
+
+// ── Portfolio-Chart via QuickChart.io ─────────────────────────────────────────
+
+function generatePortfolioChartUrl(positions: { symbol: string; value: number }[]): string {
+  const top = positions.filter((p) => p.value > 0).slice(0, 8);
+  if (top.length === 0) return '';
+
+  const total = top.reduce((s, p) => s + p.value, 0);
+  const colors = ['#6366f1', '#8b5cf6', '#a78bfa', '#c4b5fd', '#818cf8', '#60a5fa', '#34d399', '#fbbf24'];
+
+  const config = {
+    type: 'doughnut',
+    data: {
+      labels:   top.map((p) => `${p.symbol} ${((p.value / total) * 100).toFixed(1)}%`),
+      datasets: [{
+        data:            top.map((p) => parseFloat(p.value.toFixed(2))),
+        backgroundColor: colors.slice(0, top.length),
+        borderWidth:     0,
+      }],
+    },
+    options: {
+      plugins: {
+        legend: {
+          position: 'right',
+          labels: { color: '#f1f5f9', font: { size: 11 }, padding: 10 },
+        },
+      },
+      cutout: '55%',
+    },
+  };
+
+  const encoded = encodeURIComponent(JSON.stringify(config));
+  return `https://quickchart.io/chart?c=${encoded}&bkg=%23070d1a&width=500&height=240`;
 }
 
 // ── Nutzer-Daten aus Supabase laden ──────────────────────────────────────────
@@ -370,9 +516,10 @@ async function runDailyReport(): Promise<void> {
 
     const userPositions = (byUser.get(sub.id) ?? [])
       .map((h) => ({
-        symbol: h.symbol,
-        name:   nameBySymbol.get(h.symbol),
-        value:  (priceCache.get(h.symbol)?.price ?? 0) * h.shares,
+        symbol:        h.symbol,
+        name:          nameBySymbol.get(h.symbol),
+        value:         (priceCache.get(h.symbol)?.price ?? 0) * h.shares,
+        changePercent: priceCache.get(h.symbol)?.changePercent ?? null,
       }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 6);
@@ -489,6 +636,43 @@ async function runWeeklyReport(): Promise<void> {
     console.log(`   ${earningsBySymbol.size} Earnings-Termine für nächste Woche`);
   }
 
+  // Ticker-Namen für Dividenden-Beschriftung laden
+  const { data: tickerRows } = await sb
+    .from('ticker_mapping')
+    .select('symbol, company_name')
+    .in('symbol', allSymbols) as unknown as { data: Array<{ symbol: string; company_name: string }> | null };
+  const nameBySymbol = new Map<string, string>(
+    (tickerRows ?? []).map((t) => [t.symbol, t.company_name])
+  );
+
+  // Aktuelle Kurse für Portfolio-Chart abrufen
+  if (AV_API_KEY && allSymbols.length > 0) {
+    console.log(`🔄 Rufe Kurse ab für ${allSymbols.length} Symbole (Chart)…`);
+    for (const sym of allSymbols) {
+      await fetchPrice(sym);
+      await sleep(250);
+    }
+  }
+
+  // Dividenden der nächsten 14 Tage für alle Symbole laden
+  console.log('🔄 Lade Dividenden-Daten…');
+  const allUpcomingDividends = await fetchUpcomingDividends(allSymbols, nameBySymbol);
+  console.log(`   ${allUpcomingDividends.length} bevorstehende Dividende(n) gefunden`);
+
+  // Auch für den Wochenbericht müssen wir Holdings laden (shares für Chart-Wert)
+  const { data: weeklyHoldingsData } = await sb
+    .from('holdings')
+    .select('user_id, symbol, shares')
+    .in('user_id', subscriberIds)
+    .not('shares', 'is', null) as unknown as { data: Array<{ user_id: string; symbol: string; shares: number }> | null };
+
+  const holdingsByUser = new Map<string, Array<{ symbol: string; shares: number }>>();
+  for (const h of weeklyHoldingsData ?? []) {
+    const arr = holdingsByUser.get(h.user_id) ?? [];
+    arr.push({ symbol: h.symbol, shares: h.shares });
+    holdingsByUser.set(h.user_id, arr);
+  }
+
   // E-Mails versenden
   console.log(`\n📧 Versende Wochenberichte…`);
   const subject = 'Dein KI-Wochenbericht – Moneta';
@@ -510,6 +694,21 @@ async function runWeeklyReport(): Promise<void> {
       .map((s) => earningsBySymbol.get(s)!)
       .sort((a, b) => a.date.localeCompare(b.date));
 
+    // Dividenden für diesen User (nur eigene Symbole)
+    const userSymbolSet = new Set(userSymbols);
+    const userDividends = allUpcomingDividends.filter((d) => userSymbolSet.has(d.symbol));
+
+    // Portfolio-Chart: Positionen mit aktuellem Kurswert
+    const userHoldings = holdingsByUser.get(sub.id) ?? [];
+    const chartPositions = userHoldings
+      .map((h) => ({
+        symbol: h.symbol,
+        value:  (priceCache.get(h.symbol)?.price ?? 0) * h.shares,
+      }))
+      .filter((p) => p.value > 0)
+      .sort((a, b) => b.value - a.value);
+    const chartUrl = generatePortfolioChartUrl(chartPositions);
+
     // KI-Highlights für diesen User generieren
     const highlights = await fetchWeeklyHighlights(userSymbols, weeklyChangePct);
 
@@ -522,6 +721,8 @@ async function runWeeklyReport(): Promise<void> {
       weeklyChange,
       weeklyChangePercent: weeklyChangePct,
       upcomingEarnings:    upcomingEarnings.length > 0 ? upcomingEarnings : undefined,
+      upcomingDividends:   userDividends.length   > 0 ? userDividends   : undefined,
+      portfolioChartUrl:   chartUrl                  || undefined,
     });
 
     console.log(`   Sende an ${sub.email} (${i + 1}/${subscribers.length})…`);

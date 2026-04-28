@@ -172,8 +172,8 @@ export function buildDailySnapshotHtml(options: {
   dateLabel?: string;
   /** Makro-News-Punkte (max. 3), generiert via Gemini */
   macroNews?: string[];
-  /** Top-Positionen im Depot (Symbol + optionaler Firmenname) */
-  topHoldings?: { symbol: string; name?: string }[];
+  /** Top-Positionen im Depot (Symbol + optionaler Firmenname + Tagesänderung) */
+  topHoldings?: { symbol: string; name?: string; changePercent?: number | null }[];
   /** Aktuelle Aktien-News zu den Holdings (max. 4), generiert via Gemini */
   stockNews?: StockNewsItem[];
 }): string {
@@ -224,7 +224,13 @@ export function buildDailySnapshotHtml(options: {
       <tr><td style="padding-bottom:10px;">
         <p style="margin:0;font-size:10px;color:${LABEL_CLR};font-weight:700;letter-spacing:0.18em;text-transform:uppercase;">Deine Positionen</p>
       </td></tr>
-      <tr><td>${topHoldings.map(h => `<span style="display:inline-block;background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.25);color:#a5b4fc;border-radius:8px;padding:5px 11px;font-size:12px;font-weight:700;margin:3px 4px 3px 0;letter-spacing:0.03em;" title="${h.name ?? h.symbol}">${h.symbol}</span>`).join('')}</td></tr>
+      <tr><td>${topHoldings.map(h => {
+        const chg = h.changePercent;
+        const chgHtml = chg != null
+          ? `<span style="font-size:10px;font-weight:600;margin-left:5px;color:${chg >= 0 ? GREEN_TXT : RED_TXT};">${chg >= 0 ? '+' : ''}${chg.toFixed(1)}%</span>`
+          : '';
+        return `<span style="display:inline-block;background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.25);color:#a5b4fc;border-radius:8px;padding:5px 11px;font-size:12px;font-weight:700;margin:3px 4px 3px 0;letter-spacing:0.03em;" title="${h.name ?? h.symbol}">${h.symbol}${chgHtml}</span>`;
+      }).join('')}</td></tr>
     </table>` : ''}
   </td></tr>
 
@@ -304,6 +310,10 @@ export function buildDigestHtml(options: {
   weeklyChangePercent?: number;
   /** Bevorstehende Earnings-Termine aus stock_events (nächste 7 Tage) */
   upcomingEarnings?: { ticker: string; company: string; date: string; timeOfDay?: string; quarter?: string }[];
+  /** Bevorstehende Dividenden (Ex-Tag in den nächsten 14 Tagen) */
+  upcomingDividends?: { symbol: string; company: string; exDate: string; dps: number; yieldPct?: number }[];
+  /** QuickChart.io URL für Portfolio-Allokations-Kuchendiagramm */
+  portfolioChartUrl?: string;
 }): string {
   const {
     userName,
@@ -314,6 +324,8 @@ export function buildDigestHtml(options: {
     weeklyChange,
     weeklyChangePercent,
     upcomingEarnings = [],
+    upcomingDividends = [],
+    portfolioChartUrl,
   } = options;
 
   const now      = new Date();
@@ -367,8 +379,18 @@ export function buildDigestHtml(options: {
 
     ${portfolioSection}
 
+    ${portfolioChartUrl ? `
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:20px;border-top:1px solid ${CARD_BDR};padding-top:16px;">
+      <tr><td style="padding-bottom:10px;">
+        <p style="margin:0;font-size:10px;color:${LABEL_CLR};font-weight:700;letter-spacing:0.18em;text-transform:uppercase;">Portfolio-Übersicht</p>
+      </td></tr>
+      <tr><td>
+        <img src="${portfolioChartUrl}" width="100%" style="max-width:100%;border-radius:12px;display:block;" alt="Portfolio-Allokation" />
+      </td></tr>
+    </table>` : ''}
+
     ${highlights.length > 0 ? `
-    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-top:1px solid ${CARD_BDR};">
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-top:1px solid ${CARD_BDR};${portfolioChartUrl ? 'margin-top:20px;' : ''}">
       ${highlightRows}
     </table>` : ''}
 
@@ -392,6 +414,31 @@ export function buildDigestHtml(options: {
           <td align="right">
             <p style="margin:0;font-size:12px;font-weight:600;color:#a5b4fc;">${dayLabel}</p>
             <p style="margin:2px 0 0;font-size:10px;color:#64748b;">${e.timeOfDay ?? ''}</p>
+          </td>
+        </tr></table>
+      </td></tr>`;
+      }).join('')}
+    </table>` : ''}
+
+    ${upcomingDividends.length > 0 ? `
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:20px;border-top:1px solid ${CARD_BDR};padding-top:16px;">
+      <tr><td style="padding-bottom:12px;">
+        <p style="margin:0;font-size:10px;color:${LABEL_CLR};font-weight:700;letter-spacing:0.18em;text-transform:uppercase;">Dividenden nächste Woche</p>
+      </td></tr>
+      ${upcomingDividends.map((d, i) => {
+        const dt = new Date(d.exDate + 'T12:00:00');
+        const dayLabel = dt.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'short' });
+        return `
+      <tr><td style="padding:10px 0;${i < upcomingDividends.length - 1 ? `border-bottom:1px solid ${CARD_BDR};` : ''}">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+          <td style="font-size:15px;width:24px;">💰</td>
+          <td style="padding-left:10px;">
+            <p style="margin:0 0 2px;font-size:14px;font-weight:700;color:${TEXT_PRI};">${d.company}</p>
+            <p style="margin:0;font-size:11px;color:${TEXT_SEC};">${d.symbol}${d.yieldPct ? ` · ${d.yieldPct.toFixed(1)} % Rendite` : ''}</p>
+          </td>
+          <td align="right">
+            <p style="margin:0;font-size:12px;font-weight:600;color:#a5b4fc;">Ex-Tag: ${dayLabel}</p>
+            <p style="margin:2px 0 0;font-size:13px;font-weight:700;color:${GREEN_TXT};">+${d.dps.toFixed(2)} € / Aktie</p>
           </td>
         </tr></table>
       </td></tr>`;
