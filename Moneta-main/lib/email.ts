@@ -389,6 +389,25 @@ export function buildDailySnapshotHtml(options: {
 
 // ── buildDigestHtml (Wochenbericht) ───────────────────────────────────────────
 
+export interface WeeklyEarning {
+  ticker: string;
+  company: string;
+  date: string;
+  timeOfDay?: string;
+  quarter?: string;
+  epsEstimate?: string;
+}
+
+export interface WeeklyDividend {
+  symbol: string;
+  company: string;
+  exDate: string;
+  dps: number;           // Jahresdividende je Aktie
+  yieldPct?: number;
+  shares?: number;       // Stückzahl (für P.A. Gesamt)
+  annualIncome?: number; // shares × dps
+}
+
 export function buildDigestHtml(options: {
   userName?: string;
   summary?: string;
@@ -397,9 +416,10 @@ export function buildDigestHtml(options: {
   totalValue?: number;
   weeklyChange?: number;
   weeklyChangePercent?: number;
-  upcomingEarnings?: { ticker: string; company: string; date: string; timeOfDay?: string; quarter?: string; epsEstimate?: string }[];
-  pastEarnings?: { ticker: string; company: string; date: string; timeOfDay?: string; quarter?: string; epsEstimate?: string }[];
-  upcomingDividends?: { symbol: string; company: string; exDate: string; dps: number; yieldPct?: number }[];
+  upcomingEarnings?: WeeklyEarning[];
+  pastEarnings?: WeeklyEarning[];
+  upcomingDividends?: WeeklyDividend[];
+  pastDividends?: WeeklyDividend[];
   portfolioChartUrl?: string;
 }): string {
   const {
@@ -413,6 +433,7 @@ export function buildDigestHtml(options: {
     upcomingEarnings = [],
     pastEarnings = [],
     upcomingDividends = [],
+    pastDividends = [],
     portfolioChartUrl,
   } = options;
 
@@ -454,85 +475,122 @@ export function buildDigestHtml(options: {
   </td></tr>`;
   }).join('');
 
-  // ── Upcoming Earnings ─────────────────────────────────────────────────────
-  const earningsContent = upcomingEarnings.length === 0 ? '' : upcomingEarnings.map((e, i) => {
-    const d = new Date(e.date + 'T12:00:00');
-    const dayLabel = d.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'short' });
-    const timeIcon = e.timeOfDay === 'vor Marktöffnung' ? '🌅' : e.timeOfDay === 'nach Marktschluss' ? '🌙' : '📅';
-    const border = i > 0 ? `border-top:1px solid ${ROW_DIV};` : '';
+  // ── Earnings-Zeile (App-Style: Datum links, Details rechts) ─────────────────
+  function earningRow(e: WeeklyEarning, isPast: boolean, isFirst: boolean): string {
+    const d       = new Date(e.date + 'T12:00:00');
+    const today   = new Date(); today.setHours(0,0,0,0);
+    const diffMs  = d.getTime() - today.getTime();
+    const diffD   = Math.round(diffMs / 86400000);
+    const dateStr = d.toLocaleDateString('de-DE', { day: '2-digit', month: 'short', year: '2-digit' });
+    const countdownTxt  = isPast
+      ? `vor ${Math.abs(diffD)}d`
+      : diffD === 0 ? 'Heute' : `in ${diffD}d`;
+    const countdownClr  = isPast ? TEXT_DIM : diffD <= 3 ? GREEN_TXT : '#818cf8';
+    const isBald        = !isPast && diffD >= 0 && diffD <= 3;
+    const timingBg      = e.timeOfDay === 'vor Marktöffnung'  ? '#451a03' : e.timeOfDay === 'nach Marktschluss' ? '#052e16' : '#0f172a';
+    const timingBdr     = e.timeOfDay === 'vor Marktöffnung'  ? '#92400e' : e.timeOfDay === 'nach Marktschluss' ? '#166534' : '#1e3a8a';
+    const timingTxt     = e.timeOfDay === 'vor Marktöffnung'  ? '#fcd34d' : e.timeOfDay === 'nach Marktschluss' ? '#86efac' : TEXT_DIM;
+    const border = isFirst ? '' : `border-top:1px solid ${ROW_DIV};`;
     return `
-  <tr><td style="${border}padding:9px 0;">
+  <tr><td style="${border}padding:12px 0;opacity:${isPast ? '0.65' : '1'};">
     <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-      <td style="width:22px;font-size:15px;vertical-align:middle;">${timeIcon}</td>
-      <td style="padding-left:9px;vertical-align:middle;">
-        <p style="margin:0 0 1px;font-size:13px;font-weight:700;color:${TEXT_PRI};">${e.company}</p>
-        <p style="margin:0;font-size:11px;color:${TEXT_DIM};">${e.ticker}${e.quarter ? ` · ${e.quarter}` : ''}${e.timeOfDay && e.timeOfDay !== 'unbekannt' ? ` · ${e.timeOfDay}` : ''}${e.epsEstimate ? ` · EPS: ${e.epsEstimate}` : ''}</p>
+      <td style="width:72px;vertical-align:top;padding-right:10px;">
+        <p style="margin:0;font-size:13px;font-weight:800;color:${TEXT_PRI};line-height:1.2;">${dateStr}</p>
+        <p style="margin:3px 0 0;font-size:10px;font-weight:700;color:${countdownClr};">${countdownTxt}</p>
       </td>
-      <td align="right" style="vertical-align:middle;white-space:nowrap;">
-        <span style="font-size:12px;font-weight:600;color:#a5b4fc;">${dayLabel}</span>
+      <td style="vertical-align:top;">
+        <table cellpadding="0" cellspacing="0" border="0" style="margin-bottom:4px;"><tr>
+          <td style="font-size:10px;font-weight:700;color:${LABEL_CLR};font-family:monospace;vertical-align:middle;white-space:nowrap;">${e.ticker}</td>
+          <td style="padding-left:7px;font-size:13px;font-weight:700;color:${TEXT_PRI};vertical-align:middle;">${e.company}</td>
+          ${isBald ? `<td style="padding-left:6px;vertical-align:middle;"><span style="background:#166534;border:1px solid ${GREEN_TXT};color:${GREEN_TXT};border-radius:4px;padding:1px 6px;font-size:8px;font-weight:800;letter-spacing:0.1em;">BALD</span></td>` : ''}
+        </tr></table>
+        <table cellpadding="0" cellspacing="0" border="0"><tr>
+          ${e.quarter ? `<td style="font-size:10px;color:${TEXT_DIM};padding-right:8px;">${e.quarter}</td>` : ''}
+          ${e.timeOfDay && e.timeOfDay !== 'unbekannt' ? `<td style="padding-right:8px;"><span style="background:${timingBg};border:1px solid ${timingBdr};color:${timingTxt};border-radius:4px;padding:1px 5px;font-size:9px;font-weight:700;">${e.timeOfDay}</span></td>` : ''}
+          ${e.epsEstimate ? `<td style="font-size:10px;color:${TEXT_DIM};">EPS:&nbsp;<strong style="color:${TEXT_SEC};">${e.epsEstimate}</strong></td>` : ''}
+        </tr></table>
       </td>
     </tr></table>
   </td></tr>`;
-  }).join('');
+  }
 
-  // ── Past Earnings (vergangene Woche) ──────────────────────────────────────
-  const pastEarningsContent = pastEarnings.length === 0 ? '' : pastEarnings.map((e, i) => {
-    const d = new Date(e.date + 'T12:00:00');
-    const dayLabel = d.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'short' });
-    const timeIcon = e.timeOfDay === 'vor Marktöffnung' ? '🌅' : e.timeOfDay === 'nach Marktschluss' ? '🌙' : '📅';
-    const border = i > 0 ? `border-top:1px solid ${ROW_DIV};` : '';
-    return `
-  <tr><td style="${border}padding:9px 0;">
-    <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-      <td style="width:22px;font-size:15px;vertical-align:middle;">${timeIcon}</td>
-      <td style="padding-left:9px;vertical-align:middle;">
-        <p style="margin:0 0 1px;font-size:13px;font-weight:700;color:${TEXT_PRI};">${e.company}</p>
-        <p style="margin:0;font-size:11px;color:${TEXT_DIM};">${e.ticker}${e.quarter ? ` · ${e.quarter}` : ''}${e.timeOfDay && e.timeOfDay !== 'unbekannt' ? ` · ${e.timeOfDay}` : ''}${e.epsEstimate ? ` · EPS: ${e.epsEstimate}` : ''}</p>
-      </td>
-      <td align="right" style="vertical-align:middle;white-space:nowrap;">
-        <span style="font-size:12px;font-weight:600;color:${TEXT_SEC};">${dayLabel}</span>
-      </td>
-    </tr></table>
-  </td></tr>`;
-  }).join('');
+  // ── Dividenden-Tabelle (App-Style: Position | Ex-Datum | Je Aktie | P.A.) ──
+  function dividendTableRows(divs: WeeklyDividend[], isPast: boolean): string {
+    const today = new Date(); today.setHours(0,0,0,0);
+    return divs.map((d, i) => {
+      const dt      = new Date(d.exDate + 'T12:00:00');
+      const diffD   = Math.round((dt.getTime() - today.getTime()) / 86400000);
+      const dateStr = dt.toLocaleDateString('de-DE', { day: '2-digit', month: 'short', year: '2-digit' });
+      const countdown = isPast
+        ? `vor ${Math.abs(diffD)}d`
+        : diffD === 0 ? 'Heute' : `in ${diffD}d`;
+      const income = d.annualIncome ?? (d.shares ? d.shares * d.dps : null);
+      const border = i > 0 ? `border-top:1px solid ${ROW_DIV};` : '';
+      return `
+  <tr style="opacity:${isPast ? '0.7' : '1'};">
+    <td style="${border}padding:11px 12px 11px 0;vertical-align:top;">
+      <p style="margin:0 0 2px;font-size:13px;font-weight:700;color:${TEXT_PRI};">${d.company}</p>
+      ${isPast ? `<p style="margin:0 0 2px;"><span style="font-size:8px;font-weight:700;color:${GREEN_TXT};">✓ EX-DATUM VORBEI</span></p>` : ''}
+      <p style="margin:0;font-size:10px;color:${TEXT_DIM};">${d.symbol}${d.shares ? ` · ${d.shares} Stk` : ''}</p>
+    </td>
+    <td style="${border}padding:11px 12px;vertical-align:top;white-space:nowrap;">
+      <p style="margin:0;font-size:12px;font-weight:700;color:${TEXT_SEC};">${dateStr}</p>
+      <p style="margin:2px 0 0;font-size:10px;color:${TEXT_DIM};">${countdown}</p>
+    </td>
+    <td align="right" style="${border}padding:11px 12px;vertical-align:top;white-space:nowrap;">
+      <p style="margin:0;font-size:12px;color:${TEXT_SEC};">${d.dps.toLocaleString('de-DE', {minimumFractionDigits:2,maximumFractionDigits:2})} €</p>
+    </td>
+    <td align="right" style="${border}padding:11px 0;vertical-align:top;white-space:nowrap;">
+      <p style="margin:0;font-size:14px;font-weight:800;color:${TEXT_PRI};">${income != null ? income.toLocaleString('de-DE', {minimumFractionDigits:2,maximumFractionDigits:2}) + ' €' : '–'}</p>
+    </td>
+  </tr>`;
+    }).join('');
+  }
 
-  // ── Dividenden ───────────────────────────────────────────────────────────────
-  const dividendsContent = upcomingDividends.length === 0 ? '' : upcomingDividends.map((d, i) => {
-    const dt = new Date(d.exDate + 'T12:00:00');
-    const dayLabel = dt.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'short' });
-    const border = i > 0 ? `border-top:1px solid ${ROW_DIV};` : '';
-    return `
-  <tr><td style="${border}padding:9px 0;">
-    <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-      <td style="width:22px;font-size:15px;vertical-align:middle;">💰</td>
-      <td style="padding-left:9px;vertical-align:middle;">
-        <p style="margin:0 0 1px;font-size:13px;font-weight:700;color:${TEXT_PRI};">${d.company}</p>
-        <p style="margin:0;font-size:11px;color:${TEXT_DIM};">${d.symbol}${d.yieldPct ? ` · ${d.yieldPct.toFixed(1)} % Rendite` : ''}</p>
-      </td>
-      <td align="right" style="vertical-align:middle;white-space:nowrap;">
-        <p style="margin:0;font-size:12px;font-weight:600;color:#a5b4fc;">Ex: ${dayLabel}</p>
-        <p style="margin:2px 0 0;font-size:12px;font-weight:700;color:${GREEN_TXT};">+${d.dps.toFixed(2)} € / Aktie</p>
-      </td>
-    </tr></table>
-  </td></tr>`;
-  }).join('');
+  const divTableHeader = `
+  <tr style="border-bottom:1px solid ${CARD_BDR};">
+    <td style="padding:0 12px 9px 0;font-size:8px;color:${TEXT_DIM};font-weight:700;text-transform:uppercase;letter-spacing:0.12em;">Position</td>
+    <td style="padding:0 12px 9px;font-size:8px;color:${TEXT_DIM};font-weight:700;text-transform:uppercase;letter-spacing:0.12em;">Ex-Datum</td>
+    <td align="right" style="padding:0 12px 9px;font-size:8px;color:${TEXT_DIM};font-weight:700;text-transform:uppercase;letter-spacing:0.12em;">Je Aktie</td>
+    <td align="right" style="padding:0 0 9px;font-size:8px;color:${TEXT_DIM};font-weight:700;text-transform:uppercase;letter-spacing:0.12em;">P.A. Gesamt</td>
+  </tr>`;
 
-  // ── Events zusammenführen ─────────────────────────────────────────────────
-  const hasEvents = pastEarnings.length > 0 || upcomingEarnings.length > 0 || upcomingDividends.length > 0;
-  const eventsContent = !hasEvents ? '' : `
-    ${pastEarnings.length > 0 ? `
-    <p style="margin:0 0 10px;font-size:10px;color:${LABEL_CLR};font-weight:700;letter-spacing:0.14em;text-transform:uppercase;">Vergangene Woche</p>
-    <table width="100%" cellpadding="0" cellspacing="0" border="0">${pastEarningsContent}</table>` : ''}
-    ${pastEarnings.length > 0 && (upcomingEarnings.length > 0 || upcomingDividends.length > 0)
-      ? `<div style="height:1px;background:${CARD_BDR};margin:12px 0;"></div>` : ''}
-    ${upcomingEarnings.length > 0 ? `
-    <p style="margin:0 0 10px;font-size:10px;color:${LABEL_CLR};font-weight:700;letter-spacing:0.14em;text-transform:uppercase;">Nächste Woche</p>
-    <table width="100%" cellpadding="0" cellspacing="0" border="0">${earningsContent}</table>` : ''}
-    ${upcomingEarnings.length > 0 && upcomingDividends.length > 0
-      ? `<div style="height:1px;background:${CARD_BDR};margin:12px 0;"></div>` : ''}
-    ${upcomingDividends.length > 0 ? `
-    <p style="margin:0 0 10px;font-size:10px;color:${LABEL_CLR};font-weight:700;letter-spacing:0.14em;text-transform:uppercase;">Dividenden</p>
-    <table width="100%" cellpadding="0" cellspacing="0" border="0">${dividendsContent}</table>` : ''}`;
+  // ── Earnings-Block (eigene Karte) ─────────────────────────────────────────
+  const hasEarnings = pastEarnings.length > 0 || upcomingEarnings.length > 0;
+  const earningsBlock = !hasEarnings ? '' : (() => {
+    const allEarningsRows = [
+      ...pastEarnings.map((e, i)    => earningRow(e, true,  i === 0 && upcomingEarnings.length === 0)),
+      ...upcomingEarnings.map((e, i) => earningRow(e, false, i === 0)),
+    ].join('');
+    const countBadge = `<span style="font-size:10px;color:${TEXT_DIM};font-weight:500;">${pastEarnings.length + upcomingEarnings.length} Termin${pastEarnings.length + upcomingEarnings.length !== 1 ? 'e' : ''}</span>`;
+    return sectionCard(
+      `Earnings-Termine &nbsp;${countBadge}`,
+      `<table width="100%" cellpadding="0" cellspacing="0" border="0">${allEarningsRows}</table>
+      <p style="margin:12px 0 0;font-size:9px;color:${TEXT_DIM};font-style:italic;">Daten aus Yahoo Finance / KI · Keine Anlageberatung · Offizielle Termine beim Unternehmen prüfen</p>`
+    );
+  })();
+
+  // ── Dividenden-Block (eigene Karte) ───────────────────────────────────────
+  const hasDividends = pastDividends.length > 0 || upcomingDividends.length > 0;
+  const dividendsBlock = !hasDividends ? '' : (() => {
+    let content = `<table width="100%" cellpadding="0" cellspacing="0" border="0">${divTableHeader}`;
+    if (pastDividends.length > 0) {
+      content += `<tr><td colspan="4" style="padding:10px 0 4px;font-size:9px;color:${TEXT_DIM};font-weight:700;text-transform:uppercase;letter-spacing:0.14em;">Vergangene Woche</td></tr>`;
+      content += dividendTableRows(pastDividends, true);
+    }
+    if (pastDividends.length > 0 && upcomingDividends.length > 0) {
+      content += `<tr><td colspan="4" style="padding:14px 0 4px;font-size:9px;color:${TEXT_DIM};font-weight:700;text-transform:uppercase;letter-spacing:0.14em;">Nächste Woche</td></tr>`;
+    }
+    if (upcomingDividends.length > 0) {
+      if (pastDividends.length === 0) {
+        content += `<tr><td colspan="4" style="padding:10px 0 4px;font-size:9px;color:${TEXT_DIM};font-weight:700;text-transform:uppercase;letter-spacing:0.14em;">Nächste Woche</td></tr>`;
+      }
+      content += dividendTableRows(upcomingDividends, false);
+    }
+    content += `</table>
+    <p style="margin:12px 0 0;font-size:9px;color:${TEXT_DIM};font-style:italic;">Schätzungen auf Basis historischer Ex-Daten · Keine Anlageberatung</p>`;
+    return sectionCard('Dividenden je Position', content);
+  })();
 
   return `${emailHead('Moneta – KI-Wochenbericht')}
 <body style="margin:0;padding:0;background-color:${BG};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
@@ -562,9 +620,13 @@ export function buildDigestHtml(options: {
     `<img src="${portfolioChartUrl}" width="520" style="max-width:100%;border-radius:10px;display:block;margin:0 auto;" alt="Portfolio-Allokation" />`
   )}` : ''}
 
-  ${hasEvents ? `${spacer()}
-  <!-- ─ KOMMENDE EREIGNISSE ─ -->
-  ${sectionCard('Kommende Ereignisse', eventsContent)}` : ''}
+  ${hasEarnings ? `${spacer()}
+  <!-- ─ EARNINGS-TERMINE ─ -->
+  ${earningsBlock}` : ''}
+
+  ${hasDividends ? `${spacer()}
+  <!-- ─ DIVIDENDEN ─ -->
+  ${dividendsBlock}` : ''}
 
   ${emailCta(ctaUrl, 'Wochenbericht öffnen →')}
 

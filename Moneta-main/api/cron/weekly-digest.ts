@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { getSubscribersForDigest } from '../../lib/subscribers.js';
 import { buildDigestHtml, sendEmail, getResendClient } from '../../lib/email.js';
+import type { WeeklyDividend } from '../../lib/email.js';
 
 const SUPABASE_URL     = process.env.MONETA_SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
 const SUPABASE_SERVICE = process.env.MONETA_SUPABASE_SERVICE_ROLE_KEY ?? '';
@@ -47,15 +48,20 @@ export default async function handler(req: any, res: any) {
       return res.status(200).json({ ok: true, message: 'Keine Abonnenten.', sent: 0 });
     }
 
-    // ── Snapshot + Earnings-Daten laden ──────────────────────────────────────
+    // ── Snapshot + Earnings + Dividenden laden ────────────────────────────────
     let prevByUser = new Map<string, number>();
     let currByUser = new Map<string, number>();
-    // userId → ihre Portfolio-Symbole
-    const symbolsByUser = new Map<string, string[]>();
-    // symbol → Earnings-Eintrag für nächste Woche
+    const symbolsByUser       = new Map<string, string[]>();
+    // userId::symbol → shares (für Dividenden-Berechnung)
+    const sharesByUserSymbol  = new Map<string, number>();
+    // symbol → Firmenname (aus ticker_mapping)
+    const nameBySymbol        = new Map<string, string>();
+    // Earnings
     const earningsBySymbol     = new Map<string, { ticker: string; company: string; date: string; timeOfDay?: string; quarter?: string; epsEstimate?: string }>();
-    // symbol → Earnings-Eintrag der vergangenen Woche
     const pastEarningsBySymbol = new Map<string, { ticker: string; company: string; date: string; timeOfDay?: string; quarter?: string; epsEstimate?: string }>();
+    // Dividenden (symbol → Eintrag)
+    const upcomingDivBySymbol  = new Map<string, WeeklyDividend>();
+    const pastDivBySymbol      = new Map<string, WeeklyDividend>();
 
     if (SUPABASE_URL && SUPABASE_SERVICE) {
       const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE, {
@@ -89,10 +95,10 @@ export default async function handler(req: any, res: any) {
       currByUser = new Map((currRows ?? []).map((r: any) => [r.user_id, r.total_value]));
       prevByUser = new Map((prevRows ?? []).map((r: any) => [r.user_id, r.total_value]));
 
-      // Holdings pro User für Earnings-Filterung
+      // Holdings pro User (inkl. shares für Dividenden)
       const { data: holdingsData } = await sb
         .from('holdings')
-        .select('user_id, symbol')
+        .select('user_id, symbol, shares')
         .in('user_id', userIds)
         .not('shares', 'is', null) as any;
 
@@ -100,9 +106,19 @@ export default async function handler(req: any, res: any) {
         const arr = symbolsByUser.get(h.user_id) ?? [];
         if (!arr.includes(h.symbol)) arr.push(h.symbol);
         symbolsByUser.set(h.user_id, arr);
+        if (h.shares > 0) sharesByUserSymbol.set(`${h.user_id}::${h.symbol}`, h.shares);
       }
 
       const allSymbols = [...new Set((holdingsData ?? []).map((h: any) => h.symbol))] as string[];
+
+      // Firmennamen aus ticker_mapping laden
+      if (allSymbols.length > 0) {
+        const { data: tickerRows } = await sb
+          .from('ticker_mapping')
+          .select('symbol, company_name')
+          .in('symbol', allSymbols) as any;
+        for (const t of (tickerRows ?? [])) nameBySymbol.set(t.symbol, t.company_name);
+      }
 
       if (allSymbols.length > 0) {
         // Earnings der nächsten 7 Tage aus earnings_cache
@@ -134,13 +150,38 @@ export default async function handler(req: any, res: any) {
 
         for (const row of (pastRows ?? [])) {
           pastEarningsBySymbol.set(row.symbol, {
-            ticker:    row.symbol,
-            company:   row.company ?? row.symbol,
-            date:      row.event_date,
-            timeOfDay: row.time_of_day,
-            quarter:   row.quarter ?? undefined,
+            ticker:      row.symbol,
+            company:     row.company ?? nameBySymbol.get(row.symbol) ?? row.symbol,
+            date:        row.event_date,
+            timeOfDay:   row.time_of_day,
+            quarter:     row.quarter ?? undefined,
             epsEstimate: row.eps_estimate ?? undefined,
           });
+        }
+
+        // Dividenden aus dividend_cache: vergangene + nächste Woche
+        const { data: divRows } = await sb
+          .from('dividend_cache')
+          .select('symbol, dividend_per_share, ex_dividend_date, dividend_yield')
+          .in('symbol', allSymbols)
+          .not('no_data', 'is', true)
+          .gte('ex_dividend_date', weekAgoStr)
+          .lte('ex_dividend_date', nextWeekStr) as any;
+
+        for (const row of (divRows ?? [])) {
+          if (!row.ex_dividend_date || !row.dividend_per_share) continue;
+          const entry: Omit<WeeklyDividend, 'shares' | 'annualIncome'> = {
+            symbol:   row.symbol,
+            company:  nameBySymbol.get(row.symbol) ?? row.symbol,
+            exDate:   row.ex_dividend_date,
+            dps:      Number(row.dividend_per_share),
+            yieldPct: row.dividend_yield ? Number(row.dividend_yield) : undefined,
+          };
+          if (row.ex_dividend_date < today) {
+            pastDivBySymbol.set(row.symbol, entry as WeeklyDividend);
+          } else {
+            upcomingDivBySymbol.set(row.symbol, entry as WeeklyDividend);
+          }
         }
       }
     }
@@ -174,6 +215,25 @@ export default async function handler(req: any, res: any) {
         .map((s) => pastEarningsBySymbol.get(s)!)
         .sort((a, b) => a.date.localeCompare(b.date));
 
+      // Dividenden für diesen User – Stückzahl + Jahreseinkommen anreichern
+      function enrichDividends(map: Map<string, WeeklyDividend>): WeeklyDividend[] {
+        return userSymbols
+          .filter((s) => map.has(s))
+          .map((s) => {
+            const base   = map.get(s)!;
+            const shares = sharesByUserSymbol.get(`${sub.userId}::${s}`);
+            return {
+              ...base,
+              shares,
+              annualIncome: shares != null ? shares * base.dps : undefined,
+            };
+          })
+          .sort((a, b) => a.exDate.localeCompare(b.exDate));
+      }
+
+      const upcomingDividends = enrichDividends(upcomingDivBySymbol);
+      const pastDividends     = enrichDividends(pastDivBySymbol);
+
       const highlights = [
         'KI-gestützte Szenario-Analyse für dein Depot verfügbar',
         'Earnings-Kalender: alle Quartalszahlen auf einen Blick',
@@ -190,6 +250,8 @@ export default async function handler(req: any, res: any) {
         weeklyChangePercent: weeklyChangePct,
         upcomingEarnings:    upcomingEarnings.length > 0 ? upcomingEarnings : undefined,
         pastEarnings:        pastEarnings.length > 0 ? pastEarnings : undefined,
+        upcomingDividends:   upcomingDividends.length > 0 ? upcomingDividends : undefined,
+        pastDividends:       pastDividends.length > 0 ? pastDividends : undefined,
       });
 
       console.log(`[cron/weekly-digest] Sende an ${sub.email} (${i + 1}/${subscribers.length})…`);
