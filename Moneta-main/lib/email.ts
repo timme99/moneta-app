@@ -323,7 +323,8 @@ export function buildDigestHtml(options: {
   totalValue?: number;
   weeklyChange?: number;
   weeklyChangePercent?: number;
-  upcomingEarnings?: { ticker: string; company: string; date: string; timeOfDay?: string; quarter?: string }[];
+  upcomingEarnings?: { ticker: string; company: string; date: string; timeOfDay?: string; quarter?: string; epsEstimate?: string }[];
+  pastEarnings?: { ticker: string; company: string; date: string; timeOfDay?: string; quarter?: string; epsEstimate?: string }[];
   upcomingDividends?: { symbol: string; company: string; exDate: string; dps: number; yieldPct?: number }[];
   portfolioChartUrl?: string;
 }): string {
@@ -336,6 +337,7 @@ export function buildDigestHtml(options: {
     weeklyChange,
     weeklyChangePercent,
     upcomingEarnings = [],
+    pastEarnings = [],
     upcomingDividends = [],
     portfolioChartUrl,
   } = options;
@@ -378,7 +380,7 @@ export function buildDigestHtml(options: {
   </td></tr>`;
   }).join('');
 
-  // ── Earnings ─────────────────────────────────────────────────────────────────
+  // ── Upcoming Earnings ─────────────────────────────────────────────────────
   const earningsContent = upcomingEarnings.length === 0 ? '' : upcomingEarnings.map((e, i) => {
     const d = new Date(e.date + 'T12:00:00');
     const dayLabel = d.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'short' });
@@ -390,10 +392,31 @@ export function buildDigestHtml(options: {
       <td style="width:22px;font-size:15px;vertical-align:middle;">${timeIcon}</td>
       <td style="padding-left:9px;vertical-align:middle;">
         <p style="margin:0 0 1px;font-size:13px;font-weight:700;color:${TEXT_PRI};">${e.company}</p>
-        <p style="margin:0;font-size:11px;color:${TEXT_DIM};">${e.ticker}${e.quarter ? ` · ${e.quarter}` : ''}${e.timeOfDay ? ` · ${e.timeOfDay}` : ''}</p>
+        <p style="margin:0;font-size:11px;color:${TEXT_DIM};">${e.ticker}${e.quarter ? ` · ${e.quarter}` : ''}${e.timeOfDay && e.timeOfDay !== 'unbekannt' ? ` · ${e.timeOfDay}` : ''}${e.epsEstimate ? ` · EPS: ${e.epsEstimate}` : ''}</p>
       </td>
       <td align="right" style="vertical-align:middle;white-space:nowrap;">
         <span style="font-size:12px;font-weight:600;color:#a5b4fc;">${dayLabel}</span>
+      </td>
+    </tr></table>
+  </td></tr>`;
+  }).join('');
+
+  // ── Past Earnings (vergangene Woche) ──────────────────────────────────────
+  const pastEarningsContent = pastEarnings.length === 0 ? '' : pastEarnings.map((e, i) => {
+    const d = new Date(e.date + 'T12:00:00');
+    const dayLabel = d.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'short' });
+    const timeIcon = e.timeOfDay === 'vor Marktöffnung' ? '🌅' : e.timeOfDay === 'nach Marktschluss' ? '🌙' : '📅';
+    const border = i > 0 ? `border-top:1px solid ${ROW_DIV};` : '';
+    return `
+  <tr><td style="${border}padding:9px 0;">
+    <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+      <td style="width:22px;font-size:15px;vertical-align:middle;">${timeIcon}</td>
+      <td style="padding-left:9px;vertical-align:middle;">
+        <p style="margin:0 0 1px;font-size:13px;font-weight:700;color:${TEXT_PRI};">${e.company}</p>
+        <p style="margin:0;font-size:11px;color:${TEXT_DIM};">${e.ticker}${e.quarter ? ` · ${e.quarter}` : ''}${e.timeOfDay && e.timeOfDay !== 'unbekannt' ? ` · ${e.timeOfDay}` : ''}${e.epsEstimate ? ` · EPS: ${e.epsEstimate}` : ''}</p>
+      </td>
+      <td align="right" style="vertical-align:middle;white-space:nowrap;">
+        <span style="font-size:12px;font-weight:600;color:${TEXT_SEC};">${dayLabel}</span>
       </td>
     </tr></table>
   </td></tr>`;
@@ -420,11 +443,16 @@ export function buildDigestHtml(options: {
   </td></tr>`;
   }).join('');
 
-  // ── Evenements zusammenführen ─────────────────────────────────────────────────
-  const hasEvents = upcomingEarnings.length > 0 || upcomingDividends.length > 0;
+  // ── Events zusammenführen ─────────────────────────────────────────────────
+  const hasEvents = pastEarnings.length > 0 || upcomingEarnings.length > 0 || upcomingDividends.length > 0;
   const eventsContent = !hasEvents ? '' : `
+    ${pastEarnings.length > 0 ? `
+    <p style="margin:0 0 10px;font-size:10px;color:${LABEL_CLR};font-weight:700;letter-spacing:0.14em;text-transform:uppercase;">Vergangene Woche</p>
+    <table width="100%" cellpadding="0" cellspacing="0" border="0">${pastEarningsContent}</table>` : ''}
+    ${pastEarnings.length > 0 && (upcomingEarnings.length > 0 || upcomingDividends.length > 0)
+      ? `<div style="height:1px;background:${CARD_BDR};margin:12px 0;"></div>` : ''}
     ${upcomingEarnings.length > 0 ? `
-    <p style="margin:0 0 10px;font-size:10px;color:${LABEL_CLR};font-weight:700;letter-spacing:0.14em;text-transform:uppercase;">Earnings</p>
+    <p style="margin:0 0 10px;font-size:10px;color:${LABEL_CLR};font-weight:700;letter-spacing:0.14em;text-transform:uppercase;">Nächste Woche</p>
     <table width="100%" cellpadding="0" cellspacing="0" border="0">${earningsContent}</table>` : ''}
     ${upcomingEarnings.length > 0 && upcomingDividends.length > 0
       ? `<div style="height:1px;background:${CARD_BDR};margin:12px 0;"></div>` : ''}
