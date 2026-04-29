@@ -284,6 +284,16 @@ export function buildDailySnapshotHtml(options: {
 
   ${emailHeader(dateLabel)}
 
+  ${stockNews.length > 0 ? `
+  <!-- ─ AKTIEN-NEWS (zuerst) ─ -->
+  ${sectionCard('Aktien-News', `<table width="100%" cellpadding="0" cellspacing="0" border="0">${newsContent}</table>`)}
+  ${spacer()}` : ''}
+
+  ${macroNews.length > 0 ? `
+  <!-- ─ MARKTLAGE ─ -->
+  ${sectionCard('Marktlage', `<table width="100%" cellpadding="0" cellspacing="0" border="0">${macroContent}</table>`)}
+  ${spacer()}` : ''}
+
   <!-- ─ PERFORMANCE CARD ─ -->
   <tr><td style="background:${HERO_BG};border:1px solid ${CARD_BDR};border-radius:20px;padding:24px 24px 20px;">
     <p style="margin:0 0 3px;font-size:10px;color:${LABEL_CLR};font-weight:700;letter-spacing:0.16em;text-transform:uppercase;">Tagesabschluss</p>
@@ -291,14 +301,6 @@ export function buildDailySnapshotHtml(options: {
     ${twoColumnCards(leftCard, rightCard)}
     ${holdingsTable}
   </td></tr>
-
-  ${stockNews.length > 0 ? `${spacer()}
-  <!-- ─ AKTIEN-NEWS ─ -->
-  ${sectionCard('Aktien-News', `<table width="100%" cellpadding="0" cellspacing="0" border="0">${newsContent}</table>`)}` : ''}
-
-  ${macroNews.length > 0 ? `${spacer()}
-  <!-- ─ MARKTLAGE ─ -->
-  ${sectionCard('Marktlage', `<table width="100%" cellpadding="0" cellspacing="0" border="0">${macroContent}</table>`)}` : ''}
 
   ${emailCta(ctaUrl, 'Depot öffnen →')}
 
@@ -438,6 +440,13 @@ export function buildDigestHtml(options: {
 
   ${emailHeader(weekLabel)}
 
+  ${highlights.length > 0 ? `
+  <!-- ─ HIGHLIGHTS (zuerst) ─ -->
+  ${sectionCard('KI-Highlights der Woche',
+    `<table width="100%" cellpadding="0" cellspacing="0" border="0">${highlightContent}</table>`
+  )}
+  ${spacer()}` : ''}
+
   <!-- ─ PERFORMANCE CARD ─ -->
   <tr><td style="background:${HERO_BG};border:1px solid ${CARD_BDR};border-radius:20px;padding:24px 24px 20px;">
     <p style="margin:0 0 3px;font-size:10px;color:${LABEL_CLR};font-weight:700;letter-spacing:0.16em;text-transform:uppercase;">KI-Wochenbericht</p>
@@ -449,12 +458,6 @@ export function buildDigestHtml(options: {
   <!-- ─ PORTFOLIO-CHART ─ -->
   ${sectionCard('Portfolio-Übersicht',
     `<img src="${portfolioChartUrl}" width="520" style="max-width:100%;border-radius:10px;display:block;margin:0 auto;" alt="Portfolio-Allokation" />`
-  )}` : ''}
-
-  ${highlights.length > 0 ? `${spacer()}
-  <!-- ─ HIGHLIGHTS ─ -->
-  ${sectionCard('KI-Highlights der Woche',
-    `<table width="100%" cellpadding="0" cellspacing="0" border="0">${highlightContent}</table>`
   )}` : ''}
 
   ${hasEvents ? `${spacer()}

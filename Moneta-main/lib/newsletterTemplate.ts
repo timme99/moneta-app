@@ -103,6 +103,24 @@ export function buildNewsletterMarkdown(payload: NewsletterPayload): string {
   lines.push('---');
   lines.push('');
 
+  // ── Portfolio-News (an erster Stelle) ────────────────────────────────────
+  if (news.length > 0) {
+    lines.push(buildNewsletterNewsSection(news));
+  }
+
+  // ── KI-Hinweise (max 3, sachlich) ─────────────────────────────────────────
+  const cappedInsights = insights.slice(0, 3);
+  if (cappedInsights.length > 0) {
+    lines.push('## 💡 Informative Hinweise');
+    lines.push('');
+    lines.push('> Diese Hinweise basieren auf der Analyse deiner Depot-Struktur. Sie stellen keine Empfehlungen dar.');
+    lines.push('');
+    cappedInsights.forEach(insight => {
+      lines.push(`- ${insight}`);
+    });
+    lines.push('');
+  }
+
   // ── Depot-Kennzahlen ──────────────────────────────────────────────────────
   if (totalValue != null || totalInvested != null) {
     lines.push('## 💼 Depot-Überblick');
@@ -137,24 +155,6 @@ export function buildNewsletterMarkdown(payload: NewsletterPayload): string {
         : '—';
       const trend = sentimentIcon(h.sentiment);
       lines.push(`| ${h.name} | \`${h.ticker}\` | ${inv} | ${perf} | ${trend} |`);
-    });
-    lines.push('');
-  }
-
-  // ── Portfolio-News ────────────────────────────────────────────────────────
-  if (news.length > 0) {
-    lines.push(buildNewsletterNewsSection(news));
-  }
-
-  // ── KI-Hinweise (max 3, sachlich) ─────────────────────────────────────────
-  const cappedInsights = insights.slice(0, 3);
-  if (cappedInsights.length > 0) {
-    lines.push('## 💡 Informative Hinweise');
-    lines.push('');
-    lines.push('> Diese Hinweise basieren auf der Analyse deiner Depot-Struktur. Sie stellen keine Empfehlungen dar.');
-    lines.push('');
-    cappedInsights.forEach(insight => {
-      lines.push(`- ${insight}`);
     });
     lines.push('');
   }
