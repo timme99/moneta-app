@@ -1,0 +1,42 @@
+name: Wochenbericht – Portfolio & Aktien
+
+on:
+  schedule:
+    # Jeden Montag um 07:00 UTC (09:00 Uhr DE-Sommerzeit / 08:00 Uhr Winterzeit)
+    - cron: '0 7 * * 1'
+  workflow_dispatch:
+
+jobs:
+  send-weekly-report:
+    name: Wochenbericht versenden
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    defaults:
+      run:
+        working-directory: Moneta-main
+
+    steps:
+      - name: Code auschecken
+        uses: actions/checkout@v4
+
+      - name: Node.js einrichten
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: Moneta-main/package-lock.json
+
+      - name: Abhängigkeiten installieren
+        run: npm ci
+
+      - name: Portfolio-Wochenbericht ausführen
+        env:
+          MONETA_SUPABASE_URL:              ${{ secrets.MONETA_SUPABASE_URL }}
+          MONETA_SUPABASE_SERVICE_ROLE_KEY:  ${{ secrets.MONETA_SUPABASE_SERVICE_ROLE_KEY }}
+          RESEND_API_KEY:                    ${{ secrets.RESEND_API_KEY }}
+          ALPHA_VANTAGE_API_KEY:             ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+          GEMINI_API_KEY:                    ${{ secrets.GEMINI_API_KEY }}
+          APP_URL:                           ${{ secrets.APP_URL }}
+          EMAIL_FROM:                        ${{ secrets.EMAIL_FROM }}
+        run: npm run report:weekly
