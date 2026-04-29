@@ -13,7 +13,7 @@
 
 import { createClient } from '@supabase/supabase-js';
 import { buildDailySnapshotHtml, buildDigestHtml, sendEmail } from '../lib/email.js';
-import type { StockNewsItem } from '../lib/email.js';
+import type { StockNewsItem, DailyHolding } from '../lib/email.js';
 
 // ── Umgebungsvariablen ────────────────────────────────────────────────────────
 
@@ -122,6 +122,73 @@ Keine Anlageberatung. Nur sachliche Marktinformationen.
     console.warn('[gemini] fetchStockNews Fehler:', (e as Error).message);
     return [];
   }
+}
+
+// ── Gemini: KI-Positionsanalyse (Sentiment, Marktkommentar, Trend) ────────────
+
+interface PositionAnalysis {
+  symbol:        string;
+  sentiment:     'POSITIV' | 'NEUTRAL' | 'NEGATIV';
+  marketComment: string;
+  trend:         'Steigend' | 'Stabil' | 'Fallend';
+}
+
+async function fetchPositionAnalysis(
+  positions: Array<{ symbol: string; name?: string; changePercent?: number | null }>,
+): Promise<Map<string, PositionAnalysis>> {
+  const result = new Map<string, PositionAnalysis>();
+  if (!GEMINI_KEY || positions.length === 0) return result;
+
+  const positionList = positions
+    .slice(0, 12)
+    .map(p => `${p.symbol}${p.name ? ` (${p.name})` : ''}${p.changePercent != null ? ` ${p.changePercent >= 0 ? '+' : ''}${p.changePercent.toFixed(1)}% heute` : ''}`)
+    .join(', ');
+
+  const prompt =
+`Du bist ein Finanzinformations-Assistent. Erstelle für jede dieser Aktien/ETFs eine kurze, sachliche Markteinschätzung: ${positionList}
+
+Antworte NUR mit einem JSON-Array:
+[{"symbol":"NOW","sentiment":"NEUTRAL","marketComment":"Starkes Wachstum im Cloud-Software-Markt, zunehmender Wettbewerb.","trend":"Stabil"}]
+
+Regeln:
+- sentiment: exakt "POSITIV", "NEUTRAL" oder "NEGATIV" (basierend auf aktueller Marktlage)
+- marketComment: sachlicher Kurzkommentar auf Deutsch (max. 100 Zeichen, keine Anlageberatung)
+- trend: exakt "Steigend", "Stabil" oder "Fallend"
+- Für jede Position einen Eintrag, gleiches Symbol wie in der Eingabe`;
+
+  try {
+    const resp = await fetch(
+      `https://generativelanguage.googleapis.com/v1/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { temperature: 0.2, maxOutputTokens: 800 },
+        }),
+        signal: AbortSignal.timeout(15_000),
+      }
+    );
+    if (!resp.ok) return result;
+    const data = await resp.json() as Record<string, any>;
+    const raw  = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '[]';
+    const stripped = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/)?.[1]?.trim() ?? raw.trim();
+    const parsed = JSON.parse(stripped);
+    if (!Array.isArray(parsed)) return result;
+    for (const item of parsed) {
+      if (typeof item?.symbol === 'string') {
+        result.set(item.symbol, {
+          symbol:        item.symbol,
+          sentiment:     ['POSITIV', 'NEUTRAL', 'NEGATIV'].includes(item.sentiment) ? item.sentiment : 'NEUTRAL',
+          marketComment: typeof item.marketComment === 'string' ? item.marketComment.slice(0, 110) : '–',
+          trend:         ['Steigend', 'Stabil', 'Fallend'].includes(item.trend) ? item.trend : 'Stabil',
+        });
+      }
+    }
+  } catch (e) {
+    console.warn('[gemini] fetchPositionAnalysis Fehler:', (e as Error).message);
+  }
+  return result;
 }
 
 // ── Gemini: Makrolage ─────────────────────────────────────────────────────────
@@ -502,6 +569,16 @@ async function runDailyReport(): Promise<void> {
   const stockNews  = await fetchStockNews(allSymbols);
   console.log(`   Makro: ${macroNews.length} Punkte | Aktien: ${stockNews.length} Artikel`);
 
+  // Positionsanalyse (Sentiment, Marktkommentar, Trend) für alle Symbole
+  console.log('🤖 Generiere KI-Positionsanalyse…');
+  const allPositionsForAnalysis = allSymbols.map((sym) => ({
+    symbol:        sym,
+    name:          nameBySymbol.get(sym),
+    changePercent: priceCache.get(sym)?.changePercent ?? null,
+  }));
+  const positionAnalysis = await fetchPositionAnalysis(allPositionsForAnalysis);
+  console.log(`   Analyse: ${positionAnalysis.size} Positionen`);
+
   // E-Mails versenden
   console.log(`\n📧 Versende Tagesberichte…`);
   let sent = 0, skipped = 0, failed = 0;
@@ -514,7 +591,7 @@ async function runDailyReport(): Promise<void> {
     const dailyChange    = totalValue - prevValue;
     const dailyChangePct = prevValue > 0 ? (dailyChange / prevValue) * 100 : 0;
 
-    const userPositions = (byUser.get(sub.id) ?? [])
+    const rawPositions = (byUser.get(sub.id) ?? [])
       .map((h) => ({
         symbol:        h.symbol,
         name:          nameBySymbol.get(h.symbol),
@@ -523,6 +600,21 @@ async function runDailyReport(): Promise<void> {
       }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 6);
+
+    // Gewichtung berechnen + KI-Felder anreichern
+    const userPositions: DailyHolding[] = rawPositions.map((p) => {
+      const analysis = positionAnalysis.get(p.symbol);
+      return {
+        symbol:        p.symbol,
+        name:          p.name,
+        value:         p.value,
+        changePercent: p.changePercent,
+        weightingPct:  totalValue > 0 ? (p.value / totalValue) * 100 : 0,
+        sentiment:     analysis?.sentiment,
+        marketComment: analysis?.marketComment,
+        trend:         analysis?.trend,
+      };
+    });
 
     const userSymbols   = new Set(userPositions.map((p) => p.symbol));
     const relevantNews  = [

@@ -167,6 +167,17 @@ export interface StockNewsItem {
   ticker?: string;
 }
 
+export interface DailyHolding {
+  symbol: string;
+  name?: string;
+  value?: number;
+  changePercent?: number | null;
+  weightingPct?: number;
+  sentiment?: 'POSITIV' | 'NEUTRAL' | 'NEGATIV';
+  marketComment?: string;
+  trend?: 'Steigend' | 'Stabil' | 'Fallend';
+}
+
 export function buildDailySnapshotHtml(options: {
   userName?: string;
   totalValue: number;
@@ -175,7 +186,7 @@ export function buildDailySnapshotHtml(options: {
   ctaUrl?: string;
   dateLabel?: string;
   macroNews?: string[];
-  topHoldings?: { symbol: string; name?: string; value?: number; changePercent?: number | null }[];
+  topHoldings?: DailyHolding[];
   stockNews?: StockNewsItem[];
 }): string {
   const {
@@ -192,89 +203,162 @@ export function buildDailySnapshotHtml(options: {
     stockNews  = [],
   } = options;
 
-  const pos    = dailyChange >= 0;
-  const sign   = pos ? '+' : '';
-  const arrow  = pos ? '▲' : '▼';
-  const chBg   = pos ? GREEN_BG  : RED_BG;
-  const chBdr  = pos ? GREEN_BDR : RED_BDR;
-  const chTxt  = pos ? GREEN_TXT : RED_TXT;
+  const pos   = dailyChange >= 0;
+  const sign  = pos ? '+' : '';
+  const arrow = pos ? '▲' : '▼';
+  const chTxt = pos ? GREEN_TXT : RED_TXT;
+  const chBg  = pos ? GREEN_BG  : RED_BG;
+  const chBdr = pos ? GREEN_BDR : RED_BDR;
 
-  const leftCard  = valueCard('Depotwert', fmtEur(totalValue));
-  const rightCard = valueCard(
-    `Heute ${arrow}`,
-    `${sign}${fmtEur(dailyChange)}`,
-    `${sign}${dailyChangePercent.toFixed(2)} %`,
-    chBg, chBdr, chTxt, chTxt,
-  );
+  // ── Markt-Signale: 2-Spalten-Karten ─────────────────────────────────────────
+  function newsCard(item: StockNewsItem): string {
+    const impBg  = item.importance === 'hoch'   ? '#2d0a0a' : item.importance === 'mittel' ? '#1a1206' : '#0a1a0a';
+    const impBdr = item.importance === 'hoch'   ? '#7f1d1d' : item.importance === 'mittel' ? '#78350f' : '#14532d';
+    const impTxt = item.importance === 'hoch'   ? '#fca5a5' : item.importance === 'mittel' ? '#fcd34d' : '#86efac';
+    const impLbl = item.importance === 'hoch'   ? 'HOCH'    : item.importance === 'mittel' ? 'MITTEL'  : 'NIEDRIG';
+    const tickerBadge = item.ticker
+      ? `<span style="margin-left:5px;color:${TEXT_DIM};font-size:9px;font-weight:700;letter-spacing:0.06em;">${item.ticker}</span>`
+      : '';
+    return `<table width="100%" cellpadding="0" cellspacing="0" border="0"
+        style="background:#0d1f3c;border:1px solid ${CARD_BDR};border-radius:12px;">
+      <tr><td style="padding:12px 13px 11px;">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td style="vertical-align:top;">
+              <span style="background:${impBg};border:1px solid ${impBdr};color:${impTxt};border-radius:4px;padding:2px 6px;font-size:8px;font-weight:800;letter-spacing:0.1em;">${impLbl}</span>${tickerBadge}
+              <span style="margin-left:5px;font-size:9px;color:${TEXT_DIM};">${item.source}</span>
+            </td>
+            <td align="right" style="vertical-align:top;font-size:13px;color:${TEXT_DIM};">→</td>
+          </tr>
+        </table>
+        <p style="margin:7px 0 4px;font-size:12px;font-weight:700;color:${TEXT_PRI};line-height:1.4;">${item.title}</p>
+        <p style="margin:0;font-size:11px;color:${TEXT_SEC};line-height:1.45;">${item.snippet}</p>
+      </td></tr>
+    </table>`;
+  }
 
-  // ── Positionen-Tabelle ──────────────────────────────────────────────────────
-  const holdingsTable = topHoldings.length === 0 ? '' : `
-  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:18px;border-top:1px solid rgba(255,255,255,0.07);padding-top:14px;">
-    <tr>
-      <td style="font-size:10px;color:${LABEL_CLR};font-weight:700;letter-spacing:0.15em;text-transform:uppercase;padding-bottom:8px;">Positionen</td>
-      <td align="right" style="font-size:10px;color:${TEXT_DIM};font-weight:600;text-transform:uppercase;letter-spacing:0.1em;padding-bottom:8px;">Wert</td>
-      <td align="right" style="font-size:10px;color:${TEXT_DIM};font-weight:600;text-transform:uppercase;letter-spacing:0.1em;padding-bottom:8px;padding-left:12px;">Heute</td>
-    </tr>
-    ${topHoldings.map((h, i) => {
-      const chg = h.changePercent;
-      const chgCell = chg != null
-        ? `<span style="font-size:12px;font-weight:700;color:${chg >= 0 ? GREEN_TXT : RED_TXT};">${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%</span>`
-        : `<span style="font-size:12px;color:${TEXT_DIM};">–</span>`;
-      const valCell = h.value != null && h.value > 0
-        ? `<span style="font-size:12px;color:${TEXT_SEC};">${fmtEur(h.value)}</span>`
-        : `<span style="font-size:12px;color:${TEXT_DIM};">–</span>`;
+  const newsRows: string[] = [];
+  for (let i = 0; i < stockNews.length; i += 2) {
+    const left  = stockNews[i]   ? newsCard(stockNews[i])   : '';
+    const right = stockNews[i+1] ? newsCard(stockNews[i+1]) : '<table width="100%"><tr><td></td></tr></table>';
+    newsRows.push(`
+  <tr>
+    <td width="49%" style="vertical-align:top;">${left}</td>
+    <td width="2%" style="min-width:8px;">&nbsp;</td>
+    <td width="49%" style="vertical-align:top;">${right}</td>
+  </tr>
+  ${i + 2 < stockNews.length ? `<tr><td colspan="3" style="height:8px;"></td></tr>` : ''}`);
+  }
+
+  const marktSignaleBlock = stockNews.length === 0 ? '' : `
+  <!-- ─ MARKT-SIGNALE ─ -->
+  ${sectionCard('Markt-Signale', `
+    <table width="100%" cellpadding="0" cellspacing="0" border="0">
+      ${newsRows.join('')}
+    </table>`,
+    `margin-bottom:0;`
+  )}`;
+
+  // ── Depot-Überblick Tabelle ──────────────────────────────────────────────────
+  function sentimentBadge(s?: string): string {
+    if (s === 'POSITIV') return `<span style="background:#052e16;border:1px solid #166534;color:${GREEN_TXT};border-radius:6px;padding:3px 8px;font-size:9px;font-weight:700;letter-spacing:0.06em;white-space:nowrap;">POSITIV</span>`;
+    if (s === 'NEGATIV') return `<span style="background:#450a0a;border:1px solid #991b1b;color:${RED_TXT};border-radius:6px;padding:3px 8px;font-size:9px;font-weight:700;letter-spacing:0.06em;white-space:nowrap;">NEGATIV</span>`;
+    return `<span style="background:#0f172a;border:1px solid #334155;color:${TEXT_DIM};border-radius:6px;padding:3px 8px;font-size:9px;font-weight:700;letter-spacing:0.06em;white-space:nowrap;">NEUTRAL</span>`;
+  }
+
+  function trendLabel(t?: string): string {
+    if (t === 'Steigend') return `<span style="color:${GREEN_TXT};font-size:12px;font-weight:600;">↑ Steigend</span>`;
+    if (t === 'Fallend')  return `<span style="color:${RED_TXT};font-size:12px;font-weight:600;">↓ Fallend</span>`;
+    return `<span style="color:${TEXT_DIM};font-size:12px;font-weight:600;">→ Stabil</span>`;
+  }
+
+  function weightBar(pct?: number): string {
+    const p = Math.min(100, Math.max(0, pct ?? 0));
+    return `<table width="100%" cellpadding="0" cellspacing="0" border="0">
+      <tr><td style="padding-bottom:4px;font-size:11px;font-weight:700;color:${TEXT_PRI};">${p.toFixed(2)}&thinsp;%</td></tr>
+      <tr><td>
+        <table width="100%" cellpadding="0" cellspacing="0" border="0"
+          style="background:${CARD_BDR};border-radius:3px;height:4px;overflow:hidden;">
+          <tr><td width="${Math.round(p)}%" style="background:${ACCENT};height:4px;border-radius:3px;font-size:0;">&nbsp;</td>
+              <td style="height:4px;"></td></tr>
+        </table>
+      </td></tr>
+    </table>`;
+  }
+
+  const holdingsTableBlock = topHoldings.length === 0 ? '' : (() => {
+    const hasAiCols = topHoldings.some(h => h.sentiment || h.marketComment || h.trend);
+    const rows = topHoldings.map((h, i) => {
       const border = i > 0 ? `border-top:1px solid ${ROW_DIV};` : '';
+      const companyName = h.name && h.name !== h.symbol
+        ? `<p style="margin:0 0 2px;font-size:13px;font-weight:700;color:${TEXT_PRI};line-height:1.3;">${h.name.length > 22 ? h.name.slice(0, 21) + '…' : h.name}</p>`
+        : '';
       return `
-    <tr>
-      <td style="${border}padding:7px 0;">
-        <table cellpadding="0" cellspacing="0" border="0"><tr>
-          <td style="background:rgba(99,102,241,0.13);border:1px solid rgba(99,102,241,0.22);color:#a5b4fc;border-radius:6px;padding:2px 7px;font-size:11px;font-weight:700;letter-spacing:0.04em;white-space:nowrap;">${h.symbol}</td>
-          ${h.name ? `<td style="padding-left:8px;font-size:12px;color:${TEXT_DIM};white-space:nowrap;max-width:140px;overflow:hidden;">${h.name.length > 18 ? h.name.slice(0, 17) + '…' : h.name}</td>` : ''}
-        </tr></table>
-      </td>
-      <td align="right" style="${border}padding:7px 0;">${valCell}</td>
-      <td align="right" style="${border}padding:7px 0 7px 12px;">${chgCell}</td>
-    </tr>`;
-    }).join('')}
-  </table>`;
+  <tr>
+    <td style="${border}padding:11px 0 11px 4px;vertical-align:top;width:150px;">
+      ${companyName}
+      <span style="font-size:10px;color:${LABEL_CLR};font-weight:700;font-family:monospace;letter-spacing:0.04em;">${h.symbol}</span>
+    </td>
+    <td style="${border}padding:11px 8px;vertical-align:top;width:80px;">${weightBar(h.weightingPct)}</td>
+    ${hasAiCols ? `
+    <td style="${border}padding:11px 6px;vertical-align:top;width:72px;">${sentimentBadge(h.sentiment)}</td>
+    <td style="${border}padding:11px 8px;vertical-align:top;">
+      <p style="margin:0;font-size:11px;color:${TEXT_SEC};line-height:1.5;">${h.marketComment ?? '–'}</p>
+    </td>
+    <td style="${border}padding:11px 4px 11px 0;vertical-align:top;white-space:nowrap;text-align:right;">${trendLabel(h.trend)}</td>
+    ` : `
+    <td style="${border}padding:11px 4px 11px 0;vertical-align:top;text-align:right;white-space:nowrap;">
+      ${h.changePercent != null
+        ? `<span style="font-size:12px;font-weight:700;color:${h.changePercent >= 0 ? GREEN_TXT : RED_TXT};">${h.changePercent >= 0 ? '+' : ''}${h.changePercent.toFixed(2)}%</span>`
+        : `<span style="font-size:12px;color:${TEXT_DIM};">–</span>`}
+    </td>`}
+  </tr>`;
+    }).join('');
 
-  // ── Aktien-News ─────────────────────────────────────────────────────────────
-  const newsContent = stockNews.length === 0 ? '' : stockNews.map((item, i) => {
-    const impBg  = item.importance === 'hoch' ? '#3b0a0a' : item.importance === 'mittel' ? '#0c1a38' : 'rgba(255,255,255,0.04)';
-    const impBdr = item.importance === 'hoch' ? '#7f1d1d' : item.importance === 'mittel' ? '#1e3a8a' : 'rgba(255,255,255,0.08)';
-    const impTxt = item.importance === 'hoch' ? '#fca5a5' : item.importance === 'mittel' ? '#93c5fd' : TEXT_DIM;
-    const impLbl = item.importance === 'hoch' ? '● Wichtig' : item.importance === 'mittel' ? '● Markt' : '● Info';
-    const border = i > 0 ? `border-top:1px solid ${ROW_DIV};` : '';
-    return `
-  <tr><td style="${border}padding:9px 0;">
-    <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-      <td style="width:26px;vertical-align:top;padding-top:1px;font-size:17px;line-height:1;">${item.impact_emoji}</td>
-      <td style="padding-left:9px;vertical-align:top;">
-        <p style="margin:0 0 3px;font-size:13px;font-weight:700;color:#e2e8f0;line-height:1.4;">${item.title}</p>
-        <p style="margin:0 0 5px;font-size:12px;color:${TEXT_SEC};line-height:1.45;">${item.snippet}</p>
-        <table cellpadding="0" cellspacing="0" border="0"><tr>
-          <td style="font-size:10px;color:${TEXT_DIM};">${item.source}</td>
-          ${item.ticker ? `<td style="padding-left:7px;"><span style="background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.22);color:#a5b4fc;border-radius:4px;padding:1px 5px;font-size:10px;font-weight:700;">${item.ticker}</span></td>` : ''}
-          <td style="padding-left:7px;"><span style="background:${impBg};border:1px solid ${impBdr};color:${impTxt};border-radius:4px;padding:1px 6px;font-size:10px;font-weight:600;">${impLbl}</span></td>
-        </tr></table>
-      </td>
-    </tr></table>
-  </td></tr>`;
-  }).join('');
+    const aiHeaders = hasAiCols ? `
+      <td style="padding:0 6px 10px;font-size:8px;color:${TEXT_DIM};font-weight:700;text-transform:uppercase;letter-spacing:0.12em;vertical-align:bottom;">Marktstimmung</td>
+      <td style="padding:0 8px 10px;font-size:8px;color:${TEXT_DIM};font-weight:700;text-transform:uppercase;letter-spacing:0.12em;vertical-align:bottom;">Marktlage (informativ)</td>
+      <td style="padding:0 0 10px;font-size:8px;color:${TEXT_DIM};font-weight:700;text-transform:uppercase;letter-spacing:0.12em;text-align:right;vertical-align:bottom;">Trend</td>` : `
+      <td style="padding:0 0 10px;font-size:8px;color:${TEXT_DIM};font-weight:700;text-transform:uppercase;letter-spacing:0.12em;text-align:right;vertical-align:bottom;">Heute</td>`;
 
-  // ── Makrolage ────────────────────────────────────────────────────────────────
-  const macroContent = macroNews.length === 0 ? '' : macroNews.map((news, i) => {
-    const border = i > 0 ? `border-top:1px solid ${ROW_DIV};` : '';
     return `
-  <tr><td style="${border}padding:8px 0;">
-    <table cellpadding="0" cellspacing="0" border="0"><tr>
-      <td style="width:16px;vertical-align:top;padding-top:3px;">
-        <span style="display:inline-block;width:6px;height:6px;background:${LABEL_CLR};border-radius:50%;"></span>
-      </td>
-      <td style="padding-left:8px;font-size:13px;color:#cbd5e1;line-height:1.5;">${news}</td>
-    </tr></table>
+  <!-- ─ DEPOT-ÜBERBLICK ─ -->
+  ${spacer(8)}
+  ${sectionCard('Depot-Überblick', `
+    <table width="100%" cellpadding="0" cellspacing="0" border="0">
+      <tr style="border-bottom:1px solid ${ROW_DIV};">
+        <td style="padding:0 0 10px 4px;font-size:8px;color:${TEXT_DIM};font-weight:700;text-transform:uppercase;letter-spacing:0.12em;vertical-align:bottom;">Firma&nbsp;/&nbsp;Anlage</td>
+        <td style="padding:0 8px 10px;font-size:8px;color:${TEXT_DIM};font-weight:700;text-transform:uppercase;letter-spacing:0.12em;vertical-align:bottom;">Gewichtung</td>
+        ${aiHeaders}
+      </tr>
+      ${rows}
+    </table>`,
+    `margin-bottom:0;`
+  )}`;
+  })();
+
+  // ── Performance-Zusammenfassung (kompakt, nach Depot) ────────────────────────
+  const perfRow = `
+  <!-- ─ TAGESABSCHLUSS ─ -->
+  ${spacer(8)}
+  <tr><td style="background:${HERO_BG};border:1px solid ${CARD_BDR};border-radius:16px;padding:18px 20px;">
+    <p style="margin:0 0 3px;font-size:9px;color:${LABEL_CLR};font-weight:700;letter-spacing:0.16em;text-transform:uppercase;">Tagesabschluss</p>
+    <p style="margin:0 0 14px;font-size:13px;color:${TEXT_SEC};">${userName ? `Hallo ${userName},` : 'Hallo,'} hier ist dein heutiger Depotstand.</p>
+    ${twoColumnCards(
+      valueCard('Depotwert', fmtEur(totalValue)),
+      valueCard(`Heute ${arrow}`, `${sign}${fmtEur(dailyChange)}`, `${sign}${dailyChangePercent.toFixed(2)} %`, chBg, chBdr, chTxt, chTxt),
+    )}
   </td></tr>`;
-  }).join('');
+
+  // ── Makrolage (kompakt, optionale Ergänzung) ─────────────────────────────────
+  const macroBlock = macroNews.length === 0 ? '' : `
+  ${spacer(8)}
+  ${sectionCard('Marktlage', macroNews.map((n, i) => `
+    <table cellpadding="0" cellspacing="0" border="0" style="${i > 0 ? `border-top:1px solid ${ROW_DIV};` : ''}padding:${i > 0 ? '8' : '0'}px 0 8px;width:100%;"><tr>
+      <td style="width:10px;vertical-align:top;padding-top:4px;"><span style="display:inline-block;width:5px;height:5px;background:${LABEL_CLR};border-radius:50%;"></span></td>
+      <td style="padding-left:8px;font-size:12px;color:#cbd5e1;line-height:1.5;">${n}</td>
+    </tr></table>`).join('')
+  )}`;
 
   return `${emailHead('Moneta – Tagesabschluss')}
 <body style="margin:0;padding:0;background-color:${BG};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
@@ -284,23 +368,13 @@ export function buildDailySnapshotHtml(options: {
 
   ${emailHeader(dateLabel)}
 
-  ${stockNews.length > 0 ? `
-  <!-- ─ AKTIEN-NEWS (zuerst) ─ -->
-  ${sectionCard('Aktien-News', `<table width="100%" cellpadding="0" cellspacing="0" border="0">${newsContent}</table>`)}
-  ${spacer()}` : ''}
+  ${marktSignaleBlock}
 
-  ${macroNews.length > 0 ? `
-  <!-- ─ MARKTLAGE ─ -->
-  ${sectionCard('Marktlage', `<table width="100%" cellpadding="0" cellspacing="0" border="0">${macroContent}</table>`)}
-  ${spacer()}` : ''}
+  ${holdingsTableBlock}
 
-  <!-- ─ PERFORMANCE CARD ─ -->
-  <tr><td style="background:${HERO_BG};border:1px solid ${CARD_BDR};border-radius:20px;padding:24px 24px 20px;">
-    <p style="margin:0 0 3px;font-size:10px;color:${LABEL_CLR};font-weight:700;letter-spacing:0.16em;text-transform:uppercase;">Tagesabschluss</p>
-    <p style="margin:0 0 18px;font-size:14px;color:${TEXT_SEC};line-height:1.5;">${userName ? `Hallo ${userName},` : 'Hallo,'} hier ist dein heutiger Depotstand.</p>
-    ${twoColumnCards(leftCard, rightCard)}
-    ${holdingsTable}
-  </td></tr>
+  ${perfRow}
+
+  ${macroBlock}
 
   ${emailCta(ctaUrl, 'Depot öffnen →')}
 
