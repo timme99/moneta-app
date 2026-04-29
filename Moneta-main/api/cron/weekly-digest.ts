@@ -53,7 +53,9 @@ export default async function handler(req: any, res: any) {
     // userId → ihre Portfolio-Symbole
     const symbolsByUser = new Map<string, string[]>();
     // symbol → Earnings-Eintrag für nächste Woche
-    const earningsBySymbol = new Map<string, { ticker: string; company: string; date: string; timeOfDay?: string; quarter?: string }>();
+    const earningsBySymbol     = new Map<string, { ticker: string; company: string; date: string; timeOfDay?: string; quarter?: string; epsEstimate?: string }>();
+    // symbol → Earnings-Eintrag der vergangenen Woche
+    const pastEarningsBySymbol = new Map<string, { ticker: string; company: string; date: string; timeOfDay?: string; quarter?: string; epsEstimate?: string }>();
 
     if (SUPABASE_URL && SUPABASE_SERVICE) {
       const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE, {
@@ -100,24 +102,44 @@ export default async function handler(req: any, res: any) {
         symbolsByUser.set(h.user_id, arr);
       }
 
-      // Earnings der nächsten 7 Tage aus stock_events
       const allSymbols = [...new Set((holdingsData ?? []).map((h: any) => h.symbol))] as string[];
+
       if (allSymbols.length > 0) {
-        const { data: earningsRows } = await sb
-          .from('stock_events')
-          .select('symbol, event_date, quarter, details')
-          .eq('event_type', 'earnings')
+        // Earnings der nächsten 7 Tage aus earnings_cache
+        const { data: upcomingRows } = await sb
+          .from('earnings_cache')
+          .select('symbol, event_date, quarter, company, eps_estimate, time_of_day')
           .gte('event_date', today)
           .lte('event_date', nextWeekStr)
           .in('symbol', allSymbols) as any;
 
-        for (const row of (earningsRows ?? [])) {
+        for (const row of (upcomingRows ?? [])) {
           earningsBySymbol.set(row.symbol, {
             ticker:    row.symbol,
-            company:   row.details?.company ?? row.symbol,
+            company:   row.company ?? row.symbol,
             date:      row.event_date,
-            timeOfDay: row.details?.timeOfDay,
+            timeOfDay: row.time_of_day,
             quarter:   row.quarter ?? undefined,
+            epsEstimate: row.eps_estimate ?? undefined,
+          });
+        }
+
+        // Earnings der vergangenen 7 Tage aus earnings_cache
+        const { data: pastRows } = await sb
+          .from('earnings_cache')
+          .select('symbol, event_date, quarter, company, eps_estimate, time_of_day')
+          .gte('event_date', weekAgoStr)
+          .lt('event_date', today)
+          .in('symbol', allSymbols) as any;
+
+        for (const row of (pastRows ?? [])) {
+          pastEarningsBySymbol.set(row.symbol, {
+            ticker:    row.symbol,
+            company:   row.company ?? row.symbol,
+            date:      row.event_date,
+            timeOfDay: row.time_of_day,
+            quarter:   row.quarter ?? undefined,
+            epsEstimate: row.eps_estimate ?? undefined,
           });
         }
       }
@@ -146,6 +168,12 @@ export default async function handler(req: any, res: any) {
         .map((s) => earningsBySymbol.get(s)!)
         .sort((a, b) => a.date.localeCompare(b.date));
 
+      // Earnings der vergangenen 7 Tage für diesen User
+      const pastEarnings = userSymbols
+        .filter((s) => pastEarningsBySymbol.has(s))
+        .map((s) => pastEarningsBySymbol.get(s)!)
+        .sort((a, b) => a.date.localeCompare(b.date));
+
       const highlights = [
         'KI-gestützte Szenario-Analyse für dein Depot verfügbar',
         'Earnings-Kalender: alle Quartalszahlen auf einen Blick',
@@ -161,6 +189,7 @@ export default async function handler(req: any, res: any) {
         weeklyChange,
         weeklyChangePercent: weeklyChangePct,
         upcomingEarnings:    upcomingEarnings.length > 0 ? upcomingEarnings : undefined,
+        pastEarnings:        pastEarnings.length > 0 ? pastEarnings : undefined,
       });
 
       console.log(`[cron/weekly-digest] Sende an ${sub.email} (${i + 1}/${subscribers.length})…`);
