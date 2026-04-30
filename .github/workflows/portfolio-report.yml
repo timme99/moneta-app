@@ -2,10 +2,10 @@ name: Portfolio & Aktien Report
 
 on:
   schedule:
-    # Täglicher Depot-Überblick – täglich 22:00 UTC (Börsenschluss)
-    - cron: "0 22 * * *"
-    # Wochenbericht – montags 08:00 UTC
-    - cron: "0 8 * * 1"
+    # Tagesbericht – Mo–Fr um 17:30 UTC (19:30 Uhr CEST / 18:30 Uhr CET, nach EU-Börsenschluss)
+    - cron: "30 17 * * 1-5"
+    # Wochenbericht – montags 07:00 UTC (09:00 Uhr CEST / 08:00 Uhr CET)
+    - cron: "0 7 * * 1"
   workflow_dispatch:
     inputs:
       report_type:
@@ -17,11 +17,16 @@ on:
           - daily
           - weekly
 
+# Verhindert parallele Läufe desselben Workflows (kein Doppelversand)
+concurrency:
+  group: portfolio-report
+  cancel-in-progress: false
+
 jobs:
   send-report:
     name: Portfolio-Report versenden
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     defaults:
       run:
@@ -44,13 +49,10 @@ jobs:
       - name: Report-Typ bestimmen
         id: type
         run: |
-          # Manueller Trigger → Eingabe verwenden
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "type=${{ github.event.inputs.report_type }}" >> $GITHUB_OUTPUT
-          # Montag 08:00 → Wochenbericht
-          elif [ "$(date +%H)" = "08" ] && [ "$(date +%u)" = "1" ]; then
+          elif [ "$(date -u +%H:%M)" = "07:00" ] && [ "$(date -u +%u)" = "1" ]; then
             echo "type=weekly" >> $GITHUB_OUTPUT
-          # Alle anderen Zeiten → Tagesbericht
           else
             echo "type=daily" >> $GITHUB_OUTPUT
           fi
@@ -58,10 +60,10 @@ jobs:
       - name: Portfolio-Report ausführen (${{ steps.type.outputs.type }})
         run: npx tsx scripts/portfolio-report.ts --type ${{ steps.type.outputs.type }}
         env:
-          MONETA_SUPABASE_URL: ${{ secrets.MONETA_SUPABASE_URL }}
+          MONETA_SUPABASE_URL:              ${{ secrets.MONETA_SUPABASE_URL }}
           MONETA_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.MONETA_SUPABASE_SERVICE_ROLE_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
-          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
-          FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
-          APP_URL: ${{ secrets.APP_URL }}
+          GEMINI_API_KEY:                   ${{ secrets.GEMINI_API_KEY }}
+          ALPHA_VANTAGE_API_KEY:            ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+          RESEND_API_KEY:                   ${{ secrets.RESEND_API_KEY }}
+          EMAIL_FROM:                       ${{ secrets.EMAIL_FROM }}
+          APP_URL:                          ${{ secrets.APP_URL }}
