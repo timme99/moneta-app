@@ -5,11 +5,6 @@ on:
     # Jeden Werktag um 18:30 UTC (20:30 Uhr DE-Sommerzeit / 19:30 Uhr Winterzeit)
     - cron: '30 18 * * 1-5'
   workflow_dispatch:
-    inputs:
-      type:
-        description: 'Berichtstyp (daily/weekly)'
-        required: false
-        default: 'daily'
 
 jobs:
   send-daily-report:
