@@ -30,13 +30,41 @@ jobs:
       - name: Abhängigkeiten installieren
         run: npm ci
 
-      - name: Portfolio-Wochenbericht ausführen
+      - name: Secrets prüfen
+        run: |
+          missing=""
+          [ -z "$MONETA_SUPABASE_URL" ]              && missing="$missing MONETA_SUPABASE_URL"
+          [ -z "$MONETA_SUPABASE_SERVICE_ROLE_KEY" ] && missing="$missing MONETA_SUPABASE_SERVICE_ROLE_KEY"
+          [ -z "$RESEND_API_KEY" ]                   && missing="$missing RESEND_API_KEY"
+          if [ -n "$missing" ]; then
+            echo "❌ Fehlende Secrets:$missing"
+            exit 1
+          fi
+          echo "✅ Alle Pflicht-Secrets vorhanden"
         env:
-          MONETA_SUPABASE_URL:              ${{ secrets.MONETA_SUPABASE_URL }}
-          MONETA_SUPABASE_SERVICE_ROLE_KEY:  ${{ secrets.MONETA_SUPABASE_SERVICE_ROLE_KEY }}
-          RESEND_API_KEY:                    ${{ secrets.RESEND_API_KEY }}
-          ALPHA_VANTAGE_API_KEY:             ${{ secrets.ALPHA_VANTAGE_API_KEY }}
-          GEMINI_API_KEY:                    ${{ secrets.GEMINI_API_KEY }}
-          APP_URL:                           ${{ secrets.APP_URL }}
-          EMAIL_FROM:                        ${{ secrets.EMAIL_FROM }}
+          MONETA_SUPABASE_URL:             ${{ secrets.MONETA_SUPABASE_URL }}
+          MONETA_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.MONETA_SUPABASE_SERVICE_ROLE_KEY }}
+          RESEND_API_KEY:                  ${{ secrets.RESEND_API_KEY }}
+
+      - name: Portfolio-Wochenbericht ausführen
+        id: report
         run: npm run report:weekly
+        env:
+          MONETA_SUPABASE_URL:             ${{ secrets.MONETA_SUPABASE_URL }}
+          MONETA_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.MONETA_SUPABASE_SERVICE_ROLE_KEY }}
+          RESEND_API_KEY:                  ${{ secrets.RESEND_API_KEY }}
+          ALPHA_VANTAGE_API_KEY:           ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+          GEMINI_API_KEY:                  ${{ secrets.GEMINI_API_KEY }}
+          EMAIL_FROM:                      ${{ secrets.EMAIL_FROM }}
+          APP_URL:                         ${{ secrets.APP_URL }}
+
+      - name: Zusammenfassung
+        if: always()
+        run: |
+          echo "## 📅 Wochenbericht – Moneta" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| | |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Typ** | Wochenbericht (weekly) |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Datum** | $(date -u '+%d.%m.%Y %H:%M UTC') |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Trigger** | ${{ github.event_name }} |" >> $GITHUB_STEP_SUMMARY

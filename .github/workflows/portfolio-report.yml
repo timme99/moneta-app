@@ -1,11 +1,9 @@
-name: Portfolio & Aktien Report
+name: Portfolio & Aktien Report (manuell)
 
+# Nur manueller Trigger – die automatischen Läufe übernehmen
+# portfolio-report-daily.yml  (Mo–Fr 18:30 UTC)
+# portfolio-report-weekly.yml (Mo   07:00 UTC)
 on:
-  schedule:
-    # Täglicher Depot-Überblick – täglich 22:00 UTC (Börsenschluss)
-    - cron: "0 22 * * *"
-    # Wochenbericht – montags 08:00 UTC
-    - cron: "0 8 * * 1"
   workflow_dispatch:
     inputs:
       report_type:
@@ -19,7 +17,7 @@ on:
 
 jobs:
   send-report:
-    name: Portfolio-Report versenden
+    name: Portfolio-Report versenden (${{ github.event.inputs.report_type }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -41,27 +39,41 @@ jobs:
       - name: Abhängigkeiten installieren
         run: npm ci
 
-      - name: Report-Typ bestimmen
-        id: type
+      - name: Secrets prüfen
         run: |
-          # Manueller Trigger → Eingabe verwenden
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "type=${{ github.event.inputs.report_type }}" >> $GITHUB_OUTPUT
-          # Montag 08:00 → Wochenbericht
-          elif [ "$(date +%H)" = "08" ] && [ "$(date +%u)" = "1" ]; then
-            echo "type=weekly" >> $GITHUB_OUTPUT
-          # Alle anderen Zeiten → Tagesbericht
-          else
-            echo "type=daily" >> $GITHUB_OUTPUT
+          missing=""
+          [ -z "$MONETA_SUPABASE_URL" ]              && missing="$missing MONETA_SUPABASE_URL"
+          [ -z "$MONETA_SUPABASE_SERVICE_ROLE_KEY" ] && missing="$missing MONETA_SUPABASE_SERVICE_ROLE_KEY"
+          [ -z "$RESEND_API_KEY" ]                   && missing="$missing RESEND_API_KEY"
+          if [ -n "$missing" ]; then
+            echo "❌ Fehlende Secrets:$missing"
+            exit 1
           fi
-
-      - name: Portfolio-Report ausführen (${{ steps.type.outputs.type }})
-        run: npx tsx scripts/portfolio-report.ts --type ${{ steps.type.outputs.type }}
+          echo "✅ Alle Pflicht-Secrets vorhanden"
         env:
-          MONETA_SUPABASE_URL: ${{ secrets.MONETA_SUPABASE_URL }}
+          MONETA_SUPABASE_URL:             ${{ secrets.MONETA_SUPABASE_URL }}
           MONETA_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.MONETA_SUPABASE_SERVICE_ROLE_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
-          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
-          FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
-          APP_URL: ${{ secrets.APP_URL }}
+          RESEND_API_KEY:                  ${{ secrets.RESEND_API_KEY }}
+
+      - name: Portfolio-Report ausführen
+        id: report
+        run: npx tsx scripts/portfolio-report.ts --type ${{ github.event.inputs.report_type }}
+        env:
+          MONETA_SUPABASE_URL:             ${{ secrets.MONETA_SUPABASE_URL }}
+          MONETA_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.MONETA_SUPABASE_SERVICE_ROLE_KEY }}
+          RESEND_API_KEY:                  ${{ secrets.RESEND_API_KEY }}
+          ALPHA_VANTAGE_API_KEY:           ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+          GEMINI_API_KEY:                  ${{ secrets.GEMINI_API_KEY }}
+          EMAIL_FROM:                      ${{ secrets.EMAIL_FROM }}
+          APP_URL:                         ${{ secrets.APP_URL }}
+
+      - name: Zusammenfassung
+        if: always()
+        run: |
+          echo "## 📊 Moneta Portfolio-Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| | |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Typ** | ${{ github.event.inputs.report_type }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Gestartet von** | @${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Datum** | $(date -u '+%d.%m.%Y %H:%M UTC') |" >> $GITHUB_STEP_SUMMARY
