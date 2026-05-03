@@ -2,16 +2,16 @@ name: Portfolio & Aktien Report
 
 on:
   schedule:
-    # Täglicher Depot-Überblick – täglich 22:00 UTC (Börsenschluss)
-    - cron: "0 22 * * *"
-    # Wochenbericht – montags 08:00 UTC
-    - cron: "0 8 * * 1"
+    # Tagesbericht – Mo–Fr um 18:30 UTC (20:30 Uhr CEST / 19:30 Uhr MEZ)
+    - cron: '30 18 * * 1-5'
+    # Wochenbericht – Montag 07:00 UTC (09:00 Uhr CEST)
+    - cron: '0 7 * * 1'
   workflow_dispatch:
     inputs:
       report_type:
-        description: "Report-Typ"
+        description: 'Report-Typ'
         required: true
-        default: "daily"
+        default: 'daily'
         type: choice
         options:
           - daily
@@ -21,21 +21,21 @@ jobs:
   send-report:
     name: Portfolio-Report versenden
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     defaults:
       run:
         working-directory: Moneta-main
 
     steps:
-      - name: Checkout
+      - name: Code auschecken
         uses: actions/checkout@v4
 
       - name: Node.js 20 einrichten
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: "npm"
+          node-version: '20'
+          cache: 'npm'
           cache-dependency-path: Moneta-main/package-lock.json
 
       - name: Abhängigkeiten installieren
@@ -44,13 +44,10 @@ jobs:
       - name: Report-Typ bestimmen
         id: type
         run: |
-          # Manueller Trigger → Eingabe verwenden
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "type=${{ github.event.inputs.report_type }}" >> $GITHUB_OUTPUT
-          # Montag 08:00 → Wochenbericht
-          elif [ "$(date +%H)" = "08" ] && [ "$(date +%u)" = "1" ]; then
+          elif [ "$(date +%H)" = "07" ] && [ "$(date +%u)" = "1" ]; then
             echo "type=weekly" >> $GITHUB_OUTPUT
-          # Alle anderen Zeiten → Tagesbericht
           else
             echo "type=daily" >> $GITHUB_OUTPUT
           fi
@@ -58,10 +55,10 @@ jobs:
       - name: Portfolio-Report ausführen (${{ steps.type.outputs.type }})
         run: npx tsx scripts/portfolio-report.ts --type ${{ steps.type.outputs.type }}
         env:
-          MONETA_SUPABASE_URL: ${{ secrets.MONETA_SUPABASE_URL }}
+          MONETA_SUPABASE_URL:              ${{ secrets.MONETA_SUPABASE_URL }}
           MONETA_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.MONETA_SUPABASE_SERVICE_ROLE_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
-          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
-          FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
-          APP_URL: ${{ secrets.APP_URL }}
+          RESEND_API_KEY:                   ${{ secrets.RESEND_API_KEY }}
+          ALPHA_VANTAGE_API_KEY:            ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+          GEMINI_API_KEY:                   ${{ secrets.GEMINI_API_KEY }}
+          APP_URL:                          ${{ secrets.APP_URL }}
+          EMAIL_FROM:                       ${{ secrets.EMAIL_FROM }}
