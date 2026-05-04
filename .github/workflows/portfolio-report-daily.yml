@@ -2,14 +2,18 @@ name: Tagesbericht – Portfolio & Aktien
 
 on:
   schedule:
-    # Jeden Werktag um 18:30 UTC (20:30 Uhr DE-Sommerzeit / 19:30 Uhr Winterzeit)
-    - cron: '30 18 * * 1-5'
+    # Jeden Werktag um 22:00 UTC (nach NYSE-Schluss, ca. 00:00 Uhr DE-Zeit)
+    - cron: '0 22 * * 1-5'
   workflow_dispatch:
     inputs:
-      type:
-        description: 'Berichtstyp (daily/weekly)'
+      dry_run:
+        description: 'Nur Test-Lauf (kein Versand)'
         required: false
-        default: 'daily'
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
 
 jobs:
   send-daily-report:
