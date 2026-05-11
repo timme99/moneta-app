@@ -7,7 +7,8 @@
  * Mit Cron-Secret: CRON_SECRET=<secret> node e2e-test.mjs
  */
 
-const BASE = 'https://www.moneta-invest.de';
+const BASE = process.env.BASE_URL || 'https://www.moneta-invest.de';
+const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 15000);
 
 // ── Hilfsfunktionen ──────────────────────────────────────────────────────────
 
@@ -25,7 +26,10 @@ function warn(label, detail = '') { warned++; console.log(`  ${YELLOW} ${label}$
 
 async function get(path, opts = {}) {
   const url = `${BASE}${path}`;
-  const res  = await fetch(url, { headers: { 'Accept': 'application/json', ...opts.headers }, signal: AbortSignal.timeout(15_000) });
+  const res  = await fetch(url, {
+    headers: { 'Accept': 'application/json', ...opts.headers },
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
   const body = await res.json().catch(() => ({}));
   return { status: res.status, ok: res.ok, body };
 }
@@ -124,7 +128,7 @@ async function testCorsHeaders() {
   const res = await fetch(`${BASE}/api/stocks?symbol=AAPL`, {
     method: 'OPTIONS',
     headers: { 'Origin': 'https://example.com' },
-    signal: AbortSignal.timeout(10_000),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
 
   if (res.headers.get('access-control-allow-origin') === '*') ok('Access-Control-Allow-Origin: *');
@@ -228,6 +232,7 @@ async function testResendDigest() {
 
 async function main() {
   console.log(BOLD(`\n🧪  Moneta E2E-Test  →  ${BASE}`));
+  console.log(DIM(`   Timeout: ${REQUEST_TIMEOUT_MS}ms`));
   console.log(DIM(`   ${new Date().toLocaleString('de-DE')}\n`));
 
   try {

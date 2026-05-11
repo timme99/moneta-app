@@ -391,10 +391,10 @@ interface HoldingRow {
 }
 
 async function loadAllHoldings(): Promise<HoldingRow[]> {
-  const { data, error } = await sb
+  const { data, error } = await (sb
     .from('holdings')
     .select('user_id, symbol, shares, buy_price')
-    .not('shares', 'is', null) as unknown as Promise<{ data: HoldingRow[] | null; error: any }>;
+    .not('shares', 'is', null) as unknown as Promise<{ data: HoldingRow[] | null; error: any }>);
 
   if (error) {
     console.error('[supabase] loadAllHoldings Fehler:', error.message);

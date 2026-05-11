@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "test": "npm run test:types",
+    "test:types": "tsc --noEmit",
     "preview": "vite preview",
     "report:daily": "tsx scripts/portfolio-report.ts --type daily",
     "report:weekly": "tsx scripts/portfolio-report.ts --type weekly"

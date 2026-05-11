@@ -47,11 +47,14 @@ export function useSubscription(userId: string | null | undefined): Subscription
 
     setState((prev) => ({ ...prev, isLoading: true }));
 
-    sb.from('subscriptions')
-      .select('plan, valid_until')
-      .eq('user_id', userId)
-      .maybeSingle()
-      .then(({ data }) => {
+    (async () => {
+      try {
+        const { data } = await sb
+          .from('subscriptions')
+          .select('plan, valid_until')
+          .eq('user_id', userId)
+          .maybeSingle();
+
         if (!data) {
           setState(FREE_STATE);
           return;
@@ -66,8 +69,10 @@ export function useSubscription(userId: string | null | undefined): Subscription
           isLoading: false,
           validUntil,
         });
-      })
-      .catch(() => setState(FREE_STATE));
+      } catch {
+        setState(FREE_STATE);
+      }
+    })();
   }, [userId]);
 
   return state;
