@@ -20,7 +20,16 @@ export interface Database {
     // Leere Objekte sind ausreichend; ohne sie werden alle Tabellen als `never`
     // aufgelöst und man erhält "Property X does not exist on type 'never'".
     Views:          { [_ in never]: never };
-    Functions:      { [_ in never]: never };
+    Functions:      {
+      merge_user_preference: {
+        Args: {
+          p_user_id: string;
+          p_key: string;
+          p_value: boolean;
+        };
+        Returns: Record<string, unknown>;
+      };
+    };
     Enums:          { [_ in never]: never };
     CompositeTypes: { [_ in never]: never };
 
@@ -272,6 +281,28 @@ export interface Database {
           sentiment?: string | null;
           summary?: string | null;
           cached_at?: string;
+        };
+        Relationships: [];
+      };
+
+      // ── scan_log ──────────────────────────────────────────────────────────
+      scan_log: {
+        Row: {
+          id: number;
+          symbol: string;
+          type: 'earnings' | 'dividend';
+          scanned_at: string;
+        };
+        Insert: {
+          id?: number;
+          symbol: string;
+          type: 'earnings' | 'dividend';
+          scanned_at?: string;
+        };
+        Update: {
+          symbol?: string;
+          type?: 'earnings' | 'dividend';
+          scanned_at?: string;
         };
         Relationships: [];
       };
